@@ -1,0 +1,21 @@
+{
+  "name": "task-manager-extension",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc && node scripts/generate-icons.js && npx tailwindcss -i ./styles/main.css -o ./styles/main.css --minify && node scripts/bundle.mjs && node scripts/copy-assets.js",
+    "watch": "tsc --watch",
+    "build:css": "npx tailwindcss -i ./styles/main.css -o ./styles/main.css --minify",
+    "icons": "node scripts/generate-icons.js",
+    "bundle": "node scripts/bundle.mjs",
+    "copy": "node scripts/copy-assets.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/chrome": "^0.0.260",
+    "esbuild": "^0.20.0",
+    "tailwindcss": "^3.4.0",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0"
+  }
+}

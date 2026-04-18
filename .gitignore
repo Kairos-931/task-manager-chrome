@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+background.js
+popup/popup.js
+newtab/newtab.js
+
+# Old build artifacts
+chrome-extension-loadable/
+
+# Release packaging
+release/
+
+# One-time scripts
+convert-eisenhower.cjs
+
+# Test data
+taskmaster-import.json
+
+# Guide docs (not needed in repo)
+GITHUB_GUIDE.md
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
