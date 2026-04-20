@@ -8,11 +8,7 @@ This project was iteratively developed using AI coding assistants (Coze / Claude
 
 ## [1.0.0] - 2026-04-18
 
-### Final Release (Snapshot 18)
-
-Restructured from `task-manager` to `task-manager-fixed`, adding cross-device data sync, Eisenhower matrix migration, and GitHub open-source release.
-
-#### Added
+### Added
 
 - **Cross-device Data Sync** — New `shared/sync.ts` implementing multi-device sync via chrome.storage.sync
   - Sync status indicator (Idle / Syncing / Synced / Remote Updated / Error)
@@ -29,7 +25,7 @@ Restructured from `task-manager` to `task-manager-fixed`, adding cross-device da
 - **Build Artifacts** — New `chrome-extension-sync/` directory with ready-to-load extension
 - **Release Assets** — New `release/` directory, `README.md`, `GITHUB_GUIDE.md`, `LICENSE`
 
-#### Improved
+### Improved
 
 - Simplified installation: load the `chrome-extension-sync/` folder directly
 - Build system optimization with esbuild producing single JS bundles
@@ -37,60 +33,97 @@ Restructured from `task-manager` to `task-manager-fixed`, adding cross-device da
 
 ---
 
-## Development History
+## [0.7.0] - 2026-04-18
 
-### Phase 1: Initial Development (Snapshots 01–07)
+### Improved
 
-Chrome extension development based on Vite + Node.js full-stack architecture.
+- UI rendering and interaction refinements
+- Business logic polish
 
-| Version | Changes |
-|---------|---------|
-| **Snapshot 01** | Project initialization: Vite + Node.js server architecture, TypeScript + Tailwind CSS + pnpm; includes popup, newtab, shared modules, server-side (server/) and web frontend (src/) |
-| **Snapshot 02** | Minor adjustments |
-| **Snapshot 04** | Cleanup: removed duplicate HTML/JS files and SVG icon source files from root |
-| **Snapshot 05** | Continued minor refinements |
-| **Snapshot 06** | Added `chrome-extension-loadable/` directory with build artifacts loadable directly into Chrome |
-| **Snapshot 07** | Added `scripts/bundle.mjs` build script, removed legacy `generate-icons.mjs` |
+---
 
-### Phase 2: Architecture Refactor (Snapshots 08–09)
+## [0.6.0] - 2026-04-18
 
-Abandoned Vite server-side architecture in favor of a pure Chrome extension project.
+### Improved
 
-| Version | Changes |
-|---------|---------|
-| **Snapshot 08** | **Major refactor**: removed server/, src/, vite.config.ts; flattened project directory; introduced AI Agent collaboration files (PROMPT.md, NEXT_AGENT_PROMPT.txt, AGENTS.md); added PRD.md |
-| **Snapshot 09** | Added `shared/entry.ts` bundle entry; migrated from pnpm to npm; added `.npmrc.json` |
+- UI and business logic iteration
+- Data storage layer stability improvements
 
-### Phase 3: Feature Development (Snapshots 10–17)
+---
 
-Progressively added core features; file structure stabilized.
+## [0.5.0] - 2026-04-18
 
-| Version | Changes |
-|---------|---------|
-| **Snapshot 10** | Added UI preview image (image.png) |
-| **Snapshot 11** | Added `shared/chrome.d.ts` Chrome API TypeScript type declarations |
-| **Snapshot 12** | **Added background script** `background.js` + `shared/background.ts` (Chrome Service Worker) |
-| **Snapshot 13** | Added `scripts/package-for-store.sh` Chrome Web Store packaging script |
-| **Snapshots 14–17** | Continued iterative improvements, mainly business logic and UI refinements |
+### Added
 
-### Phase 4: Final Release (Snapshot 18)
+- `shared/background.ts` + `background.js` — Chrome extension background script (Service Worker)
+- `shared/chrome.d.ts` — Chrome API TypeScript type declarations
+- `scripts/package-for-store.sh` — Chrome Web Store packaging script
+- UI preview image
 
-Restructured from `task-manager` to `task-manager-fixed`, resolving data sync and safety issues, preparing for open-source release.
+### Improved
+
+- TypeScript type safety enhancements
+
+---
+
+## [0.3.0] - 2026-04-17
+
+### Changed (Major Refactor)
+
+- **Architecture overhaul**: dropped Vite + Node.js server-side architecture in favor of a pure Chrome extension project
+- Removed `server/`, `src/`, `vite.config.ts`
+- Flattened project directory structure
+- Migrated from pnpm to npm
+
+### Added
+
+- `shared/entry.ts` bundle entry point
+- `.npmrc.json` configuration
+- AI Agent collaboration files: `PROMPT.md`, `NEXT_AGENT_PROMPT.txt`, `AGENTS.md`
+- `PRD.md` product requirements document
+
+---
+
+## [0.2.0] - 2026-04-16
+
+### Added
+
+- `chrome-extension-loadable/` directory with build artifacts loadable directly into Chrome
+- `scripts/bundle.mjs` build script
+
+### Improved
+
+- Removed duplicate HTML/JS files and SVG icon source files
+
+---
+
+## [0.1.0] - 2026-04-16
+
+### Added
+
+- Project initialization
+- Vite + Node.js server architecture
+- TypeScript + Tailwind CSS + pnpm
+- Chrome extension base structure: popup, newtab, shared modules
+- Server-side (server/) and web frontend (src/)
+- Basic task CRUD functionality
 
 ---
 
 ## Feature Evolution Overview
 
 ```
-Snapshots 01–07  Foundation → Vite full-stack → Chrome extension → Buildable output
-       ↓
-Snapshots 08–09  Refactor  → Drop server   → Pure extension   → npm migration
-       ↓
-Snapshots 10–12  Core      → Type declarations → Service Worker
-       ↓
-Snapshots 13–17  Polish    → Store packaging → UI/logic refinements
-       ↓
-Snapshot 18      Release   → Data sync → Migration tool → Open source
+v0.1.0      Foundation — Vite full-stack + Chrome extension prototype
+    ↓
+v0.2.0      Build pipeline — Loadable Chrome extension output
+    ↓
+v0.3.0      Architecture refactor — Pure extension, no server
+    ↓
+v0.5.0      Core features — Service Worker + type system
+    ↓
+v0.6.0–0.7.0  Polish — UI/logic refinements
+    ↓
+v1.0.0      Release — Data sync + migration tool + open source
 ```
 
 ---
