@@ -1,3 +1,5 @@
+[English](README_EN.md) | **中文**
+
 # TaskMaster - Chrome 任务管理插件
 
 一款功能完整的 Chrome 浏览器任务管理扩展，支持四种视图、分类管理、深色模式、多设备数据同步。
@@ -111,6 +113,12 @@ npm run icons        # 只生成图标
 npm run bundle       # 只打包 JS
 npm run copy         # 只复制资源文件
 ```
+
+## 版本历史
+
+完整的迭代开发记录请查看 [CHANGELOG.md](CHANGELOG.md)。
+
+本项目经历了 18 个版本的迭代，从 Vite 全栈架构逐步演化为纯 Chrome 扩展，最终版本新增了跨设备数据同步、艾森豪威尔矩阵迁移、开源发布等功能。
 
 ## 许可证
 
