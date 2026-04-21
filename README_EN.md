@@ -91,7 +91,7 @@ The extension uses `chrome.storage.sync` for cross-device data sync, with `chrom
 - **Auto Recovery**: Automatically restores from local backup when sync data is cleared
 
 **Notes**:
-- Both devices must load the same folder (`chrome-extension-sync/`), which includes a `"key"` field to lock the Extension ID
+- All users share the same Extension ID (ensured by the `"key"` field in manifest), no manual check needed
 - Requires signing in to the same Chrome account with sync enabled
 - Users in China need a VPN with Google sync domains routed through the proxy (see FAQ below)
 - `chrome.storage.sync` has a total limit of 100KB; task data uses chunked storage to bypass the 8KB per-item limit
@@ -103,15 +103,14 @@ The extension uses `chrome.storage.sync` for cross-device data sync, with `chrom
 
 **Troubleshooting steps:**
 
-1. **Verify Extension ID matches** — Open `chrome://extensions/` on both devices and check that the TaskMaster ID is identical. Different IDs mean different versions were loaded or the `"key"` field is missing
-2. **Verify Chrome sync is enabled** — Go to `chrome://settings/syncSetup` and confirm you're signed in to the same Google account with sync turned on
-3. **Check sync engine status** — Open `chrome://sync-internals/` and check the Summary section:
+1. **Verify Chrome sync is enabled** — Go to `chrome://settings/syncSetup` and confirm you're signed in to the same Google account with sync turned on
+2. **Check sync engine status** — Open `chrome://sync-internals/` and check the Summary section:
    - `Server Connection` should show no errors (an `auth error` means sync authentication failed)
    - `Updates Downloaded` / `Successful Commits` should be greater than 0
-4. **For users in China: ensure VPN covers Google sync domains** — Chrome sync uses `clients4.google.com`, which may not be included in default VPN rules. Solutions:
+3. **For users in China: ensure VPN covers Google sync domains** — Chrome sync uses `clients4.google.com`, which may not be included in default VPN rules. Solutions:
    - **Recommended**: Enable Clash TUN mode to route all traffic through the proxy
    - Or add a rule in Clash Merge config: `DOMAIN-SUFFIX,google.com,your-proxy-group-name`
-5. **Wait after changes** — Sync typically takes 1-3 minutes to propagate after data changes
+4. **Wait after changes** — Sync typically takes 1-3 minutes to propagate after data changes
 
 ## Development
 
