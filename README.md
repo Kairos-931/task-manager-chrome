@@ -39,7 +39,7 @@ npm install
 npm run build
 ```
 
-构建完成后，加载 `chrome-extension-loadable` 文件夹到 Chrome。
+构建完成后，加载 `chrome-extension-sync` 文件夹到 Chrome。
 
 ## 使用方式
 
@@ -90,10 +90,27 @@ npm run build
 - **自动恢复**：检测到 sync 数据被清空时，自动从本地备份恢复
 
 **注意事项**：
-- 需要登录同一个 Chrome 账号
-- 国内使用需要 VPN 才能正常同步
+- 两台设备必须加载同一个文件夹（`chrome-extension-sync/`），其中包含 `"key"` 字段用于锁定 Extension ID
+- 需要登录同一个 Chrome 账号并开启同步
+- 国内使用需要 VPN，且需确保 Google 同步域名走代理（详见下方 FAQ）
 - `chrome.storage.sync` 总容量限制为 100KB，任务数据采用分块存储突破单条 8KB 限制
 - 建议定期使用"导出数据"功能备份重要数据
+
+## 常见问题
+
+### 跨设备同步不生效（控制台显示 "local和sync都为空"）
+
+**排查步骤：**
+
+1. **确认 Extension ID 一致** — 两台设备打开 `chrome://extensions/`，检查 TaskMaster 的 ID 是否相同。ID 不一致说明加载了不同版本或缺少 `"key"` 字段
+2. **确认 Chrome 同步已开启** — `chrome://settings/syncSetup` 确认已登录同一 Google 账号且同步开关打开
+3. **检查同步引擎状态** — 打开 `chrome://sync-internals/`，查看顶部 Summary：
+   - `Server Connection` 应无报错（如有 `auth error` 说明同步认证失败）
+   - `Updates Downloaded` / `Successful Commits` 应大于 0
+4. **国内用户：确认 VPN 覆盖 Google 同步域名** — Chrome 同步使用 `clients4.google.com`，普通 VPN 规则可能未包含此域名。解决方法：
+   - **推荐**：开启 Clash 的 TUN 模式，所有流量自动走代理
+   - 或在 Clash Merge 配置中添加规则：`DOMAIN-SUFFIX,google.com,你的代理组名`
+5. **修改后等待** — 数据变更后同步通常需要 1-3 分钟生效
 
 ## 开发
 
