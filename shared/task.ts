@@ -148,7 +148,7 @@ export const getFilteredTasks = (): Task[] => {
   return state.tasks.filter(t => {
     if (state.showNoTimeLimitOnly && !t.noTimeLimit) return false
     if (state.hideCompleted && t.completed) return false
-    if (state.hideOverdue && !t.noTimeLimit && isOverdue(t.dueDate, t.completed)) return false
+    if (state.hideOverdue && !t.noTimeLimit && t.dueDate < getTodayStr()) return false
     if (state.filterPriority !== 'all' && t.priority !== state.filterPriority) return false
     if (state.filterCategory !== 'all' && t.category !== state.filterCategory) return false
     return true

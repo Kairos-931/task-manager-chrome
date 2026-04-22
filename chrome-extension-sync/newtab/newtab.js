@@ -26,10 +26,6 @@ var TaskManager = (() => {
     deleteCategory: () => deleteCategory,
     deleteTask: () => deleteTask,
     escapeHtml: () => escapeHtml,
-    addTask: () => addTask,
-    attachEventListeners: () => attachEventListeners,
-    deleteCategory: () => deleteCategory,
-    deleteTask: () => deleteTask,
     formatDate: () => formatDate,
     formatHours: () => formatHours,
     getCatColor: () => getCatColor,
@@ -65,10 +61,7 @@ var TaskManager = (() => {
   });
 
   // shared/storage.ts
-  var META_KEY = "tm_meta";
-  var INDEX_KEY = "tm_index";
-  var CHUNK_PREFIX = "tm_tasks_";
-  var CHUNK_SIZE = 7000;
+  var STORAGE_KEY = "task_manager_data";
   var generateId = () => {
     return Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
   };
@@ -85,159 +78,61 @@ var TaskManager = (() => {
     showNoTimeLimitOnly: false,
     darkMode: false
   });
-  var splitTasksToChunks = (tasks) => {
-    const chunks = [];
-    let current = [];
-    let currentSize = 0;
-    for (const task of tasks) {
-      const taskStr = JSON.stringify(task);
-      if (currentSize + taskStr.length + 1 > CHUNK_SIZE && current.length > 0) {
-        chunks.push(current);
-        current = [];
-        currentSize = 0;
-      }
-      current.push(task);
-      currentSize += taskStr.length + 1;
-    }
-    if (current.length > 0) {
-      chunks.push(current);
-    }
-    return chunks;
+  var isValidData = (data) => {
+    return !!data && typeof data === "object" && Array.isArray(data.tasks) && Array.isArray(data.categories);
   };
-  var LOCAL_BACKUP_KEY = "tm_local_backup";
-  var loadData = async () => {
-    const loadFromSync = () => {
-      return new Promise((resolve) => {
-        chrome.storage.sync.get([META_KEY, INDEX_KEY], (result) => {
-          if (chrome.runtime.lastError) {
-            console.error("[TaskMaster] loadData meta error:", chrome.runtime.lastError);
+  var readFromStorage = (area) => {
+    return new Promise((resolve) => {
+      area.get([STORAGE_KEY], (result) => {
+        if (result[STORAGE_KEY]) {
+          try {
+            const parsed = JSON.parse(result[STORAGE_KEY]);
+            resolve(isValidData(parsed) ? parsed : null);
+          } catch {
             resolve(null);
-            return;
           }
-          if (!result[META_KEY]) {
-            console.log("[TaskMaster] loadData: no tm_meta found in sync");
-            resolve(null);
-            return;
-          }
-          const meta = result[META_KEY];
-          const index = result[INDEX_KEY] || { chunkCount: 0 };
-          console.log("[TaskMaster] loadData meta:", { categories: meta.categories?.map(c => c.name), index });
-          const chunkKeys = [];
-          for (let i = 0; i < index.chunkCount; i++) {
-            chunkKeys.push(CHUNK_PREFIX + i);
-          }
-          if (chunkKeys.length === 0) {
-            resolve({ ...meta, tasks: [] });
-            return;
-          }
-          chrome.storage.sync.get(chunkKeys, (chunkResult) => {
-            if (chrome.runtime.lastError) {
-              console.error("[TaskMaster] loadData chunks error:", chrome.runtime.lastError);
-              resolve({ ...meta, tasks: [] });
-              return;
-            }
-            const tasks = [];
-            for (let i = 0; i < index.chunkCount; i++) {
-              const chunk = chunkResult[CHUNK_PREFIX + i];
-              if (Array.isArray(chunk)) {
-                tasks.push(...chunk);
-              } else {
-                console.warn("[TaskMaster] loadData: chunk", i, "missing or not array", chunk);
-              }
-            }
-            console.log("[TaskMaster] loadData: got", tasks.length, "tasks from", index.chunkCount, "chunks");
-            resolve({ ...meta, tasks });
-          });
-        });
-      });
-    };
-    const loadFromLocal = () => {
-      return new Promise((resolve) => {
-        chrome.storage.local.get([LOCAL_BACKUP_KEY], (result) => {
-          if (result[LOCAL_BACKUP_KEY]) {
-            try {
-              const data = JSON.parse(result[LOCAL_BACKUP_KEY]);
-              if (data && Array.isArray(data.tasks)) {
-                console.log("[TaskMaster] loadData: got", data.tasks.length, "tasks from local backup");
-                resolve(data);
-                return;
-              }
-            } catch (e) {
-              console.error("[TaskMaster] loadData local parse error:", e);
-            }
-          }
+        } else {
           resolve(null);
-        });
+        }
       });
-    };
-    const saveToLocal = (data) => {
-      try {
-        chrome.storage.local.set({ [LOCAL_BACKUP_KEY]: JSON.stringify(data) });
-      } catch (e) {
-        console.error("[TaskMaster] saveToLocal error:", e);
-      }
-    };
-    const syncData = await loadFromSync();
-    if (syncData) {
-      saveToLocal(syncData);
-      return syncData;
-    }
-    const localData = await loadFromLocal();
-    if (localData) {
-      console.warn("[TaskMaster] sync为空，从local恢复数据");
-      saveData(localData);
-      return localData;
-    }
-    console.warn("[TaskMaster] local和sync都为空，返回默认数据");
-    return getDefaultData();
+    });
   };
-  var saveData = async (data) => {
-    // 先写 local 备份
-    try {
-      await new Promise((resolve) => {
-        chrome.storage.local.set({ [LOCAL_BACKUP_KEY]: JSON.stringify(data) }, () => resolve());
-      });
-    } catch (e) {}
-    // 再写 sync 分块
-    const meta = {
-      categories: data.categories,
-      hideCompleted: data.hideCompleted,
-      hideOverdue: data.hideOverdue,
-      showNoTimeLimitOnly: data.showNoTimeLimitOnly,
-      darkMode: data.darkMode
-    };
-    const tasks = data.tasks || [];
-    const chunks = splitTasksToChunks(tasks);
-    const newIndex = { chunkCount: chunks.length };
-    const update = {
-      [META_KEY]: meta,
-      [INDEX_KEY]: newIndex
-    };
-    chunks.forEach((chunk, i) => {
-      update[CHUNK_PREFIX + i] = chunk;
-    });
-    const oldIndex = await new Promise((resolve) => {
-      chrome.storage.sync.get([INDEX_KEY], (r) => resolve(r[INDEX_KEY]));
-    });
-    const removeKeys = [];
-    if (oldIndex) {
-      for (let i = chunks.length; i < (oldIndex.chunkCount || 0); i++) {
-        removeKeys.push(CHUNK_PREFIX + i);
-      }
-    }
+  var writeToStorage = (area, data) => {
     return new Promise((resolve, reject) => {
-      chrome.storage.sync.set(update, () => {
+      area.set({ [STORAGE_KEY]: JSON.stringify(data) }, () => {
         if (chrome.runtime.lastError) {
           reject(chrome.runtime.lastError);
-          return;
-        }
-        if (removeKeys.length > 0) {
-          chrome.storage.sync.remove(removeKeys, () => resolve());
         } else {
           resolve();
         }
       });
     });
+  };
+  var loadData = async () => {
+    const localData = await readFromStorage(chrome.storage.local);
+    const syncData = await readFromStorage(chrome.storage.sync);
+    const localHas = !!localData;
+    const syncHas = !!syncData;
+    console.warn("[TaskManager] loadData:", { localHas, syncHas, localTasks: localData?.tasks?.length, syncTasks: syncData?.tasks?.length });
+    if (syncData && localData) {
+      await writeToStorage(chrome.storage.local, syncData);
+      return syncData;
+    }
+    if (syncData) {
+      await writeToStorage(chrome.storage.local, syncData);
+      return syncData;
+    }
+    if (localData) {
+      console.warn("[TaskManager] sync\u4E3A\u7A7A\uFF0C\u4ECElocal\u6062\u590D\u6570\u636E");
+      await writeToStorage(chrome.storage.sync, localData);
+      return localData;
+    }
+    console.warn("[TaskManager] local\u548Csync\u90FD\u4E3A\u7A7A\uFF0C\u8FD4\u56DE\u9ED8\u8BA4\u6570\u636E");
+    return getDefaultData();
+  };
+  var saveData = async (data) => {
+    await writeToStorage(chrome.storage.local, data);
+    await writeToStorage(chrome.storage.sync, data);
   };
   var exportData = async () => {
     const data = await loadData();
@@ -290,8 +185,8 @@ var TaskManager = (() => {
           }
           await saveData(validation.data);
           resolve({ success: true, merged: false });
-        } catch (err) {
-          resolve({ success: false, error: "\u5BFC\u5165\u5931\u8D25: " + (err?.message || "") });
+        } catch {
+          resolve({ success: false, error: "\u6587\u4EF6\u89E3\u6790\u5931\u8D25\uFF0C\u8BF7\u9009\u62E9\u6B63\u786E\u7684 JSON \u6587\u4EF6" });
         }
       };
       reader.onerror = () => {
@@ -301,13 +196,100 @@ var TaskManager = (() => {
     });
   };
 
+  // shared/sync.ts
+  var syncStatus = "idle";
+  var statusChangeCallback = null;
+  var localSaveTime = 0;
+  var statusTimeoutId = null;
+  var reRenderFn = null;
+  var getSyncStatus = () => syncStatus;
+  var setSyncStatus = (status) => {
+    syncStatus = status;
+    statusChangeCallback?.(status);
+  };
+  var onSyncStatusChange = (cb) => {
+    statusChangeCallback = cb;
+  };
+  var markLocalSave = () => {
+    localSaveTime = Date.now();
+  };
+  var markSaveComplete = () => {
+    setSyncStatus("synced");
+    if (statusTimeoutId)
+      clearTimeout(statusTimeoutId);
+    statusTimeoutId = setTimeout(() => {
+      if (syncStatus === "synced") {
+        setSyncStatus("idle");
+        reRenderFn?.();
+      }
+    }, 3e3);
+  };
+  var initSyncMonitor = (reRender2) => {
+    reRenderFn = reRender2;
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== "sync")
+        return;
+      if (!changes[STORAGE_KEY])
+        return;
+      const now = Date.now();
+      if (localSaveTime > 0 && now - localSaveTime < 2e3) {
+        return;
+      }
+      const change = changes[STORAGE_KEY];
+      const isEmpty = !change || change.newValue === void 0 || change.newValue === null || change.newValue === "";
+      console.warn("[TaskManager] sync onChanged:", { isEmpty, hasNewValue: !!change?.newValue });
+      if (isEmpty) {
+        const current = getState();
+        if (current.tasks.length > 0 || current.categories.length > 0) {
+          console.warn("[TaskManager] \u68C0\u6D4B\u5230sync\u88AB\u6E05\u7A7A\uFF0C\u4ECE\u5185\u5B58\u56DE\u5199\u6570\u636E");
+          markLocalSave();
+          persistState().catch(() => {
+          });
+        }
+        return;
+      }
+      setSyncStatus("remote-updated");
+      loadState().then(() => {
+        reRender2();
+        showSyncToast();
+        if (statusTimeoutId)
+          clearTimeout(statusTimeoutId);
+        statusTimeoutId = setTimeout(() => {
+          if (syncStatus === "remote-updated") {
+            setSyncStatus("idle");
+            reRender2();
+          }
+        }, 4e3);
+      }).catch(() => {
+        setSyncStatus("error");
+      });
+    });
+  };
+  function showSyncToast() {
+    const existing = document.querySelector(".sync-toast");
+    existing?.remove();
+    const toast = document.createElement("div");
+    toast.className = "sync-toast fixed bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm z-50 bg-blue-500 transition-opacity duration-500";
+    toast.innerHTML = `
+    <svg class="w-4 h-4 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+    </svg>
+    \u5DF2\u540C\u6B65\u6765\u81EA\u5176\u4ED6\u8BBE\u5907\u7684\u66F4\u65B0
+  `;
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = "0";
+      setTimeout(() => toast.remove(), 500);
+    }, 3e3);
+  }
+
   // shared/task.ts
   var escapeHtml = (str) => {
     const div = document.createElement("div");
     div.textContent = str;
     return div.innerHTML;
   };
-  var formatDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  var formatDate = (d) => d.toISOString().split("T")[0];
   var parseDate = (s) => /* @__PURE__ */ new Date(s + "T00:00:00");
   var formatHours = (m) => (m / 60).toFixed(1) + "h";
   var getDateLabel = (d) => {
@@ -346,19 +328,9 @@ var TaskManager = (() => {
   var resetEditingTask = () => {
     state.editingTask = null;
   };
-  var getRemainingTime = (task) => {
-    if (task.completed)
+  var getRemainingTime = (d, completed) => {
+    if (completed)
       return "\u5DF2\u5B8C\u6210";
-    if (task.repeatType && task.repeatType !== "none") {
-      const label = getRepeatLabel(task);
-      const nextDate = getNextOccurrence(task);
-      const todayStr = getTodayStr();
-      if (nextDate === todayStr)
-        return `${label} \u00B7 \u4ECA\u5929`;
-      const diff = Math.floor((parseDate(nextDate).getTime() - parseDate(todayStr).getTime()) / 864e5);
-      return diff < 0 ? `${label} \u00B7 \u5DF2\u8FC7\u671F` : `${label} \u00B7 ${diff}\u5929\u540E`;
-    }
-    const d = task.dueDate;
     const todayStr = getTodayStr();
     const tomorrowStr = formatDate(new Date(Date.now() + 864e5));
     if (d === todayStr)
@@ -375,68 +347,8 @@ var TaskManager = (() => {
     }
     return `${days} \u5929\u540E\u5230\u671F`;
   };
-  var getNextOccurrence = (task) => {
-    if (!task.repeatType || task.repeatType === "none" || task.noTimeLimit)
-      return task.dueDate;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const base = task.dueDate ? parseDate(task.dueDate) : new Date(today);
-    base.setHours(0, 0, 0, 0);
-    const start = base > today ? base : today;
-    const maxDays = 400;
-    for (let i = 0; i <= maxDays; i++) {
-      const candidate = new Date(start);
-      candidate.setDate(start.getDate() + i);
-      if (candidate <= base && i === 0)
-        continue;
-      const cd = candidate.getTime();
-      const bd = base.getTime();
-      switch (task.repeatType) {
-        case "daily":
-          return formatDate(candidate);
-        case "weekly":
-          if (task.repeatDays.includes(candidate.getDay()))
-            return formatDate(candidate);
-          break;
-        case "monthly":
-          if (candidate.getDate() === base.getDate())
-            return formatDate(candidate);
-          break;
-        case "workdays":
-          if (candidate.getDay() >= 1 && candidate.getDay() <= 5)
-            return formatDate(candidate);
-          break;
-        case "custom":
-          if (Math.floor((cd - bd) / 864e5) % (task.repeatInterval || 1) === 0)
-            return formatDate(candidate);
-          break;
-      }
-    }
-    return task.dueDate;
-  };
-  var getRepeatLabel = (task) => {
-    if (!task.repeatType || task.repeatType === "none")
-      return "";
-    const weekdays = ["\u65E5", "\u4E00", "\u4E8C", "\u4E09", "\u56DB", "\u4E94", "\u516D"];
-    switch (task.repeatType) {
-      case "daily":
-        return "\u6BCF\u5929";
-      case "weekly":
-        return "\u6BCF\u5468" + task.repeatDays.map((d) => weekdays[d]).join("");
-      case "monthly":
-        return "\u6BCF\u6708";
-      case "workdays":
-        return "\u5DE5\u4F5C\u65E5";
-      case "custom":
-        return `\u6BCF${task.repeatInterval}\u5929`;
-      default:
-        return "";
-    }
-  };
-  var isOverdue = (d, completed, task) => {
+  var isOverdue = (d, completed) => {
     if (completed)
-      return false;
-    if (task && task.repeatType && task.repeatType !== "none")
       return false;
     const todayStr = getTodayStr();
     return d < todayStr;
@@ -491,22 +403,23 @@ var TaskManager = (() => {
       ...data,
       categories: data.categories || defaultCategories,
       editingTask: null,
-      draggedTaskId: null,
-      _initialized: data.tasks.length > 0
+      draggedTaskId: null
     };
   };
   var persistState = async () => {
-    if (state.tasks.length === 0 && !state._initialized) {
-      return;
+    markLocalSave();
+    try {
+      await saveData({
+        tasks: state.tasks,
+        categories: state.categories,
+        hideCompleted: state.hideCompleted,
+        hideOverdue: state.hideOverdue,
+        showNoTimeLimitOnly: state.showNoTimeLimitOnly,
+        darkMode: state.darkMode
+      });
+      markSaveComplete();
+    } catch {
     }
-    await saveData({
-      tasks: state.tasks,
-      categories: state.categories,
-      hideCompleted: state.hideCompleted,
-      hideOverdue: state.hideOverdue,
-      showNoTimeLimitOnly: state.showNoTimeLimitOnly,
-      darkMode: state.darkMode
-    });
   };
   var getFilteredTasks = () => {
     return state.tasks.filter((t) => {
@@ -514,7 +427,7 @@ var TaskManager = (() => {
         return false;
       if (state.hideCompleted && t.completed)
         return false;
-      if (state.hideOverdue && !t.noTimeLimit && isOverdue(t.dueDate, t.completed, t))
+      if (state.hideOverdue && !t.noTimeLimit && t.dueDate < getTodayStr())
         return false;
       if (state.filterPriority !== "all" && t.priority !== state.filterPriority)
         return false;
@@ -526,22 +439,18 @@ var TaskManager = (() => {
         return a.noTimeLimit ? 1 : -1;
       if (a.completed !== b.completed)
         return a.completed ? 1 : -1;
-      if (a.noTimeLimit && b.noTimeLimit) return b.createdAt - a.createdAt;
+      if (a.noTimeLimit && b.noTimeLimit)
+        return b.createdAt - a.createdAt;
       return parseDate(a.dueDate).getTime() - parseDate(b.dueDate).getTime();
     });
   };
   var addTask = (task) => {
-    const newTask = {
+    state.tasks.push({
       ...task,
       id: generateId(),
       createdAt: Date.now(),
-      completed: false,
-      completedDates: []
-    };
-    if (newTask.repeatType && newTask.repeatType !== "none" && !newTask.noTimeLimit) {
-      newTask.dueDate = getNextOccurrence(newTask);
-    }
-    state.tasks.push(newTask);
+      completed: false
+    });
   };
   var updateTask = (id, updates) => {
     const idx = state.tasks.findIndex((t) => t.id === id);
@@ -555,15 +464,8 @@ var TaskManager = (() => {
   var toggleTask = (id) => {
     const task = state.tasks.find((t) => t.id === id);
     if (task) {
-      if (task.repeatType && task.repeatType !== "none" && !task.noTimeLimit) {
-        if (!task.completedDates)
-          task.completedDates = [];
-        task.completedDates.push(formatDate(/* @__PURE__ */ new Date()));
-        task.dueDate = getNextOccurrence(task);
-      } else {
-        task.completed = !task.completed;
-        task.completedAt = task.completed ? Date.now() : void 0;
-      }
+      task.completed = !task.completed;
+      task.completedAt = task.completed ? Date.now() : void 0;
     }
   };
   var moveTaskToDate = (id, date) => {
@@ -591,63 +493,46 @@ var TaskManager = (() => {
     }
   };
   var getStats = () => {
-    const { currentView, currentDate } = getState();
-    const allTasks = getFilteredTasks();
+    const tasks = getFilteredTasks();
+    const pending = tasks.filter((t) => !t.completed).reduce((s, t) => s + t.duration, 0);
+    const done = tasks.filter((t) => t.completed).reduce((s, t) => s + t.duration, 0);
+    const overdueCount = tasks.filter((t) => !t.completed && !t.noTimeLimit && isOverdue(t.dueDate, false)).length;
     const todayStr = formatDate(/* @__PURE__ */ new Date());
-    let viewTasks;
-    let label;
-    if (currentView === "day") {
-      viewTasks = allTasks.filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, currentDate));
-      label = currentDate === todayStr ? "\u4ECA\u65E5" : getDateLabel(currentDate);
-    } else if (currentView === "week") {
-      const today = parseDate(currentDate);
-      const dow = today.getDay();
-      const monday = new Date(today);
-      monday.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
-      const days = [];
-      for (let i = 0; i < 7; i++) {
-        const d = new Date(monday);
-        d.setDate(monday.getDate() + i);
-        days.push(formatDate(d));
-      }
-      viewTasks = allTasks.filter((t) => !t.noTimeLimit && days.some((d) => isTaskDueOnDate(t, d)));
-      label = "\u672C\u5468";
-    } else if (currentView === "month") {
-      const today = parseDate(currentDate);
-      const year = today.getFullYear();
-      const month = today.getMonth();
-      viewTasks = allTasks.filter((t) => {
-        if (t.noTimeLimit) return false;
-        const td = parseDate(t.dueDate);
-        return td.getFullYear() === year && td.getMonth() === month;
-      });
-      label = `${month + 1}\u6708`;
-    } else {
-      viewTasks = allTasks;
-      label = "";
-    }
-    const pending = viewTasks.filter((t) => !t.completed).reduce((s, t) => s + t.duration, 0);
-    const done = viewTasks.filter((t) => t.completed).reduce((s, t) => s + t.duration, 0);
-    const doneCount = viewTasks.filter((t) => t.completed).length;
-    const totalCount = viewTasks.length;
-    const overdueCount = allTasks.filter((t) => !t.completed && !t.noTimeLimit && isOverdue(t.dueDate, false, t)).length;
-    const todayTasks = allTasks.filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, todayStr));
+    const todayTasks = tasks.filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, todayStr));
     const todayDone = todayTasks.filter((t) => t.completed).length;
-    return { pending, done, overdueCount, todayTotal: todayTasks.length, todayDone, doneCount, totalCount, label, view: currentView };
+    return { pending, done, overdueCount, todayTotal: todayTasks.length, todayDone };
   };
 
   // shared/render.ts
+  var renderSyncIndicator = () => {
+    const status = getSyncStatus();
+    if (status === "idle")
+      return "";
+    const icons = {
+      idle: "",
+      saving: `<span id="syncIndicator" class="p-2 rounded-lg transition text-blue-500" title="\u6B63\u5728\u540C\u6B65...">
+      <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+    </span>`,
+      synced: `<span id="syncIndicator" class="p-2 rounded-lg transition text-green-500" title="\u5DF2\u540C\u6B65">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+    </span>`,
+      "remote-updated": `<span id="syncIndicator" class="p-2 rounded-lg transition text-blue-500" title="\u5DF2\u6536\u5230\u8FDC\u7AEF\u66F4\u65B0">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+    </span>`,
+      error: `<span id="syncIndicator" class="p-2 rounded-lg transition text-red-500" title="\u540C\u6B65\u5931\u8D25">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    </span>`
+    };
+    return icons[status];
+  };
   var renderStats = () => {
     const stats = getStats();
-    const isListView = stats.view === "list";
-    const viewLabel = isListView ? "" : stats.label;
     return `
-    <div class="flex gap-4 p-3 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 mb-4 text-sm items-center flex-wrap">
-      ${viewLabel ? `<span class="font-medium text-blue-500">${viewLabel}</span>` : ""}
-      <div><span class="text-gray-500">\u5F85\u5B8C\u6210:</span><span class="font-medium text-orange-500">${formatHours(stats.pending)}</span></div>
-      <div><span class="text-gray-500">\u5DF2\u5B8C\u6210:</span><span class="font-medium text-green-500">${stats.doneCount}/${stats.totalCount}</span></div>
-      ${isListView ? `<div><span class="text-gray-500">\u4ECA\u65E5:</span><span class="font-medium">${stats.todayDone}/${stats.todayTotal}</span></div>` : ""}
-      ${stats.overdueCount > 0 ? `<div class="text-red-500">${stats.overdueCount}\u9879\u8FC7\u671F</div>` : ""}
+    <div class="flex gap-6 p-3 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 mb-4 text-sm">
+      <div><span class="text-gray-500">\u5F85\u5B8C\u6210\uFF1A</span><span class="font-medium text-orange-500">${formatHours(stats.pending)}</span></div>
+      <div><span class="text-gray-500">\u5DF2\u5B8C\u6210\uFF1A</span><span class="font-medium text-green-500">${formatHours(stats.done)}</span></div>
+      <div><span class="text-gray-500">\u4ECA\u65E5\uFF1A</span><span class="font-medium">${stats.todayDone}/${stats.todayTotal}</span></div>
+      ${stats.overdueCount > 0 ? `<div class="text-red-500">${stats.overdueCount}\u9879\u5DF2\u8FC7\u671F</div>` : ""}
     </div>
   `;
   };
@@ -658,7 +543,7 @@ var TaskManager = (() => {
     <header class="flex items-center justify-between mb-4 flex-wrap gap-3">
       <div class="flex items-center gap-3">
         <h1 class="text-xl font-semibold">\u4EFB\u52A1\u7BA1\u7406</h1>
-        <button id="openFullPage" class="px-2 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition text-sm" title="\u5168\u5C4F\u6253\u5F00">
+        <button id="openFullPage" class="px-2 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition text-sm" title="\u65B0\u6807\u7B7E\u9875\u6253\u5F00">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
         </button>
       </div>
@@ -672,8 +557,15 @@ var TaskManager = (() => {
         <button id="darkModeBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="\u5207\u6362\u6DF1\u8272\u6A21\u5F0F">
           ${darkMode ? '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>' : '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>'}
         </button>
+        ${renderSyncIndicator()}
         ${isNewTab ? `
-        <button id="syncDataBtn" class="px-3 py-1.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 transition text-sm font-medium" title="\u6570\u636E\u540C\u6B65">\u{1F504} \u540C\u6B65</button>
+        <button id="exportBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="\u5BFC\u51FA\u6570\u636E\u5907\u4EFD">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+        </button>
+        <label id="importBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition cursor-pointer" title="\u5BFC\u5165\u6570\u636E\u6062\u590D">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+          <input type="file" id="importFileInput" accept=".json" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">
+        </label>
         <button id="manageCategoryBtn" class="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition text-sm">\u5206\u7C7B</button>
         ` : ""}
         <button id="addTaskBtn" class="px-4 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm font-medium">+ \u6DFB\u52A0</button>
@@ -707,18 +599,18 @@ var TaskManager = (() => {
       </label>
       <label class="flex items-center gap-1 cursor-pointer">
         <input type="checkbox" id="hideOverdue" class="rounded" ${hideOverdue ? "checked" : ""}> 
-        <span>\u9690\u85CF\u8FC7\u671F</span>
+        <span>\u9690\u85CF\u4ECA\u65E5\u4E4B\u524D</span>
       </label>
       <label class="flex items-center gap-1 cursor-pointer">
         <input type="checkbox" id="showNoTimeLimitOnly" class="rounded" ${showNoTimeLimitOnly ? "checked" : ""}> 
-        <span>\u4EFB\u52A1\u6C60</span>
+        <span>\u4EFB\u52A1\u6C60\uFF08\u65E0\u622A\u6B62\u65E5\u671F\uFF09</span>
       </label>
     </div>
   `;
   };
   var renderTaskItem = (task) => {
     const category = getState().categories.find((c) => c.id === task.category);
-    const overdue = !task.noTimeLimit && isOverdue(task.dueDate, task.completed, task);
+    const overdue = !task.noTimeLimit && isOverdue(task.dueDate, task.completed);
     return `
     <div class="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${task.completed ? "opacity-60" : ""} ${task.noTimeLimit ? "border-l-[3px] border-dashed border-gray-300 dark:border-gray-600 pl-3 -ml-3" : ""} ${overdue && !task.completed ? "bg-red-50/50 dark:bg-red-900/10" : ""}" data-task-id="${task.id}" draggable="true">
       <div class="w-2 h-8 rounded ${getPriorityColor(task.priority)} flex-shrink-0"></div>
@@ -733,7 +625,7 @@ var TaskManager = (() => {
         </div>
         <div class="flex items-center gap-3 mt-1 text-xs text-gray-400">
           ${task.duration > 0 ? `<span>${formatHours(task.duration)}</span>` : ""}
-          ${!task.noTimeLimit ? `<span class="${overdue ? "text-red-500 font-medium" : ""}">${getRemainingTime(task)}</span>` : ""}
+          ${!task.noTimeLimit ? `<span class="${overdue ? "text-red-500 font-medium" : ""}">${getRemainingTime(task.dueDate, task.completed)}</span>` : ""}
           ${task.repeatType !== "none" ? `<span class="text-blue-500">\u{1F504}</span>` : ""}
         </div>
         ${task.description ? `<p class="text-sm text-gray-500 mt-1 truncate dark:text-gray-400">${escapeHtml(task.description)}</p>` : ""}
@@ -769,9 +661,9 @@ var TaskManager = (() => {
       return a.localeCompare(b);
     });
     return dates.map((d) => `
-    <div class="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 overflow-hidden mb-4 drop-zone" data-date="${d}">
-      <div class="px-4 py-2 bg-gray-50 dark:bg-gray-900 font-medium text-sm text-gray-600 dark:text-gray-400">
-        ${d === "no-date" ? "\u4EFB\u52A1\u6C60" : getDateLabel(d)}
+    <div class="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 overflow-hidden mb-4">
+      <div class="px-4 py-2 bg-gray-50 dark:bg-gray-900 font-medium text-sm text-gray-600 dark:text-gray-400 drop-zone" data-date="${d}">
+        ${d === "no-date" ? "\u4EFB\u52A1\u6C60\uFF08\u65E0\u622A\u6B62\u65E5\u671F\uFF09" : getDateLabel(d)}
       </div>
       ${(groups.get(d) || []).map((t) => renderTaskItem(t)).join("")}
     </div>
@@ -805,9 +697,8 @@ var TaskManager = (() => {
   var renderWeekView = () => {
     const { currentDate } = getState();
     const today = parseDate(currentDate);
-    const dow = today.getDay();
     const monday = new Date(today);
-    monday.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
+    monday.setDate(today.getDate() - today.getDay() + 1);
     const days = [];
     for (let i = 0; i < 7; i++) {
       const d = new Date(monday);
@@ -815,9 +706,8 @@ var TaskManager = (() => {
       days.push(formatDate(d));
     }
     const todayStr = formatDate(/* @__PURE__ */ new Date());
-    const todayDow = new Date(todayStr).getDay();
     const todayMonday = new Date(todayStr);
-    todayMonday.setDate(new Date(todayStr).getDate() - (todayDow === 0 ? 6 : todayDow - 1));
+    todayMonday.setDate(new Date(todayStr).getDate() - new Date(todayStr).getDay() + 1);
     const isCurrentWeek = formatDate(todayMonday) === formatDate(monday);
     return `
     <div class="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
@@ -1007,18 +897,18 @@ var TaskManager = (() => {
               <input type="checkbox" id="noTimeLimit" name="noTimeLimit" ${task.noTimeLimit ? "checked" : ""} class="rounded"> 
               <span class="text-sm font-medium">\u65E0\u65F6\u95F4\u9650\u5236\uFF08\u4EFB\u52A1\u6C60\uFF09</span>
             </label>
-            <div id="dueDateField" class="grid grid-cols-2 gap-4" style="${task.noTimeLimit ? "opacity:0.5;pointer-events:none" : ""}">
+            <div id="dueDateField" style="${task.noTimeLimit ? "opacity:0.5;pointer-events:none" : ""}">
               <div>
                 <label class="block text-sm font-medium mb-1">\u622A\u6B62\u65E5\u671F</label>
                 <input type="date" name="dueDate" value="${task.dueDate}" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
               </div>
-              <div>
-                <label class="block text-sm font-medium mb-1">\u9884\u8BA1\u65F6\u957F (\u5C0F\u65F6)</label>
-                <div class="flex items-center gap-2">
-                  <button type="button" id="durationDecrease" class="px-3 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">-</button>
-                  <input type="number" name="duration" id="durationInput" value="${(task.duration / 60).toFixed(1)}" min="0.1" step="0.1" class="w-16 text-center px-2 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
-                  <button type="button" id="durationIncrease" class="px-3 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">+</button>
-                </div>
+            </div>
+            <div class="mt-4">
+              <label class="block text-sm font-medium mb-1">\u9884\u8BA1\u65F6\u957F (\u5C0F\u65F6)</label>
+              <div class="flex items-center gap-2">
+                <button type="button" id="durationDecrease" class="px-3 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">-</button>
+                <input type="number" name="duration" id="durationInput" value="${(task.duration / 60).toFixed(1)}" min="0.1" step="0.1" class="w-16 text-center px-2 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
+                <button type="button" id="durationIncrease" class="px-3 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">+</button>
               </div>
             </div>
           </div>
@@ -1099,129 +989,6 @@ var TaskManager = (() => {
     </div>
   `;
   };
-  var renderSyncModal = () => {
-    const { tasks, categories } = getState();
-    return `
-    <style>
-      #syncModal .sync-card {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        padding: 20px 12px;
-        border-radius: 12px;
-        border: 1.5px solid transparent;
-        cursor: pointer;
-        transition: all 0.2s ease;
-        position: relative;
-        overflow: hidden;
-      }
-      #syncModal .sync-card::before {
-        content: '';
-        position: absolute;
-        top: -30px;
-        right: -30px;
-        width: 80px;
-        height: 80px;
-        border-radius: 50%;
-        opacity: 0.08;
-        transition: all 0.2s ease;
-      }
-      #syncModal .sync-card:hover::before { opacity: 0.15; }
-      #syncModal .sync-card:active { transform: scale(0.97); }
-      #syncModal .card-upload {
-        background: #eff6ff;
-        border-color: #bfdbfe;
-      }
-      #syncModal .card-upload::before { background: #3b82f6; }
-      #syncModal .card-upload:hover { border-color: #93c5fd; box-shadow: 0 4px 12px rgba(59,130,246,0.15); }
-      #syncModal .card-download {
-        background: #ecfdf5;
-        border-color: #a7f3d0;
-      }
-      #syncModal .card-download::before { background: #10b981; }
-      #syncModal .card-download:hover { border-color: #6ee7b7; box-shadow: 0 4px 12px rgba(16,185,129,0.15); }
-      .dark #syncModal .card-upload { background: rgba(30,58,138,0.2); border-color: rgba(96,165,250,0.2); }
-      .dark #syncModal .card-upload:hover { border-color: rgba(96,165,250,0.4); box-shadow: 0 4px 12px rgba(59,130,246,0.1); }
-      .dark #syncModal .card-download { background: rgba(6,78,59,0.2); border-color: rgba(52,211,153,0.2); }
-      .dark #syncModal .card-download:hover { border-color: rgba(52,211,153,0.4); box-shadow: 0 4px 12px rgba(16,185,129,0.1); }
-      #syncModal .icon-circle {
-        width: 44px; height: 44px;
-        border-radius: 50%;
-        display: flex; align-items: center; justify-content: center;
-        margin-bottom: 10px;
-        transition: transform 0.2s ease;
-      }
-      #syncModal .sync-card:hover .icon-circle { transform: translateY(-2px); }
-      #syncModal .icon-upload { background: #3b82f6; }
-      #syncModal .icon-download { background: #10b981; }
-      #syncModal .card-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
-      #syncModal .card-upload .card-title { color: #1d4ed8; }
-      #syncModal .card-download .card-title { color: #059669; }
-      .dark #syncModal .card-upload .card-title { color: #93c5fd; }
-      .dark #syncModal .card-download .card-title { color: #6ee7b7; }
-      #syncModal .card-hint { font-size: 11px; color: #9ca3af; }
-      #syncModal .file-btn {
-        flex: 1;
-        display: flex; align-items: center; justify-content: center; gap: 6px;
-        padding: 8px 12px;
-        font-size: 12px;
-        color: #6b7280;
-        border-radius: 8px;
-        cursor: pointer;
-        transition: all 0.15s ease;
-        border: none; background: none;
-      }
-      #syncModal .file-btn:hover { background: #f3f4f6; color: #374151; }
-      .dark #syncModal .file-btn { color: #9ca3af; }
-      .dark #syncModal .file-btn:hover { background: rgba(55,65,81,0.5); color: #d1d5db; }
-      #syncModal .close-btn { padding:6px;border-radius:8px;border:none;background:none;cursor:pointer;color:#9ca3af;transition:all 0.15s; }
-      #syncModal .close-btn:hover { background:#f3f4f6; color:#4b5563; }
-      .dark #syncModal .close-btn:hover { background:rgba(55,65,81,0.5); color:#d1d5db; }
-    </style>
-    <div id="syncModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
-      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[90%] max-w-md overflow-hidden" style="border-radius:16px;">
-        <div style="padding:20px 24px 16px;">
-          <div class="flex items-center justify-between">
-            <h2 class="text-lg font-semibold" style="color:#111827;">\u6570\u636E\u540C\u6B65</h2>
-            <button id="closeSyncModal" class="close-btn">
-              <svg style="width:18px;height:18px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-          </div>
-          <p style="font-size:12px;color:#9ca3af;margin-top:4px;">${tasks.length} \u4E2A\u4EFB\u52A1 \u00B7 ${categories.length} \u4E2A\u5206\u7C7B \u00B7 \u901A\u8FC7 Chrome Sync \u540C\u6B65</p>
-        </div>
-        <div style="padding:0 24px 20px;">
-          <div class="flex gap-3">
-            <button id="forceUploadBtn" class="sync-card card-upload">
-              <div class="icon-circle icon-upload">
-                <svg style="width:20px;height:20px;color:white;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
-              </div>
-              <div class="card-title">\u4E0A\u4F20\u5230\u4E91\u7AEF</div>
-              <div class="card-hint">\u672C\u673A \u2192 \u4E91\u7AEF</div>
-            </button>
-            <button id="forceDownloadBtn" class="sync-card card-download">
-              <div class="icon-circle icon-download">
-                <svg style="width:20px;height:20px;color:white;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/></svg>
-              </div>
-              <div class="card-title">\u4ECE\u4E91\u7AEF\u62C9\u53D6</div>
-              <div class="card-hint">\u4E91\u7AEF \u2192 \u672C\u673A</div>
-            </button>
-          </div>
-        </div>
-        <div class="flex border-t dark:border-gray-700" style="padding:10px 24px;">
-          <button id="exportFileBtn" class="file-btn">
-            <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-            \u5BFC\u51FA\u6587\u4EF6
-          </button>
-          <button id="importFileBtn" class="file-btn">
-            <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-            \u5BFC\u5165\u6587\u4EF6
-          </button>
-        </div>
-      </div>
-    </div>
-  `;
-  };
   var renderApp = (container) => {
     const { darkMode } = getState();
     if (darkMode) {
@@ -1237,7 +1004,6 @@ var TaskManager = (() => {
       ${renderTaskList()}
       ${renderModal()}
       ${renderCategoryModal()}
-      ${renderSyncModal()}
     </div>
   `;
   };
@@ -1434,18 +1200,13 @@ var TaskManager = (() => {
       resetEditingTask();
       reRender();
     });
-    let taskModalMouseDownInside = false;
-    container.querySelector("#taskModal")?.addEventListener("mousedown", (e) => {
-      taskModalMouseDownInside = e.target !== e.currentTarget;
-    });
     container.querySelector("#taskModal")?.addEventListener("click", (e) => {
-      if (e.target === e.currentTarget && !taskModalMouseDownInside) {
+      if (e.target === e.currentTarget) {
         const modal = container.querySelector("#taskModal");
         modal?.classList.add("hidden");
         resetEditingTask();
         reRender();
       }
-      taskModalMouseDownInside = false;
     });
     container.querySelector("#deleteTaskBtn")?.addEventListener("click", async () => {
       const { editingTask } = getState();
@@ -1498,16 +1259,11 @@ var TaskManager = (() => {
         const modal = container.querySelector("#categoryModal");
         modal?.classList.add("hidden");
       });
-      let catModalMouseDownInside = false;
-      container.querySelector("#categoryModal")?.addEventListener("mousedown", (e) => {
-        catModalMouseDownInside = e.target !== e.currentTarget;
-      });
       container.querySelector("#categoryModal")?.addEventListener("click", (e) => {
-        if (e.target === e.currentTarget && !catModalMouseDownInside) {
+        if (e.target === e.currentTarget) {
           const modal = container.querySelector("#categoryModal");
           modal?.classList.add("hidden");
         }
-        catModalMouseDownInside = false;
       });
       container.querySelector("#createCategoryBtn")?.addEventListener("click", async () => {
         const nameInput = container.querySelector("#newCategoryName");
@@ -1556,136 +1312,30 @@ var TaskManager = (() => {
           }
         });
       });
+      container.querySelector("#exportBtn")?.addEventListener("click", async () => {
+        try {
+          await downloadExportFile();
+          showToast(container, "\u6570\u636E\u5DF2\u5BFC\u51FA\u6210\u529F\uFF01", "success");
+        } catch (err) {
+          showToast(container, "\u5BFC\u51FA\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5", "error");
+        }
+      });
+      const importInput = container.querySelector("#importFileInput");
+      importInput?.addEventListener("change", async (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          const result = await importDataFromFile(file);
+          if (result.success) {
+            await loadState();
+            reRender();
+            showToast(container, "\u6570\u636E\u5BFC\u5165\u6210\u529F\uFF01", "success");
+          } else {
+            showToast(container, result.error || "\u5BFC\u5165\u5931\u8D25", "error");
+          }
+          importInput.value = "";
+        }
+      });
     }
-        container.querySelector("#syncDataBtn")?.addEventListener("click", () => {
-      container.querySelector("#syncModal")?.classList.remove("hidden");
-    });
-    container.querySelector("#closeSyncModal")?.addEventListener("click", () => {
-      container.querySelector("#syncModal")?.classList.add("hidden");
-    });
-    container.querySelector("#syncModal")?.addEventListener("click", (e) => {
-      if (e.target === e.currentTarget) e.currentTarget.classList.add("hidden");
-    });
-    container.querySelector("#forceUploadBtn")?.addEventListener("click", async () => {
-      const btn = container.querySelector("#forceUploadBtn");
-      const origHTML = btn.innerHTML;
-      btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg><span>上传中...</span>';
-      btn.disabled = true;
-      btn.style.opacity = "0.7";
-      btn.style.cursor = "wait";
-      try {
-        const uploadData = { tasks: state.tasks, categories: state.categories, hideCompleted: state.hideCompleted, hideOverdue: state.hideOverdue, showNoTimeLimitOnly: state.showNoTimeLimitOnly, darkMode: state.darkMode };
-        console.log("[TaskMaster] forceUpload:", { taskCount: uploadData.tasks.length, catCount: uploadData.categories.length, cats: uploadData.categories.map(c => c.name) });
-        await saveData(uploadData);
-        console.log("[TaskMaster] forceUpload: saveData completed successfully");
-        btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg><span>上传成功！</span>';
-        btn.style.borderColor = "#22c55e";
-        btn.style.background = "#ecfdf5";
-        showToast(container, "上传成功！数据已同步到云端", "success");
-      } catch (err) {
-        console.error("[TaskMaster] forceUpload error:", err);
-        btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg><span>上传失败</span>';
-        btn.style.borderColor = "#ef4444";
-        btn.style.background = "#fef2f2";
-        showToast(container, "上传失败: " + (err?.message || "网络异常"), "error");
-      }
-      setTimeout(() => { btn.innerHTML = origHTML; btn.disabled = false; btn.style.opacity = ""; btn.style.cursor = ""; btn.style.borderColor = ""; btn.style.background = ""; }, 2000);
-    });
-    container.querySelector("#forceDownloadBtn")?.addEventListener("click", async () => {
-      const btn = container.querySelector("#forceDownloadBtn");
-      const origHTML = btn.innerHTML;
-      btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg><span>拉取中...</span>';
-      btn.disabled = true;
-      btn.classList.add("opacity-70","cursor-wait");
-      try {
-        const data = await loadData();
-        const taskCount = (data.tasks || []).length;
-        const catCount = (data.categories || []).length;
-        console.log("[TaskMaster] forceDownload result:", { taskCount, catCount, categories: data.categories?.map(c => c.name) });
-        if (taskCount === 0 && catCount <= 3) {
-          const hasDefaultCats = (data.categories || []).every(c => ["\u5DE5\u4F5C","\u751F\u6D3B","\u5B66\u4E60"].includes(c.name));
-          if (hasDefaultCats) {
-            console.log("[TaskMaster] cloud data is empty/default, skipping overwrite");
-            const newModal = container.querySelector("#syncModal");
-            const newBtn = newModal?.querySelector("#forceDownloadBtn");
-            if (newBtn) {
-              newBtn.innerHTML = '<span>\u4E91\u7AEF\u65E0\u6570\u636E</span>';
-              setTimeout(() => { newBtn.innerHTML = origHTML; newBtn.disabled = false; newBtn.classList.remove("opacity-70","cursor-wait"); }, 2000);
-            }
-            showToast(container, "\u4E91\u7AEF\u65E0\u6570\u636E\uFF0C\u8BF7\u786E\u8BA4\u8BBE\u5907\u5DF2\u767B\u5F55\u540C\u4E00 Chrome \u8D26\u53F7\u4E14\u5F00\u542F\u4E86\u6269\u5C55\u7A0B\u5E8F\u540C\u6B65", "error");
-            return;
-          }
-        }
-        state = {
-          ...state,
-          ...data,
-          categories: data.categories || state.categories,
-          editingTask: null,
-          draggedTaskId: null,
-          _initialized: true
-        };
-        reRender();
-        const newModal = container.querySelector("#syncModal");
-        if (newModal) {
-          const newBtn = newModal.querySelector("#forceDownloadBtn");
-          if (newBtn) {
-            newBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg><span>\u62C9\u53D6\u6210\u529F\uFF01</span>';
-            setTimeout(() => { newBtn.innerHTML = origHTML; newBtn.disabled = false; newBtn.classList.remove("opacity-70","cursor-wait"); }, 2000);
-          }
-        }
-        showToast(container, `\u62C9\u53D6\u6210\u529F\uFF01${taskCount} \u4E2A\u4EFB\u52A1\uFF0C${catCount} \u4E2A\u5206\u7C7B`, "success");
-      } catch (err) {
-        console.error("[TaskMaster] forceDownload error:", err);
-        const newModal = container.querySelector("#syncModal");
-        if (newModal) {
-          const newBtn = newModal.querySelector("#forceDownloadBtn");
-          if (newBtn) {
-            newBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg><span>\u62C9\u53D6\u5931\u8D25</span>';
-            setTimeout(() => { newBtn.innerHTML = origHTML; newBtn.disabled = false; newBtn.classList.remove("opacity-70","cursor-wait"); }, 2000);
-          }
-        }
-        showToast(container, "\u62C9\u53D6\u5931\u8D25: " + (err?.message || "\u65E0\u6CD5\u8BFB\u53D6\u4E91\u7AEF"), "error");
-      }
-    });
-    container.querySelector("#exportFileBtn")?.addEventListener("click", async () => {
-      try {
-        await downloadExportFile();
-        showToast(container, "导出成功！", "success");
-      } catch (err) {
-        showToast(container, "导出失败", "error");
-      }
-    });
-    container.querySelector("#importFileBtn")?.addEventListener("click", () => {
-      let fi = document.getElementById("_syncFileInput");
-      if (!fi) {
-        fi = document.createElement("input");
-        fi.id = "_syncFileInput";
-        fi.type = "file";
-        fi.accept = ".json";
-        fi.style.cssText = "position:fixed;top:-100px;opacity:0;";
-        fi.addEventListener("change", async () => {
-          const file = fi.files?.[0];
-          if (file) {
-            try {
-              const result = await importDataFromFile(file);
-              if (result.success) {
-                state._initialized = true;
-                await loadState();
-                reRender();
-                showToast(currentContainer, "导入成功！", "success");
-              } else {
-                showToast(currentContainer, result.error || "导入失败", "error");
-              }
-            } catch (err) {
-              showToast(currentContainer, "导入失败", "error");
-            }
-          }
-        });
-        document.body.appendChild(fi);
-      }
-      fi.value = "";
-      fi.click();
-    });
     setupDragAndDrop(container);
   };
   var setupDragAndDrop = (container) => {
@@ -1743,22 +1393,11 @@ var TaskManager = (() => {
         e.preventDefault();
         zone.classList.remove("bg-blue-100", "dark:bg-blue-900/30");
         const date = zone.dataset.date;
-        if (!draggedTaskId || !date)
-          return;
-        const task = getState().tasks.find((t) => t.id === draggedTaskId);
-        if (!task)
-          return;
-        const currentKey = task.noTimeLimit ? "no-date" : task.dueDate;
-        if (currentKey === date)
-          return;
-        if (date === "no-date") {
-          task.dueDate = "";
-          task.noTimeLimit = true;
-        } else {
+        if (draggedTaskId && date && date !== "no-date") {
           moveTaskToDate(draggedTaskId, date);
+          await persistState();
+          reRender();
         }
-        await persistState();
-        reRender();
       });
     });
   };
@@ -1781,36 +1420,23 @@ var TaskManager = (() => {
       console.error("Container #app not found");
       return;
     }
-    loadState().then(() => {
+    const reRender2 = () => {
       renderApp(container);
       attachEventListeners(container);
+    };
+    loadState().then(async () => {
+      await persistState();
+      renderApp(container);
+      attachEventListeners(container);
+      initSyncMonitor(reRender2);
+      onSyncStatusChange(() => {
+        const indicator = container.querySelector("#syncIndicator");
+        if (indicator) {
+          reRender2();
+        }
+      });
     }).catch((err) => {
       console.error("Failed to initialize app:", err);
-    });
-    chrome.storage.onChanged.addListener((changes, area) => {
-      if (area === "sync" && (changes.tm_meta || changes.tm_tasks_0 || changes.tm_index)) {
-        // 如果 sync 数据被清空（另一台设备卸载插件），用内存数据写回
-        const metaChange = changes.tm_meta;
-        if (metaChange && metaChange.newValue === undefined) {
-          console.warn("[TaskMaster] 检测到sync被清空，从内存回写数据");
-          const current = state;
-          if (current.tasks && current.tasks.length > 0) {
-            saveData({
-              tasks: current.tasks,
-              categories: current.categories,
-              hideCompleted: current.hideCompleted,
-              hideOverdue: current.hideOverdue,
-              showNoTimeLimitOnly: current.showNoTimeLimitOnly,
-              darkMode: current.darkMode
-            }).catch(() => {});
-          }
-          return;
-        }
-        loadState().then(() => {
-          state._initialized = true;
-          reRender();
-        });
-      }
     });
   }
   if (document.readyState === "loading") {

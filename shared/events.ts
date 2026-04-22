@@ -273,7 +273,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
     }
   })
 
-  // 无时间限制切换
+  // 无时间限制切换（只影响截止日期，不影响预计时长）
   container.querySelector('#noTimeLimit')?.addEventListener('change', (e) => {
     const dueDateField = container.querySelector('#dueDateField') as HTMLElement
     if (dueDateField) {

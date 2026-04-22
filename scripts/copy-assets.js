@@ -26,33 +26,21 @@ function copyDir(src, dest) {
   }
 }
 
-// Copy manifest
-cpSync(join(rootDir, 'manifest.json'), join(rootDir, 'dist/manifest.json'))
-cpSync(join(rootDir, 'manifest.json'), join(rootDir, 'chrome-extension-loadable/manifest.json'))
+const syncDir = join(rootDir, 'chrome-extension-sync')
 
 // Copy HTML files
-cpSync(join(rootDir, 'popup/popup.html'), join(rootDir, 'dist/popup/popup.html'))
-cpSync(join(rootDir, 'popup/popup.html'), join(rootDir, 'chrome-extension-loadable/popup/popup.html'))
-
-cpSync(join(rootDir, 'newtab/newtab.html'), join(rootDir, 'dist/newtab/newtab.html'))
-cpSync(join(rootDir, 'newtab/newtab.html'), join(rootDir, 'chrome-extension-loadable/newtab/newtab.html'))
+cpSync(join(rootDir, 'popup/popup.html'), join(syncDir, 'popup/popup.html'))
+cpSync(join(rootDir, 'newtab/newtab.html'), join(syncDir, 'newtab/newtab.html'))
 
 // Copy JS files (IIFE bundles)
-cpSync(join(rootDir, 'popup/popup.js'), join(rootDir, 'dist/popup/popup.js'))
-cpSync(join(rootDir, 'popup/popup.js'), join(rootDir, 'chrome-extension-loadable/popup/popup.js'))
-
-cpSync(join(rootDir, 'newtab/newtab.js'), join(rootDir, 'dist/newtab/newtab.js'))
-cpSync(join(rootDir, 'newtab/newtab.js'), join(rootDir, 'chrome-extension-loadable/newtab/newtab.js'))
-
-cpSync(join(rootDir, 'background.js'), join(rootDir, 'dist/background.js'))
-cpSync(join(rootDir, 'background.js'), join(rootDir, 'chrome-extension-loadable/background.js'))
+cpSync(join(rootDir, 'popup/popup.js'), join(syncDir, 'popup/popup.js'))
+cpSync(join(rootDir, 'newtab/newtab.js'), join(syncDir, 'newtab/newtab.js'))
+cpSync(join(rootDir, 'background.js'), join(syncDir, 'background.js'))
 
 // Copy CSS
-cpSync(join(rootDir, 'styles/main.css'), join(rootDir, 'dist/styles/main.css'))
-cpSync(join(rootDir, 'styles/main.css'), join(rootDir, 'chrome-extension-loadable/styles/main.css'))
+cpSync(join(rootDir, 'styles/main.css'), join(syncDir, 'styles/main.css'))
 
 // Copy icons
-copyDir(join(rootDir, 'icons'), join(rootDir, 'dist/icons'))
-copyDir(join(rootDir, 'icons'), join(rootDir, 'chrome-extension-loadable/icons'))
+copyDir(join(rootDir, 'icons'), join(syncDir, 'icons'))
 
 console.log('Assets copied successfully!')

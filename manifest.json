@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "任务管理 - TaskMaster",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "功能完整的任务管理工具，支持列表/日/周/月视图，帮助你高效管理日常任务",
   "short_name": "任务管理",
   "permissions": ["storage"],

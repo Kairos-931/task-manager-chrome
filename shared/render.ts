@@ -111,11 +111,11 @@ export const renderFilters = (): string => {
       </label>
       <label class="flex items-center gap-1 cursor-pointer">
         <input type="checkbox" id="hideOverdue" class="rounded" ${hideOverdue ? 'checked' : ''}> 
-        <span>隐藏过期</span>
+        <span>隐藏今日之前</span>
       </label>
       <label class="flex items-center gap-1 cursor-pointer">
         <input type="checkbox" id="showNoTimeLimitOnly" class="rounded" ${showNoTimeLimitOnly ? 'checked' : ''}> 
-        <span>任务池</span>
+        <span>任务池（无截止日期）</span>
       </label>
     </div>
   `
@@ -175,7 +175,7 @@ export const renderListView = (): string => {
   return dates.map(d => `
     <div class="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 overflow-hidden mb-4">
       <div class="px-4 py-2 bg-gray-50 dark:bg-gray-900 font-medium text-sm text-gray-600 dark:text-gray-400 drop-zone" data-date="${d}">
-        ${d === 'no-date' ? '任务池' : getDateLabel(d)}
+        ${d === 'no-date' ? '任务池（无截止日期）' : getDateLabel(d)}
       </div>
       ${(groups.get(d) || []).map(t => renderTaskItem(t)).join('')}
     </div>
@@ -410,18 +410,18 @@ export const renderModal = (): string => {
               <input type="checkbox" id="noTimeLimit" name="noTimeLimit" ${task.noTimeLimit ? 'checked' : ''} class="rounded"> 
               <span class="text-sm font-medium">无时间限制（任务池）</span>
             </label>
-            <div id="dueDateField" class="grid grid-cols-2 gap-4" style="${task.noTimeLimit ? 'opacity:0.5;pointer-events:none' : ''}">
+            <div id="dueDateField" style="${task.noTimeLimit ? 'opacity:0.5;pointer-events:none' : ''}">
               <div>
                 <label class="block text-sm font-medium mb-1">截止日期</label>
                 <input type="date" name="dueDate" value="${task.dueDate}" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
               </div>
-              <div>
-                <label class="block text-sm font-medium mb-1">预计时长 (小时)</label>
-                <div class="flex items-center gap-2">
-                  <button type="button" id="durationDecrease" class="px-3 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">-</button>
-                  <input type="number" name="duration" id="durationInput" value="${(task.duration / 60).toFixed(1)}" min="0.1" step="0.1" class="w-16 text-center px-2 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
-                  <button type="button" id="durationIncrease" class="px-3 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">+</button>
-                </div>
+            </div>
+            <div class="mt-4">
+              <label class="block text-sm font-medium mb-1">预计时长 (小时)</label>
+              <div class="flex items-center gap-2">
+                <button type="button" id="durationDecrease" class="px-3 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">-</button>
+                <input type="number" name="duration" id="durationInput" value="${(task.duration / 60).toFixed(1)}" min="0.1" step="0.1" class="w-16 text-center px-2 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
+                <button type="button" id="durationIncrease" class="px-3 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">+</button>
               </div>
             </div>
           </div>
