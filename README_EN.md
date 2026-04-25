@@ -14,6 +14,8 @@ A full-featured Chrome browser task management extension with four views, catego
 - **Drag & Drop** — Drag tasks to different dates
 - **Dark Mode** — One-click light/dark theme toggle
 - **Data Sync** — Cross-device sync via chrome.storage.sync, with chrome.storage.local fallback to prevent data loss
+- **Sync Management Panel** — Manual upload to cloud, download from cloud, export file, import file
+- **Conflict Merge** — Multi-device offline edits auto-merge by timestamp, no data lost
 - **Import & Export** — JSON format backup and restore
 - **Dual Mode** — Popup for quick access + full-screen management page
 
@@ -135,7 +137,7 @@ npm run copy         # Copy assets only
 
 See [CHANGELOG.md](CHANGELOG.md) for the full development history.
 
-This project went through 18 iterations — evolving from a Vite full-stack architecture to a pure Chrome extension, with cross-device sync, Eisenhower matrix migration, and open-source release in the final version.
+This project went through 20+ iterations, evolving from a Vite full-stack architecture to a pure Chrome extension, with unified storage, sync management panel, and multi-device conflict merge in v1.2.0.
 
 ## License
 
