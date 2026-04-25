@@ -3,6 +3,7 @@ import { getState, setState, resetEditingTask, formatDate, parseDate, persistSta
 import { toggleTask as toggleTaskAction, deleteTask as deleteTaskAction, addTask, updateTask, addCategory, updateCategory, deleteCategory as deleteCategoryAction } from './task'
 import { renderApp } from './render'
 import { downloadExportFile, importDataFromFile } from './storage'
+import { showToast } from './sync'
 
 let draggedTaskId: string | null = null
 let currentContainer: HTMLElement | null = null
@@ -397,6 +398,73 @@ export const attachEventListeners = (container: HTMLElement): void => {
         importInput.value = ''
       }
     })
+
+    // ==================== 同步面板 ====================
+    container.querySelector('#syncDataBtn')?.addEventListener('click', () => {
+      const modal = container.querySelector('#syncModal') as HTMLElement
+      modal?.classList.remove('hidden')
+    })
+
+    container.querySelector('#closeSyncModal')?.addEventListener('click', () => {
+      const modal = container.querySelector('#syncModal') as HTMLElement
+      modal?.classList.add('hidden')
+    })
+
+    container.querySelector('#syncModal')?.addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) {
+        const modal = container.querySelector('#syncModal') as HTMLElement
+        modal?.classList.add('hidden')
+      }
+    })
+
+    container.querySelector('#forceUploadBtn')?.addEventListener('click', async () => {
+      try {
+        await persistState()
+        showToast(container, '已上传到云端', 'success')
+      } catch {
+        showToast(container, '上传失败', 'error')
+      }
+    })
+
+    container.querySelector('#forceDownloadBtn')?.addEventListener('click', async () => {
+      try {
+        await loadState()
+        reRender()
+        showToast(container, '已从云端拉取', 'success')
+      } catch {
+        showToast(container, '拉取失败', 'error')
+      }
+    })
+
+    container.querySelector('#exportFileBtn')?.addEventListener('click', async () => {
+      try {
+        await downloadExportFile()
+        showToast(container, '数据已导出', 'success')
+      } catch {
+        showToast(container, '导出失败', 'error')
+      }
+    })
+
+    container.querySelector('#importFileBtn')?.addEventListener('click', () => {
+      const input = container.querySelector('#syncImportInput') as HTMLInputElement
+      input?.click()
+    })
+
+    const syncImportInput = container.querySelector('#syncImportInput') as HTMLInputElement
+    syncImportInput?.addEventListener('change', async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (file) {
+        const result = await importDataFromFile(file)
+        if (result.success) {
+          await loadState()
+          reRender()
+          showToast(container, '数据导入成功', 'success')
+        } else {
+          showToast(container, result.error || '导入失败', 'error')
+        }
+        syncImportInput.value = ''
+      }
+    })
   }
 
   // 拖拽功能
@@ -469,18 +537,3 @@ const setupDragAndDrop = (container: HTMLElement): void => {
   })
 }
 
-// ==================== Toast 提示 ====================
-function showToast(container: HTMLElement, message: string, type: 'success' | 'error' = 'success') {
-  // 移除已存在的 toast
-  const existingToast = container.querySelector('.toast-message')
-  existingToast?.remove()
-
-  const toast = document.createElement('div')
-  toast.className = `toast-message fixed bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm z-50 ${type === 'success' ? 'bg-green-500' : 'bg-red-500'}`
-  toast.textContent = message
-  document.body.appendChild(toast)
-
-  setTimeout(() => {
-    toast.remove()
-  }, 3000)
-}

@@ -70,13 +70,9 @@ export const renderHeader = (): string => {
         </button>
         ${renderSyncIndicator()}
         ${isNewTab ? `
-        <button id="exportBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="导出数据备份">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+        <button id="syncDataBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="数据同步">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
         </button>
-        <label id="importBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition cursor-pointer" title="导入数据恢复">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-          <input type="file" id="importFileInput" accept=".json" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">
-        </label>
         <button id="manageCategoryBtn" class="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition text-sm">分类</button>
         ` : ''}
         <button id="addTaskBtn" class="px-4 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm font-medium">+ 添加</button>
@@ -504,6 +500,131 @@ export const renderCategoryModal = (): string => {
   `
 }
 
+export const renderSyncModal = (): string => {
+  const { tasks, categories } = getState()
+  return `
+    <style>
+      #syncModal .sync-card {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 20px 12px;
+        border-radius: 12px;
+        border: 1.5px solid transparent;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        position: relative;
+        overflow: hidden;
+      }
+      #syncModal .sync-card::before {
+        content: '';
+        position: absolute;
+        top: -30px;
+        right: -30px;
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        opacity: 0.08;
+        transition: all 0.2s ease;
+      }
+      #syncModal .sync-card:hover::before { opacity: 0.15; }
+      #syncModal .sync-card:active { transform: scale(0.97); }
+      #syncModal .card-upload {
+        background: #eff6ff;
+        border-color: #bfdbfe;
+      }
+      #syncModal .card-upload::before { background: #3b82f6; }
+      #syncModal .card-upload:hover { border-color: #93c5fd; box-shadow: 0 4px 12px rgba(59,130,246,0.15); }
+      #syncModal .card-download {
+        background: #ecfdf5;
+        border-color: #a7f3d0;
+      }
+      #syncModal .card-download::before { background: #10b981; }
+      #syncModal .card-download:hover { border-color: #6ee7b7; box-shadow: 0 4px 12px rgba(16,185,129,0.15); }
+      .dark #syncModal .card-upload { background: rgba(30,58,138,0.2); border-color: rgba(96,165,250,0.2); }
+      .dark #syncModal .card-upload:hover { border-color: rgba(96,165,250,0.4); box-shadow: 0 4px 12px rgba(59,130,246,0.1); }
+      .dark #syncModal .card-download { background: rgba(6,78,59,0.2); border-color: rgba(52,211,153,0.2); }
+      .dark #syncModal .card-download:hover { border-color: rgba(52,211,153,0.4); box-shadow: 0 4px 12px rgba(16,185,129,0.1); }
+      #syncModal .icon-circle {
+        width: 44px; height: 44px;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        margin-bottom: 10px;
+        transition: transform 0.2s ease;
+      }
+      #syncModal .sync-card:hover .icon-circle { transform: translateY(-2px); }
+      #syncModal .icon-upload { background: #3b82f6; }
+      #syncModal .icon-download { background: #10b981; }
+      #syncModal .card-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+      #syncModal .card-upload .card-title { color: #1d4ed8; }
+      #syncModal .card-download .card-title { color: #059669; }
+      .dark #syncModal .card-upload .card-title { color: #93c5fd; }
+      .dark #syncModal .card-download .card-title { color: #6ee7b7; }
+      #syncModal .card-hint { font-size: 11px; color: #9ca3af; }
+      #syncModal .file-btn {
+        flex: 1;
+        display: flex; align-items: center; justify-content: center; gap: 6px;
+        padding: 8px 12px;
+        font-size: 12px;
+        color: #6b7280;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        border: none; background: none;
+      }
+      #syncModal .file-btn:hover { background: #f3f4f6; color: #374151; }
+      .dark #syncModal .file-btn { color: #9ca3af; }
+      .dark #syncModal .file-btn:hover { background: rgba(55,65,81,0.5); color: #d1d5db; }
+      #syncModal .close-btn { padding:6px;border-radius:8px;border:none;background:none;cursor:pointer;color:#9ca3af;transition:all 0.15s; }
+      #syncModal .close-btn:hover { background:#f3f4f6; color:#4b5563; }
+      .dark #syncModal .close-btn:hover { background:rgba(55,65,81,0.5); color:#d1d5db; }
+    </style>
+    <div id="syncModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[90%] max-w-md overflow-hidden" style="border-radius:16px;">
+        <div style="padding:20px 24px 16px;">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-semibold" style="color:#111827;">数据同步</h2>
+            <button id="closeSyncModal" class="close-btn">
+              <svg style="width:18px;height:18px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <p style="font-size:12px;color:#9ca3af;margin-top:4px;">${tasks.length} 个任务 · ${categories.length} 个分类 · 通过 Chrome Sync 同步</p>
+        </div>
+        <div style="padding:0 24px 20px;">
+          <div class="flex gap-3">
+            <button id="forceUploadBtn" class="sync-card card-upload">
+              <div class="icon-circle icon-upload">
+                <svg style="width:20px;height:20px;color:white;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+              </div>
+              <div class="card-title">上传到云端</div>
+              <div class="card-hint">本机 → 云端</div>
+            </button>
+            <button id="forceDownloadBtn" class="sync-card card-download">
+              <div class="icon-circle icon-download">
+                <svg style="width:20px;height:20px;color:white;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/></svg>
+              </div>
+              <div class="card-title">从云端拉取</div>
+              <div class="card-hint">云端 → 本机</div>
+            </button>
+          </div>
+        </div>
+        <div class="flex border-t dark:border-gray-700" style="padding:10px 24px;">
+          <button id="exportFileBtn" class="file-btn">
+            <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            导出文件
+          </button>
+          <button id="importFileBtn" class="file-btn">
+            <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+            导入文件
+          </button>
+        </div>
+      </div>
+    </div>
+    <input type="file" id="syncImportInput" accept=".json" style="opacity:0;position:absolute;pointer-events:none;">
+  `
+}
+
 export const renderApp = (container: HTMLElement): void => {
   const { darkMode } = getState()
   if (darkMode) {
@@ -519,6 +640,7 @@ export const renderApp = (container: HTMLElement): void => {
       ${renderTaskList()}
       ${renderModal()}
       ${renderCategoryModal()}
+      ${renderSyncModal()}
     </div>
   `
 }

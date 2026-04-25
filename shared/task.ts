@@ -161,11 +161,13 @@ export const getFilteredTasks = (): Task[] => {
   })
 }
 
-export const addTask = (task: Omit<Task, 'id' | 'createdAt' | 'completed' | 'completedAt'>): void => {
+export const addTask = (task: Omit<Task, 'id' | 'createdAt' | 'completed' | 'completedAt' | 'updatedAt'>): void => {
+  const now = Date.now()
   state.tasks.push({
     ...task,
     id: generateId(),
-    createdAt: Date.now(),
+    createdAt: now,
+    updatedAt: now,
     completed: false
   })
 }
@@ -173,7 +175,7 @@ export const addTask = (task: Omit<Task, 'id' | 'createdAt' | 'completed' | 'com
 export const updateTask = (id: string, updates: Partial<Task>): void => {
   const idx = state.tasks.findIndex(t => t.id === id)
   if (idx !== -1) {
-    state.tasks[idx] = { ...state.tasks[idx], ...updates }
+    state.tasks[idx] = { ...state.tasks[idx], ...updates, updatedAt: Date.now() }
   }
 }
 
@@ -186,6 +188,7 @@ export const toggleTask = (id: string): void => {
   if (task) {
     task.completed = !task.completed
     task.completedAt = task.completed ? Date.now() : undefined
+    task.updatedAt = Date.now()
   }
 }
 
@@ -194,6 +197,7 @@ export const moveTaskToDate = (id: string, date: string): void => {
   if (task) {
     task.dueDate = date
     task.noTimeLimit = false
+    task.updatedAt = Date.now()
   }
 }
 

@@ -1,12 +1,11 @@
-// Sync monitoring module
 import { loadState, persistState, getState } from './task'
-import { STORAGE_KEY } from './storage'
+import { mergeRemoteData } from './storage'
 
 export type SyncStatus = 'idle' | 'saving' | 'synced' | 'remote-updated' | 'error'
 
 let syncStatus: SyncStatus = 'idle'
 let statusChangeCallback: ((status: SyncStatus) => void) | null = null
-let localSaveTime = 0 // timestamp of last local save start
+let localSaveTime = 0
 let statusTimeoutId: ReturnType<typeof setTimeout> | null = null
 let reRenderFn: (() => void) | null = null
 
@@ -17,20 +16,16 @@ const setSyncStatus = (status: SyncStatus) => {
   statusChangeCallback?.(status)
 }
 
-/** Register a callback to be called when sync status changes */
 export const onSyncStatusChange = (cb: (status: SyncStatus) => void) => {
   statusChangeCallback = cb
 }
 
-/** Call before chrome.storage.sync.set to mark this as a local write */
 export const markLocalSave = () => {
   localSaveTime = Date.now()
 }
 
-/** Call after chrome.storage.sync.set completes */
 export const markSaveComplete = () => {
   setSyncStatus('synced')
-  // Auto-transition to idle after 3 seconds
   if (statusTimeoutId) clearTimeout(statusTimeoutId)
   statusTimeoutId = setTimeout(() => {
     if (syncStatus === 'synced') {
@@ -40,58 +35,51 @@ export const markSaveComplete = () => {
   }, 3000)
 }
 
-/** Initialize the chrome.storage.onChanged listener */
 export const initSyncMonitor = (reRender: () => void) => {
   reRenderFn = reRender
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'sync') return
-    if (!changes[STORAGE_KEY]) return
 
     const now = Date.now()
-    // If we recently started a local save (within 2 seconds), ignore this change
     if (localSaveTime > 0 && now - localSaveTime < 2000) {
       return
     }
 
-    const change = changes[STORAGE_KEY]
-    const isEmpty = !change || change.newValue === undefined || change.newValue === null || change.newValue === ''
-    console.warn('[TaskManager] sync onChanged:', { isEmpty, hasNewValue: !!change?.newValue })
+    const hasMetaChange = !!changes['tm_meta']
+    const hasChunkChange = Object.keys(changes).some(k => k.startsWith('tm_tasks_'))
+    if (!hasMetaChange && !hasChunkChange) return
 
-    // Protection: if newValue is undefined/empty, this is likely an uninstall cleanup
-    // from another device. Immediately re-save our data to sync to restore it.
-    if (isEmpty) {
+    const metaChange = changes['tm_meta']
+    if (metaChange && metaChange.newValue === undefined) {
       const current = getState()
       if (current.tasks.length > 0 || current.categories.length > 0) {
-        console.warn('[TaskManager] 检测到sync被清空，从内存回写数据')
-        // We have data in memory, write it back to sync to undo the clearing
+        console.warn('[TaskMaster] 检测到sync被清空，从内存回写数据')
         markLocalSave()
         persistState().catch(() => {})
       }
       return
     }
 
-    // This is a remote change from another device/tab
     setSyncStatus('remote-updated')
-    loadState().then(() => {
-      reRender()
-      // Show toast notification
-      showSyncToast()
-      // Auto-transition to idle after 4 seconds
-      if (statusTimeoutId) clearTimeout(statusTimeoutId)
-      statusTimeoutId = setTimeout(() => {
-        if (syncStatus === 'remote-updated') {
-          setSyncStatus('idle')
-          reRender()
-        }
-      }, 4000)
+    mergeRemoteData(getState()).then(() => {
+      loadState().then(() => {
+        reRender()
+        showSyncToast()
+        if (statusTimeoutId) clearTimeout(statusTimeoutId)
+        statusTimeoutId = setTimeout(() => {
+          if (syncStatus === 'remote-updated') {
+            setSyncStatus('idle')
+            reRender()
+          }
+        }, 4000)
+      })
     }).catch(() => {
       setSyncStatus('error')
     })
   })
 }
 
-/** Show a brief toast notification for remote sync updates */
 function showSyncToast() {
   const existing = document.querySelector('.sync-toast')
   existing?.remove()
@@ -109,5 +97,19 @@ function showSyncToast() {
   setTimeout(() => {
     toast.style.opacity = '0'
     setTimeout(() => toast.remove(), 500)
+  }, 3000)
+}
+
+export function showToast(container: HTMLElement, message: string, type: 'success' | 'error' = 'success') {
+  const existing = container.querySelector('.toast-message')
+  existing?.remove()
+
+  const toast = document.createElement('div')
+  toast.className = `toast-message fixed bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm z-50 ${type === 'success' ? 'bg-green-500' : 'bg-red-500'}`
+  toast.textContent = message
+  document.body.appendChild(toast)
+
+  setTimeout(() => {
+    toast.remove()
   }, 3000)
 }

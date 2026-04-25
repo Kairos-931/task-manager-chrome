@@ -1,7 +1,12 @@
-// Chrome extension API type declarations
 interface StorageChange {
   newValue?: any
   oldValue?: any
+}
+
+interface StorageArea {
+  get(keys: string | string[] | null, callback: (result: Record<string, any>) => void): void
+  set(items: Record<string, any>, callback?: () => void): void
+  remove(keys: string | string[], callback?: () => void): void
 }
 
 declare const chrome: {
@@ -18,14 +23,8 @@ declare const chrome: {
     create(options: { url: string; active?: boolean }, callback?: (tab: any) => void): void
   }
   storage: {
-    sync: {
-      get(keys: string | string[] | null, callback: (result: Record<string, string>) => void): void
-      set(items: Record<string, string>, callback?: () => void): void
-    }
-    local: {
-      get(keys: string | string[] | null, callback: (result: Record<string, string>) => void): void
-      set(items: Record<string, string>, callback?: () => void): void
-    }
+    sync: StorageArea
+    local: StorageArea
     onChanged: {
       addListener(callback: (changes: { [key: string]: StorageChange }, areaName: string) => void): void
     }

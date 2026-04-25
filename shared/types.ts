@@ -17,6 +17,7 @@ interface Task {
   completed: boolean
   completedAt?: number
   createdAt: number
+  updatedAt: number
   noTimeLimit: boolean
 }
 
