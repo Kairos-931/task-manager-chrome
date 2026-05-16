@@ -172,8 +172,8 @@ var Background = (() => {
           continue;
         }
 
-        // Map category by name to local ID
-        var categoryId = "";
+        // Map category by name to local ID, default to first category
+        var categoryId = categories.length > 0 ? categories[0].id : "";
         if (rt.category) {
           var found = categories.find(function(c) { return c.name === rt.category; });
           if (found) categoryId = found.id;

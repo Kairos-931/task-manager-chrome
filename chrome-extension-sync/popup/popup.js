@@ -1886,8 +1886,12 @@ var TaskManager = (() => {
       }
       renderApp(container);
       attachEventListeners(container);
-      // Auto-sync mobile tasks (silent)
-      chrome.runtime.sendMessage({ action: "syncRemoteTasks" });
+      // Auto-sync mobile tasks
+      chrome.runtime.sendMessage({ action: "syncRemoteTasks" }, (result) => {
+        if (result?.synced > 0) {
+          console.log(`[TaskMaster] 已从手机同步 ${result.synced} 个任务`);
+        }
+      });
       initSyncMonitor(reRender2);
       onSyncStatusChange(() => {
         const indicator = container.querySelector("#syncIndicator");

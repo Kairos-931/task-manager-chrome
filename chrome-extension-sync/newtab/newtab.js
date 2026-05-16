@@ -1376,29 +1376,29 @@ var TaskManager = (() => {
     return `
     <div id="mobileSyncModal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
       <div class="fixed inset-0 bg-black/50" id="mobileSyncOverlay"></div>
-      <div class="relative bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md mx-4 p-6 max-h-[90vh] overflow-y-auto">
-        <div class="flex items-center justify-between mb-4">
+      <div class="relative bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md mx-6 p-8 max-h-[90vh] overflow-y-auto">
+        <div class="flex items-center justify-between mb-6">
           <h3 class="text-lg font-semibold text-gray-900 dark:text-white">手机同步设置</h3>
-          <button id="mobileSyncClose" class="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
+          <button id="mobileSyncClose" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
-        <div class="space-y-4">
+        <div class="space-y-5">
           <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API 地址</label>
-            <input type="url" id="mobileSyncApiUrl" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm" placeholder="https://your-worker.workers.dev">
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">API 地址</label>
+            <input type="url" id="mobileSyncApiUrl" class="w-full px-4 py-2.5 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm" placeholder="https://your-worker.workers.dev">
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API 密钥</label>
-            <input type="text" id="mobileSyncApiToken" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm" placeholder="粘贴你的 API Token" autocomplete="off">
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">API 密钥</label>
+            <input type="text" id="mobileSyncApiToken" class="w-full px-4 py-2.5 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm" placeholder="粘贴你的 API Token" autocomplete="off">
           </div>
-          <div class="flex gap-3">
-            <button id="mobileSyncSaveBtn" class="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm font-medium">保存设置</button>
-            <button id="mobileSyncNowBtn" class="flex-1 px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition text-sm font-medium">立即同步</button>
+          <div class="flex gap-3 pt-1">
+            <button id="mobileSyncSaveBtn" class="flex-1 px-4 py-2.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm font-medium">保存设置</button>
+            <button id="mobileSyncNowBtn" class="flex-1 px-4 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition text-sm font-medium">立即同步</button>
           </div>
-          <div id="mobileSyncStatus" class="text-xs text-gray-500 dark:text-gray-400"></div>
-          <div class="pt-2 border-t dark:border-gray-700">
-            <p class="text-xs text-gray-400 dark:text-gray-500">手机访问你的 Worker 地址即可添加任务，也可通过 Telegram Bot 发消息添加。</p>
+          <div id="mobileSyncStatus" class="text-xs text-gray-500 dark:text-gray-400 min-h-[1.25rem]"></div>
+          <div class="pt-3 border-t dark:border-gray-700">
+            <p class="text-xs text-gray-400 dark:text-gray-500 leading-relaxed">手机访问你的 Worker 地址即可添加任务，也可通过 Telegram Bot 发消息添加。</p>
           </div>
         </div>
       </div>
@@ -1966,8 +1966,12 @@ var TaskManager = (() => {
       }
       renderApp(container);
       attachEventListeners(container);
-      // Auto-sync mobile tasks (silent)
-      chrome.runtime.sendMessage({ action: "syncRemoteTasks" });
+      // Auto-sync mobile tasks with toast feedback
+      chrome.runtime.sendMessage({ action: "syncRemoteTasks" }, (result) => {
+        if (result?.synced > 0) {
+          syncToast(`已从手机同步 ${result.synced} 个任务`, "success");
+        }
+      });
       initSyncMonitor(reRender2);
       onSyncStatusChange(() => {
         const indicator = container.querySelector("#syncIndicator");
