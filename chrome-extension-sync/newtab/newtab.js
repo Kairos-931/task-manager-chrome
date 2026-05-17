@@ -751,8 +751,8 @@ var TaskManager = (() => {
         return false;
       return true;
     });
-    const pending = tasks.filter((t) => !t.completed).reduce((s, t) => s + t.duration, 0);
-    const done = tasks.filter((t) => t.completed).reduce((s, t) => s + t.duration, 0);
+    const pending = tasks.filter((t) => !t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
+    const done = tasks.filter((t) => t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
     const overdueCount = tasks.filter((t) => !t.completed && !t.noTimeLimit && isOverdue(t.dueDate, false)).length;
     const todayStr = formatDate(/* @__PURE__ */ new Date());
     const todayTasks = tasks.filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, todayStr));
@@ -789,7 +789,8 @@ var TaskManager = (() => {
       <div><span class="text-gray-500">\u5F85\u5B8C\u6210\uFF1A</span><span class="font-medium text-orange-500">${formatHours(stats.pending)}</span></div>
       <div><span class="text-gray-500">\u5DF2\u5B8C\u6210\uFF1A</span><span class="font-medium text-green-500">${formatHours(stats.done)}</span></div>
       <div><span class="text-gray-500">\u4ECA\u65E5\uFF1A</span><span class="font-medium">${stats.todayDone}/${stats.todayTotal}</span></div>
-      ${stats.overdueCount > 0 ? `<div class="text-red-500">${stats.overdueCount}\u9879\u5DF2\u8FC7\u671F</div>` : ""}
+      ${stats.overdueCount > 0 ? `<div class="text-red-500"><span>${stats.overdueCount}</span>项已过期</div>` : ""}
+      <div class="text-xs text-gray-400 self-center ml-auto">时长统计不含循环任务</div>
     </div>
   `;
   };
@@ -983,8 +984,8 @@ var TaskManager = (() => {
         ${days.map((d) => {
       const dayTasks = state.tasks.filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, d));
       const isToday = d === todayStr;
-      const pendingMin = dayTasks.filter((t) => !t.completed).reduce((s, t) => s + t.duration, 0);
-      const completedMin = dayTasks.filter((t) => t.completed).reduce((s, t) => s + t.duration, 0);
+      const pendingMin = dayTasks.filter((t) => !t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
+      const completedMin = dayTasks.filter((t) => t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
       return `
             <div class="flex border-b dark:border-gray-700 hover:bg-gray-50/50 dark:hover:bg-gray-700/30 transition drop-zone" data-date="${d}">
               <div class="w-24 flex-shrink-0 p-3 ${isToday ? "bg-blue-50/50 dark:bg-blue-900/20" : ""}">
