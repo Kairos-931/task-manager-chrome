@@ -549,26 +549,32 @@ var TaskManager = (() => {
   var isTaskDueOnDate = (t, d) => {
     if (t.noTimeLimit)
       return false;
-    if (t.dueDate === d)
+    // Non-recurring: exact date match only
+    if (!t.repeatType || t.repeatType === "none") {
+      return t.dueDate === d;
+    }
+    // Recurring: use repeatStartDate as anchor for calendar calculations
+    const anchor = t.repeatStartDate || t.dueDate;
+    if (anchor === d)
       return true;
     const date = parseDate(d);
-    const taskDate = parseDate(t.dueDate);
+    const anchorDate = parseDate(anchor);
     switch (t.repeatType) {
       case "daily":
-        return date >= taskDate;
+        return date >= anchorDate;
       case "weekly":
-        return date >= taskDate && t.repeatDays.includes(date.getDay());
+        return date >= anchorDate && (t.repeatDays || []).includes(date.getDay());
       case "monthly":
-        return date >= taskDate && date.getDate() === taskDate.getDate();
+        return date >= anchorDate && date.getDate() === anchorDate.getDate();
       case "workdays":
-        return date >= taskDate && date.getDay() >= 1 && date.getDay() <= 5;
+        return date >= anchorDate && date.getDay() >= 1 && date.getDay() <= 5;
       case "custom":
-        if (date < taskDate)
+        if (date < anchorDate)
           return false;
-        const daysDiff = Math.floor((date.getTime() - taskDate.getTime()) / 864e5);
-        return daysDiff % t.repeatInterval === 0;
+        const daysDiff = Math.floor((date.getTime() - anchorDate.getTime()) / 864e5);
+        return daysDiff % (t.repeatInterval || 1) === 0;
       default:
-        return d === t.dueDate;
+        return anchor === d;
     }
   };
   var getPriorityColor = (p) => {
@@ -639,13 +645,18 @@ var TaskManager = (() => {
   };
   var addTask = (task) => {
     const now = Date.now();
-    state.tasks.push({
+    const newTask = {
       ...task,
       id: generateId(),
       createdAt: now,
       updatedAt: now,
-      completed: false
-    });
+      completed: false,
+      completedDates: []
+    };
+    if (newTask.repeatType && newTask.repeatType !== "none" && !newTask.noTimeLimit) {
+      newTask.repeatStartDate = newTask.dueDate;
+    }
+    state.tasks.push(newTask);
   };
   var updateTask = (id, updates) => {
     const idx = state.tasks.findIndex((t) => t.id === id);
@@ -660,16 +671,39 @@ var TaskManager = (() => {
     const task = state.tasks.find((t) => t.id === id);
     if (!task)
       return;
-    if (!task.completed && task.repeatType !== "none") {
-      task.completedAt = Date.now();
-      task.dueDate = getNextDueDate(task);
-      task.completed = false;
+    if (!task.completed && task.repeatType && task.repeatType !== "none") {
+      // Recurring task: record completion date, advance to next uncompleted
+      const today = getTodayStr();
+      if (!task.completedDates) task.completedDates = [];
+      if (!task.completedDates.includes(today)) {
+        task.completedDates.push(today);
+      }
+      // Ensure repeatStartDate is set for existing tasks
+      if (!task.repeatStartDate) {
+        task.repeatStartDate = task.dueDate;
+      }
+      task.dueDate = getNextUncompletedDate(task);
       task.updatedAt = Date.now();
     } else {
       task.completed = !task.completed;
       task.completedAt = task.completed ? Date.now() : void 0;
       task.updatedAt = Date.now();
     }
+  };
+  var getNextUncompletedDate = (task) => {
+    const completed = task.completedDates || [];
+    const today = parseDate(getTodayStr());
+    const start = new Date(today);
+    start.setDate(start.getDate() + 1);
+    for (let i = 0; i < 365; i++) {
+      const candidate = new Date(start);
+      candidate.setDate(candidate.getDate() + i);
+      const dateStr = formatDate(candidate);
+      if (isTaskDueOnDate(task, dateStr) && !completed.includes(dateStr)) {
+        return dateStr;
+      }
+    }
+    return formatDate(start);
   };
   var getNextDueDate = (task) => {
     const current = parseDate(task.dueDate);
@@ -751,8 +785,8 @@ var TaskManager = (() => {
         return false;
       return true;
     });
-    const pending = tasks.filter((t) => !t.completed).reduce((s, t) => s + t.duration, 0);
-    const done = tasks.filter((t) => t.completed).reduce((s, t) => s + t.duration, 0);
+    const pending = tasks.filter((t) => !t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
+    const done = tasks.filter((t) => t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
     const overdueCount = tasks.filter((t) => !t.completed && !t.noTimeLimit && isOverdue(t.dueDate, false)).length;
     const todayStr = formatDate(/* @__PURE__ */ new Date());
     const todayTasks = tasks.filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, todayStr));
@@ -789,7 +823,8 @@ var TaskManager = (() => {
       <div><span class="text-gray-500">\u5F85\u5B8C\u6210\uFF1A</span><span class="font-medium text-orange-500">${formatHours(stats.pending)}</span></div>
       <div><span class="text-gray-500">\u5DF2\u5B8C\u6210\uFF1A</span><span class="font-medium text-green-500">${formatHours(stats.done)}</span></div>
       <div><span class="text-gray-500">\u4ECA\u65E5\uFF1A</span><span class="font-medium">${stats.todayDone}/${stats.todayTotal}</span></div>
-      ${stats.overdueCount > 0 ? `<div class="text-red-500">${stats.overdueCount}\u9879\u5DF2\u8FC7\u671F</div>` : ""}
+      ${stats.overdueCount > 0 ? `<div class="text-red-500"><span>${stats.overdueCount}</span>项已过期</div>` : ""}
+      <div class="text-xs text-gray-400 self-center ml-auto">时长统计不含循环任务</div>
     </div>
   `;
   };
@@ -820,6 +855,9 @@ var TaskManager = (() => {
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
         </button>
         <button id="manageCategoryBtn" class="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition text-sm">\u5206\u7C7B</button>
+        <button id="mobileSyncSettingsBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="\u624B\u673A\u540C\u6B65\u8BBE\u7F6E">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+        </button>
         ` : ""}
         <button id="addTaskBtn" class="px-4 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm font-medium">+ \u6DFB\u52A0</button>
       </div>
@@ -980,8 +1018,8 @@ var TaskManager = (() => {
         ${days.map((d) => {
       const dayTasks = state.tasks.filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, d));
       const isToday = d === todayStr;
-      const pendingMin = dayTasks.filter((t) => !t.completed).reduce((s, t) => s + t.duration, 0);
-      const completedMin = dayTasks.filter((t) => t.completed).reduce((s, t) => s + t.duration, 0);
+      const pendingMin = dayTasks.filter((t) => !t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
+      const completedMin = dayTasks.filter((t) => t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
       return `
             <div class="flex border-b dark:border-gray-700 hover:bg-gray-50/50 dark:hover:bg-gray-700/30 transition drop-zone" data-date="${d}">
               <div class="w-24 flex-shrink-0 p-3 ${isToday ? "bg-blue-50/50 dark:bg-blue-900/20" : ""}">
@@ -992,7 +1030,7 @@ var TaskManager = (() => {
                 </div>
               </div>
               <div class="flex-1 p-2 min-h-[80px] flex flex-wrap content-start gap-2">
-                ${dayTasks.length === 0 ? '<span class="text-xs text-gray-300 dark:text-gray-600">\u65E0</span>' : dayTasks.map((t) => renderWeekTaskCard(t)).join("")}
+                ${dayTasks.length === 0 ? '<span class="text-xs text-gray-300 dark:text-gray-600">\u65E0</span>' : dayTasks.map((t) => renderWeekTaskCard(t, d)).join("")}
               </div>
             </div>
           `;
@@ -1001,16 +1039,18 @@ var TaskManager = (() => {
     </div>
   `;
   };
-  var renderWeekTaskCard = (task) => {
+  var renderWeekTaskCard = (task, date) => {
     const cat = getState().categories.find((c) => c.id === task.category);
+    const isRecurringDone = task.repeatType && task.repeatType !== "none" && date && (task.completedDates || []).includes(date);
+    const done = task.completed || isRecurringDone;
     return `
-    <div class="week-task-item p-2 rounded border dark:border-gray-600 ${task.completed ? "opacity-60" : "bg-white dark:bg-gray-700 hover:shadow-md"} transition cursor-move flex-shrink-0" style="min-width:140px" draggable="true" data-task-id="${task.id}" title="\u53CC\u51FB\u7F16\u8F91">
+    <div class="week-task-item p-2 rounded border dark:border-gray-600 ${done ? "opacity-50 bg-gray-50 dark:bg-gray-800" : "bg-white dark:bg-gray-700 hover:shadow-md"} transition cursor-move flex-shrink-0" style="min-width:140px" draggable="true" data-task-id="${task.id}" title="\u53CC\u51FB\u7F16\u8F91">
       <div class="flex items-start gap-2">
         <div class="w-1 h-full min-h-[32px] rounded ${getPriorityColor(task.priority)}"></div>
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-1 mb-1">
-            <span class="text-sm font-medium truncate ${task.completed ? "line-through" : ""}">${escapeHtml(task.title)}</span>
-            ${task.repeatType !== "none" ? '<span class="text-blue-500">\u{1F504}</span>' : ""}
+            <span class="text-sm font-medium truncate ${done ? "line-through" : ""}">${escapeHtml(task.title)}</span>
+            ${task.repeatType && task.repeatType !== "none" ? '<span class="text-blue-500">\uD83D\uDD04</span>' : ""}
           </div>
           <div class="flex items-center gap-2 text-xs text-gray-400">
             <span>${formatHours(task.duration)}</span>
@@ -1062,7 +1102,11 @@ var TaskManager = (() => {
       return `
             <div class="min-h-[100px] p-2 border-b border-r dark:border-gray-700 ${isCurrentMonth ? "" : "bg-gray-50 dark:bg-gray-900/50"} ${isToday ? "bg-blue-50/50 dark:bg-blue-900/20" : ""} hover:bg-gray-100 dark:hover:bg-gray-700/30 transition cursor-pointer drop-zone" data-date="${d}">
               <div class="text-sm mb-1 ${isCurrentMonth ? "" : "text-gray-300 dark:text-gray-600"} ${isToday ? "font-bold text-blue-500" : ""}">${dayDate.getDate()}</div>
-              ${dayTasks.slice(0, 2).map((t) => `<div class="month-task-item text-xs p-1 rounded mb-1 truncate ${t.completed ? "line-through opacity-50 bg-gray-100" : "bg-blue-100/50 dark:bg-blue-900/30"}" draggable="true" data-task-id="${t.id}" title="\u53CC\u51FB\u7F16\u8F91">${escapeHtml(t.title)}</div>`).join("")}
+              ${dayTasks.slice(0, 2).map((t) => {
+                const isRecurringDone = t.repeatType && t.repeatType !== "none" && (t.completedDates || []).includes(d);
+                const done = t.completed || isRecurringDone;
+                return `<div class="month-task-item text-xs p-1 rounded mb-1 truncate ${done ? "line-through opacity-40 bg-gray-100 dark:bg-gray-700" : "bg-blue-100/50 dark:bg-blue-900/30"}" draggable="true" data-task-id="${t.id}" title="\u53CC\u51FB\u7F16\u8F91">${escapeHtml(t.title)}</div>`;
+              }).join("")}
               ${dayTasks.length > 2 ? `<div class="text-xs text-gray-400">+${dayTasks.length - 2}</div>` : ""}
             </div>
           `;
@@ -1369,6 +1413,39 @@ var TaskManager = (() => {
     <input type="file" id="syncImportInput" accept=".json" style="opacity:0;position:absolute;pointer-events:none;">
   `;
   };
+  var renderMobileSyncPanel = () => {
+    return `
+    <div id="mobileSyncModal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+      <div class="fixed inset-0 bg-black/50" id="mobileSyncOverlay"></div>
+      <div class="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md mx-8 p-10 max-h-[90vh] overflow-y-auto">
+        <div class="flex items-center justify-between mb-8">
+          <h3 class="text-xl font-semibold text-gray-900 dark:text-white">手机同步设置</h3>
+          <button id="mobileSyncClose" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="space-y-6">
+          <div>
+            <label class="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-2.5">API 地址</label>
+            <input type="url" id="mobileSyncApiUrl" class="w-full px-4 py-3 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" placeholder="https://your-worker.workers.dev">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-2.5">API 密钥</label>
+            <input type="text" id="mobileSyncApiToken" class="w-full px-4 py-3 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" placeholder="粘贴你的 API Token" autocomplete="off">
+          </div>
+          <div class="flex gap-4 pt-2">
+            <button id="mobileSyncSaveBtn" class="flex-1 px-4 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm font-medium">保存设置</button>
+            <button id="mobileSyncNowBtn" class="flex-1 px-4 py-3 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition text-sm font-medium">立即同步</button>
+          </div>
+          <div id="mobileSyncStatus" class="text-xs text-gray-500 dark:text-gray-400 min-h-[1.25rem]"></div>
+          <div class="pt-4 border-t dark:border-gray-700">
+            <p class="text-xs text-gray-400 dark:text-gray-500 leading-relaxed">手机访问你的 Worker 地址即可添加任务，也可通过 Telegram Bot 发消息添加。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  };
   var renderApp = (container) => {
     const { darkMode } = getState();
     if (darkMode) {
@@ -1385,6 +1462,7 @@ var TaskManager = (() => {
       ${renderModal()}
       ${renderCategoryModal()}
       ${renderSyncModal()}
+      ${renderMobileSyncPanel()}
     </div>
   `;
   };
@@ -1789,6 +1867,49 @@ var TaskManager = (() => {
         }
       });
     }
+    // Mobile sync settings handlers (newtab only)
+    container.querySelector("#mobileSyncSettingsBtn")?.addEventListener("click", () => {
+      const modal = container.querySelector("#mobileSyncModal");
+      modal?.classList.remove("hidden");
+      chrome.runtime.sendMessage({ action: "getSyncSettings" }, (settings) => {
+        const urlInput = container.querySelector("#mobileSyncApiUrl");
+        const tokenInput = container.querySelector("#mobileSyncApiToken");
+        if (urlInput && settings?.apiUrl) urlInput.value = settings.apiUrl;
+        if (tokenInput && settings?.apiToken) tokenInput.value = settings.apiToken;
+      });
+    });
+    container.querySelector("#mobileSyncClose")?.addEventListener("click", () => {
+      container.querySelector("#mobileSyncModal")?.classList.add("hidden");
+    });
+    container.querySelector("#mobileSyncOverlay")?.addEventListener("click", () => {
+      container.querySelector("#mobileSyncModal")?.classList.add("hidden");
+    });
+    container.querySelector("#mobileSyncSaveBtn")?.addEventListener("click", () => {
+      const apiUrl = container.querySelector("#mobileSyncApiUrl")?.value.replace(/\/+$/, "").trim();
+      const apiToken = container.querySelector("#mobileSyncApiToken")?.value.trim();
+      if (!apiUrl || !apiToken) {
+        syncToast("请填写 API 地址和密钥", "error");
+        return;
+      }
+      chrome.runtime.sendMessage({ action: "saveSyncSettings", settings: { apiUrl, apiToken } }, () => {
+        syncToast("设置已保存", "success");
+      });
+    });
+    container.querySelector("#mobileSyncNowBtn")?.addEventListener("click", () => {
+      const statusEl = container.querySelector("#mobileSyncStatus");
+      if (statusEl) statusEl.textContent = "同步中...";
+      chrome.runtime.sendMessage({ action: "syncRemoteTasks" }, (result) => {
+        if (result?.synced > 0) {
+          syncToast(`已同步 ${result.synced} 个任务`, "success");
+          if (statusEl) statusEl.textContent = `上次同步: 成功，${result.synced} 个任务`;
+        } else if (result?.error) {
+          syncToast("同步失败: " + result.error, "error");
+          if (statusEl) statusEl.textContent = "同步失败: " + result.error;
+        } else {
+          if (statusEl) statusEl.textContent = "没有新的待同步任务";
+        }
+      });
+    });
     setupDragAndDrop(container);
   };
   var setupDragAndDrop = (container) => {
@@ -1857,14 +1978,15 @@ var TaskManager = (() => {
   function syncToast(message, type = "success") {
     document.querySelectorAll(".sync-action-toast").forEach((el) => el.remove());
     const toast = document.createElement("div");
-    toast.className = `sync-action-toast fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-xl shadow-lg text-white text-sm font-medium z-[100] ${type === "success" ? "bg-green-500" : "bg-red-500"}`;
+    toast.className = "sync-action-toast";
+    const bgColor = type === "success" ? "#22c55e" : "#ef4444";
+    toast.style.cssText = `position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);padding:0.75rem 1.5rem;border-radius:0.75rem;box-shadow:0 10px 25px rgba(0,0,0,0.15);color:#fff;font-size:0.875rem;font-weight:500;z-index:10000;background:${bgColor};transition:opacity 0.3s;white-space:nowrap;`;
     toast.textContent = message;
-    toast.style.transition = "opacity 0.3s";
     document.body.appendChild(toast);
     setTimeout(() => {
       toast.style.opacity = "0";
       setTimeout(() => toast.remove(), 300);
-    }, 2500);
+    }, 3000);
   }
 
   // shared/entry.ts
@@ -1886,10 +2008,10 @@ var TaskManager = (() => {
       }
       renderApp(container);
       attachEventListeners(container);
-      // Auto-sync mobile tasks
+      // Auto-sync mobile tasks with toast feedback
       chrome.runtime.sendMessage({ action: "syncRemoteTasks" }, (result) => {
         if (result?.synced > 0) {
-          console.log(`[TaskMaster] 已从手机同步 ${result.synced} 个任务`);
+          syncToast(`已从手机同步 ${result.synced} 个任务`, "success");
         }
       });
       initSyncMonitor(reRender2);
