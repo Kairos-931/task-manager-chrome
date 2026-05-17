@@ -1937,9 +1937,10 @@ var TaskManager = (() => {
   function syncToast(message, type = "success") {
     document.querySelectorAll(".sync-action-toast").forEach((el) => el.remove());
     const toast = document.createElement("div");
-    toast.className = `sync-action-toast fixed bottom-8 left-1/2 -translate-x-1/2 px-6 py-3 rounded-xl shadow-lg text-white text-sm font-medium z-[100] ${type === "success" ? "bg-green-500" : "bg-red-500"}`;
+    toast.className = "sync-action-toast";
+    const bgColor = type === "success" ? "#22c55e" : "#ef4444";
+    toast.style.cssText = `position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);padding:0.75rem 1.5rem;border-radius:0.75rem;box-shadow:0 10px 25px rgba(0,0,0,0.15);color:#fff;font-size:0.875rem;font-weight:500;z-index:10000;background:${bgColor};transition:opacity 0.3s;white-space:nowrap;`;
     toast.textContent = message;
-    toast.style.cssText = "transform:translateX(-50%);transition:opacity 0.3s;";
     document.body.appendChild(toast);
     setTimeout(() => {
       toast.style.opacity = "0";
