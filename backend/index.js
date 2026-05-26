@@ -27,6 +27,11 @@ export default {
       return handleTelegramWebhook(request, env);
     }
 
+    // Categories read — no auth (mobile web needs this)
+    if (url.pathname === '/api/categories' && method === 'GET') {
+      return handleGetCategories(env);
+    }
+
     // API routes — require auth
     const authError = checkAuth(request, env);
     if (authError) return authError;
@@ -39,6 +44,9 @@ export default {
     }
     if (url.pathname === '/api/tasks/sync' && method === 'POST') {
       return handleSyncTasks(request, env);
+    }
+    if (url.pathname === '/api/categories' && method === 'POST') {
+      return handleSaveCategories(request, env);
     }
 
     return jsonResp({ error: 'Not Found' }, 404);
@@ -150,6 +158,27 @@ function formatTask(row) {
     source: row.source,
     createdAt: row.created_at,
   };
+}
+
+// ── Categories sync ───────────────────────────────────
+
+async function handleGetCategories(env) {
+  const row = await env.DB.prepare(
+    `SELECT value FROM user_data WHERE key = 'categories'`
+  ).first();
+  const categories = row ? JSON.parse(row.value) : [];
+  return jsonResp({ categories });
+}
+
+async function handleSaveCategories(request, env) {
+  const body = await request.json();
+  if (!Array.isArray(body.categories)) {
+    return jsonResp({ error: 'categories array required' }, 400);
+  }
+  await env.DB.prepare(
+    `INSERT OR REPLACE INTO user_data (key, value, updated_at) VALUES ('categories', ?, datetime('now'))`
+  ).bind(JSON.stringify(body.categories)).run();
+  return jsonResp({ ok: true });
 }
 
 // ── Telegram Bot ──────────────────────────────────────
@@ -526,15 +555,12 @@ const MOBILE_HTML = `<!DOCTYPE html>
         <option value="low">低</option>
       </select>
     </div>
-    <div class="input-group">
-      <label>分类</label>
-      <select id="category">
-        <option value="">不指定</option>
-        <option value="工作">工作</option>
-        <option value="生活">生活</option>
-        <option value="学习">学习</option>
-      </select>
-    </div>
+	    <div class="input-group">
+	      <label>分类</label>
+	      <select id="category">
+	        <option value="">加载中...</option>
+	      </select>
+	    </div>
   </div>
   <div class="no-date" id="noDateWrap">
     <input type="checkbox" id="noDate">
@@ -680,6 +706,37 @@ const MOBILE_HTML = `<!DOCTYPE html>
 
   loadSettings();
   initDate();
+
+  function loadCategories() {
+    var s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    if (!s.apiUrl) return;
+    fetch(s.apiUrl + '/api/categories')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var cats = data.categories || [];
+        var sel = document.getElementById('category');
+        sel.innerHTML = '';
+        if (cats.length === 0) {
+          sel.innerHTML = '<option value="">其他</option>';
+          return;
+        }
+        var defaultIdx = 0;
+        cats.forEach(function(c, i) {
+          var opt = document.createElement('option');
+          opt.value = c.name;
+          opt.textContent = c.name;
+          sel.appendChild(opt);
+          if (c.name === '其他') defaultIdx = i;
+        });
+        sel.selectedIndex = defaultIdx;
+      })
+      .catch(function() {
+        var sel = document.getElementById('category');
+        sel.innerHTML = '<option value="">其他</option>';
+      });
+  }
+
+  loadCategories();
 })();
 </script>
 </body>

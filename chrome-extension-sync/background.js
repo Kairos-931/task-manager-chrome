@@ -28,6 +28,8 @@ var Background = (() => {
       var update = {};
       update[SYNC_SETTINGS_KEY] = message.settings;
       chrome.storage.sync.set(update, () => {
+        // Push local categories to backend
+        pushCategories(message.settings);
         sendResponse({ ok: true });
       });
       return true;
@@ -227,5 +229,22 @@ var Background = (() => {
     } catch (e) {
       return { synced: 0, error: e.message };
     }
+  }
+
+  function pushCategories(settings) {
+    if (!settings || !settings.apiUrl || !settings.apiToken) return;
+    chrome.storage.sync.get(META_KEY, function(result) {
+      var meta = result[META_KEY];
+      if (!meta || !meta.categories) return;
+      var categories = meta.categories.map(function(c) { return { name: c.name }; });
+      fetch(settings.apiUrl + "/api/categories", {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + settings.apiToken,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ categories: categories })
+      }).catch(function() {});
+    });
   }
 })();
