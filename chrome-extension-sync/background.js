@@ -146,6 +146,9 @@ var Background = (() => {
       return { synced: 0, error: "not configured" };
     }
 
+    // Push local categories to backend on every sync
+    pushCategories(settings);
+
     try {
       var res = await fetch(settings.apiUrl + "/api/tasks", {
         headers: { "Authorization": "Bearer " + settings.apiToken }
