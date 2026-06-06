@@ -15,6 +15,8 @@ interface Task {
   repeatDays: number[]
   repeatInterval: number
   completed: boolean
+  completedDates: string[] // 循环任务：记录每个实例的完成日期
+  repeatStartDate?: string // 循环任务锚点日期，用于日历计算
   completedAt?: number
   createdAt: number
   updatedAt: number

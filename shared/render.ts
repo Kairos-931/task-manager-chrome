@@ -238,8 +238,8 @@ export const renderWeekView = (): string => {
         ${days.map(d => {
           const dayTasks = getFilteredTasks().filter(t => !t.noTimeLimit && isTaskDueOnDate(t, d))
           const isToday = d === todayStr
-          const pendingMin = dayTasks.filter(t => !t.completed).reduce((s, t) => s + t.duration, 0)
-          const completedMin = dayTasks.filter(t => t.completed).reduce((s, t) => s + t.duration, 0)
+          const pendingMin = dayTasks.filter(t => !t.completed && t.repeatType === 'none').reduce((s, t) => s + t.duration, 0)
+          const completedMin = dayTasks.filter(t => t.completed && t.repeatType === 'none').reduce((s, t) => s + t.duration, 0)
           return `
             <div class="flex border-b dark:border-gray-700 hover:bg-gray-50/50 dark:hover:bg-gray-700/30 transition drop-zone" data-date="${d}">
               <div class="w-24 flex-shrink-0 p-3 ${isToday ? 'bg-blue-50/50 dark:bg-blue-900/20' : ''}">
@@ -250,7 +250,7 @@ export const renderWeekView = (): string => {
                 </div>
               </div>
               <div class="flex-1 p-2 min-h-[80px] flex flex-wrap content-start gap-2">
-                ${dayTasks.length === 0 ? '<span class="text-xs text-gray-300 dark:text-gray-600">无</span>' : dayTasks.map(t => renderWeekTaskCard(t)).join('')}
+                ${dayTasks.length === 0 ? '<span class="text-xs text-gray-300 dark:text-gray-600">无</span>' : dayTasks.map(t => renderWeekTaskCard(t, d)).join('')}
               </div>
             </div>
           `
@@ -260,15 +260,17 @@ export const renderWeekView = (): string => {
   `
 }
 
-const renderWeekTaskCard = (task: Task): string => {
+const renderWeekTaskCard = (task: Task, date?: string): string => {
   const cat = getState().categories.find(c => c.id === task.category)
+  const isRecurringDone = task.repeatType && task.repeatType !== 'none' && date && (task.completedDates || []).includes(date)
+  const done = task.completed || isRecurringDone
   return `
-    <div class="week-task-item p-2 rounded border dark:border-gray-600 ${task.completed ? 'opacity-60' : 'bg-white dark:bg-gray-700 hover:shadow-md'} transition cursor-move flex-shrink-0" style="min-width:140px" draggable="true" data-task-id="${task.id}" title="双击编辑">
+    <div class="week-task-item p-2 rounded border dark:border-gray-600 ${done ? 'opacity-50 bg-gray-50 dark:bg-gray-800' : 'bg-white dark:bg-gray-700 hover:shadow-md'} transition cursor-move flex-shrink-0" style="min-width:140px" draggable="true" data-task-id="${task.id}" title="双击编辑">
       <div class="flex items-start gap-2">
         <div class="w-1 h-full min-h-[32px] rounded ${getPriorityColor(task.priority)}"></div>
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-1 mb-1">
-            <span class="text-sm font-medium truncate ${task.completed ? 'line-through' : ''}">${escapeHtml(task.title)}</span>
+            <span class="text-sm font-medium truncate ${done ? 'line-through' : ''}">${escapeHtml(task.title)}</span>
             ${task.repeatType !== 'none' ? '<span class="text-blue-500">🔄</span>' : ''}
           </div>
           <div class="flex items-center gap-2 text-xs text-gray-400">
@@ -319,7 +321,11 @@ export const renderMonthView = (): string => {
           return `
             <div class="min-h-[100px] p-2 border-b border-r dark:border-gray-700 ${isCurrentMonth ? '' : 'bg-gray-50 dark:bg-gray-900/50'} ${isToday ? 'bg-blue-50/50 dark:bg-blue-900/20' : ''} hover:bg-gray-100 dark:hover:bg-gray-700/30 transition cursor-pointer drop-zone" data-date="${d}">
               <div class="text-sm mb-1 ${isCurrentMonth ? '' : 'text-gray-300 dark:text-gray-600'} ${isToday ? 'font-bold text-blue-500' : ''}">${dayDate.getDate()}</div>
-              ${dayTasks.slice(0, 2).map(t => `<div class="month-task-item text-xs p-1 rounded mb-1 truncate ${t.completed ? 'line-through opacity-50 bg-gray-100' : 'bg-blue-100/50 dark:bg-blue-900/30'}" draggable="true" data-task-id="${t.id}" title="双击编辑">${escapeHtml(t.title)}</div>`).join('')}
+              ${dayTasks.slice(0, 2).map(t => {
+                const isRecurringDone = t.repeatType && t.repeatType !== 'none' && (t.completedDates || []).includes(d)
+                const done = t.completed || isRecurringDone
+                return `<div class="month-task-item text-xs p-1 rounded mb-1 truncate ${done ? 'line-through opacity-40 bg-gray-100 dark:bg-gray-700' : 'bg-blue-100/50 dark:bg-blue-900/30'}" draggable="true" data-task-id="${t.id}" title="双击编辑">${escapeHtml(t.title)}</div>`
+              }).join('')}
               ${dayTasks.length > 2 ? `<div class="text-xs text-gray-400">+${dayTasks.length - 2}</div>` : ''}
             </div>
           `

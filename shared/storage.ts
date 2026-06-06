@@ -324,7 +324,7 @@ export const downloadExportFile = async (): Promise<void> => {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  const date = new Date().toISOString().split('T')[0]
+  const date = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`
   a.download = `task-manager-backup-${date}.json`
   a.click()
   URL.revokeObjectURL(url)
