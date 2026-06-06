@@ -74,6 +74,9 @@ export const renderHeader = (): string => {
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
         </button>
         <button id="manageCategoryBtn" class="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition text-sm">分类</button>
+        <button id="mobileSyncSettingsBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="手机同步设置">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+        </button>
         ` : ''}
         <button id="addTaskBtn" class="px-4 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm font-medium">+ 添加</button>
       </div>
@@ -346,13 +349,13 @@ export const renderTaskList = (): string => {
 }
 
 export const renderModal = (): string => {
-  const { editingTask, categories = [] } = getState()
+  const { editingTask, categories = [], defaultCategory } = getState()
   const isEditing = editingTask !== null
   const task = editingTask || {
     title: '',
     description: '',
     priority: 'medium' as Priority,
-    category: categories[0]?.id || '',
+    category: defaultCategory || categories[0]?.id || '',
     dueDate: formatDate(new Date()),
     duration: 60,
     repeatType: 'none' as const,
@@ -466,7 +469,7 @@ export const renderModal = (): string => {
 }
 
 export const renderCategoryModal = (): string => {
-  const { categories = [] } = getState()
+  const { categories = [], defaultCategory } = getState()
   return `
     <div id="categoryModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
       <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[90%] max-w-md">
@@ -483,8 +486,12 @@ export const renderCategoryModal = (): string => {
                 <div class="flex items-center gap-2 flex-1">
                   <input type="color" value="${cat.color}" class="category-color w-8 h-8 rounded cursor-pointer border-0" data-id="${cat.id}">
                   <input type="text" value="${escapeHtml(cat.name)}" class="category-name flex-1 px-2 py-1 border dark:border-gray-600 rounded bg-white dark:bg-gray-700 dark:text-white text-sm" data-id="${cat.id}">
+                  ${defaultCategory === cat.id ? '<span class="text-xs text-blue-500 font-medium">默认</span>' : ''}
                 </div>
                 <div class="flex gap-1">
+                  <button class="set-default-category p-1 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded text-blue-500 transition ${defaultCategory === cat.id ? 'opacity-30' : ''}" data-id="${cat.id}" title="设为默认分类">
+                    <svg class="w-4 h-4" fill="${defaultCategory === cat.id ? 'currentColor' : 'none'}" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
+                  </button>
                   <button class="save-category p-1 hover:bg-green-50 dark:hover:bg-green-900/20 rounded text-green-500 transition" data-id="${cat.id}" title="保存">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
                   </button>
@@ -631,6 +638,40 @@ export const renderSyncModal = (): string => {
   `
 }
 
+export const renderMobileSyncPanel = (): string => {
+  return `
+    <div id="mobileSyncModal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+      <div class="fixed inset-0 bg-black/50" id="mobileSyncOverlay"></div>
+      <div class="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md mx-8 p-10 max-h-[90vh] overflow-y-auto">
+        <div class="flex items-center justify-between mb-8">
+          <h3 class="text-xl font-semibold text-gray-900 dark:text-white">手机同步设置</h3>
+          <button id="mobileSyncClose" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="space-y-6">
+          <div>
+            <label class="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-2.5">API 地址</label>
+            <input type="url" id="mobileSyncApiUrl" class="w-full px-4 py-3 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" placeholder="https://your-worker.workers.dev">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-2.5">API 密钥</label>
+            <input type="text" id="mobileSyncApiToken" class="w-full px-4 py-3 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" placeholder="粘贴你的 API Token" autocomplete="off">
+          </div>
+          <div class="flex gap-4 pt-2">
+            <button id="mobileSyncSaveBtn" class="flex-1 px-4 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm font-medium">保存设置</button>
+            <button id="mobileSyncNowBtn" class="flex-1 px-4 py-3 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition text-sm font-medium">立即同步</button>
+          </div>
+          <div id="mobileSyncStatus" class="text-xs text-gray-500 dark:text-gray-400 min-h-[1.25rem]"></div>
+          <div class="pt-4 border-t dark:border-gray-700">
+            <p class="text-xs text-gray-400 dark:text-gray-500 leading-relaxed">手机访问你的 Worker 地址即可添加任务，也可通过 Telegram Bot 发消息添加。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `
+}
+
 export const renderApp = (container: HTMLElement): void => {
   const { darkMode } = getState()
   if (darkMode) {
@@ -647,6 +688,7 @@ export const renderApp = (container: HTMLElement): void => {
       ${renderModal()}
       ${renderCategoryModal()}
       ${renderSyncModal()}
+      ${renderMobileSyncPanel()}
     </div>
   `
 }

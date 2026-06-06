@@ -32,6 +32,7 @@ interface Category {
 interface StorageData {
   tasks: Task[]
   categories: Category[]
+  defaultCategory: string
   hideCompleted: boolean
   hideOverdue: boolean
   showNoTimeLimitOnly: boolean

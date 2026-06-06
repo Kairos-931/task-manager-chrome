@@ -8,6 +8,21 @@ import { showToast } from './sync'
 let draggedTaskId: string | null = null
 let currentContainer: HTMLElement | null = null
 
+// 同步操作反馈 toast（inline styles，不依赖 Tailwind 编译）
+function syncToast(message: string, type: 'success' | 'error' = 'success') {
+  document.querySelectorAll('.sync-action-toast').forEach(el => el.remove())
+  const toast = document.createElement('div')
+  toast.className = 'sync-action-toast'
+  const bgColor = type === 'success' ? '#22c55e' : '#ef4444'
+  toast.style.cssText = `position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);padding:0.75rem 1.5rem;border-radius:0.75rem;box-shadow:0 10px 25px rgba(0,0,0,0.15);color:#fff;font-size:0.875rem;font-weight:500;z-index:10000;background:${bgColor};transition:opacity 0.3s;white-space:nowrap;`
+  toast.textContent = message
+  document.body.appendChild(toast)
+  setTimeout(() => {
+    toast.style.opacity = '0'
+    setTimeout(() => toast.remove(), 300)
+  }, 3000)
+}
+
 // 封装渲染和事件绑定
 function reRender() {
   if (!currentContainer) return
@@ -357,14 +372,32 @@ export const attachEventListeners = (container: HTMLElement): void => {
         if (id && getState().categories.length > 1) {
           if (confirm('确定删除此分类？')) {
             deleteCategoryAction(id)
+            // 如果删除的是默认分类，清除默认设置
+            if (getState().defaultCategory === id) {
+              setState({ defaultCategory: '' })
+            }
             await persistState()
             reRender()
-            // 重新打开分类模态框
             const modal = container.querySelector('#categoryModal') as HTMLElement
             modal?.classList.remove('hidden')
           }
         } else if (id && getState().categories.length <= 1) {
           alert('至少保留一个分类')
+        }
+      })
+    })
+
+    // 设为默认分类
+    container.querySelectorAll('.set-default-category').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation()
+        const id = (e.currentTarget as HTMLElement).dataset.id
+        if (id) {
+          setState({ defaultCategory: id })
+          await persistState()
+          reRender()
+          const modal = container.querySelector('#categoryModal') as HTMLElement
+          modal?.classList.remove('hidden')
         }
       })
     })
@@ -465,13 +498,60 @@ export const attachEventListeners = (container: HTMLElement): void => {
         syncImportInput.value = ''
       }
     })
+    // ==================== 手机同步设置（newtab only）====================
+    container.querySelector('#mobileSyncSettingsBtn')?.addEventListener('click', () => {
+      const modal = container.querySelector('#mobileSyncModal') as HTMLElement
+      modal?.classList.remove('hidden')
+      chrome.runtime.sendMessage({ action: 'getSyncSettings' }, (settings) => {
+        const urlInput = container.querySelector('#mobileSyncApiUrl') as HTMLInputElement
+        const tokenInput = container.querySelector('#mobileSyncApiToken') as HTMLInputElement
+        if (urlInput && settings?.apiUrl) urlInput.value = settings.apiUrl
+        if (tokenInput && settings?.apiToken) tokenInput.value = settings.apiToken
+      })
+    })
+
+    container.querySelector('#mobileSyncClose')?.addEventListener('click', () => {
+      container.querySelector('#mobileSyncModal')?.classList.add('hidden')
+    })
+
+    container.querySelector('#mobileSyncOverlay')?.addEventListener('click', () => {
+      container.querySelector('#mobileSyncModal')?.classList.add('hidden')
+    })
+
+    container.querySelector('#mobileSyncSaveBtn')?.addEventListener('click', () => {
+      const apiUrl = (container.querySelector('#mobileSyncApiUrl') as HTMLInputElement)?.value.replace(/\/+$/, '').trim()
+      const apiToken = (container.querySelector('#mobileSyncApiToken') as HTMLInputElement)?.value.trim()
+      if (!apiUrl || !apiToken) {
+        syncToast('请填写 API 地址和密钥', 'error')
+        return
+      }
+      chrome.runtime.sendMessage({ action: 'saveSyncSettings', settings: { apiUrl, apiToken } }, () => {
+        syncToast('设置已保存', 'success')
+      })
+    })
+
+    container.querySelector('#mobileSyncNowBtn')?.addEventListener('click', () => {
+      const statusEl = container.querySelector('#mobileSyncStatus') as HTMLElement
+      if (statusEl) statusEl.textContent = '同步中...'
+      chrome.runtime.sendMessage({ action: 'syncRemoteTasks' }, (result: { synced?: number; error?: string }) => {
+        if (result?.synced > 0) {
+          syncToast(`已同步 ${result.synced} 个任务`, 'success')
+          if (statusEl) statusEl.textContent = `上次同步: 成功，${result.synced} 个任务`
+        } else if (result?.error) {
+          syncToast('同步失败: ' + result.error, 'error')
+          if (statusEl) statusEl.textContent = '同步失败: ' + result.error
+        } else {
+          if (statusEl) statusEl.textContent = '没有新的待同步任务'
+        }
+      })
+    })
   }
 
-  // 拖拽功能
+  // 拖拽功能 + 双击编辑
   setupDragAndDrop(container)
 }
 
-const setupDragAndDrop = (container: HTMLElement): void => {
+function setupDragAndDrop(container: HTMLElement): void {
   container.querySelectorAll('[draggable="true"]').forEach(el => {
     el.addEventListener('dragstart', async (e) => {
       const taskId = (e.target as HTMLElement).dataset.taskId
@@ -510,6 +590,25 @@ const setupDragAndDrop = (container: HTMLElement): void => {
         }
       }
     })
+  })
+
+  // 列表视图双击编辑（排除周/月视图已有处理的元素）
+  container.querySelectorAll('[data-task-id][draggable="true"]').forEach(el => {
+    if (!(el as HTMLElement).classList.contains('week-task-item') && !(el as HTMLElement).classList.contains('month-task-item')) {
+      el.addEventListener('dblclick', (e) => {
+        e.stopPropagation()
+        const taskId = (el as HTMLElement).dataset.taskId
+        if (taskId) {
+          const task = getState().tasks.find(t => t.id === taskId)
+          if (task) {
+            setState({ editingTask: task })
+            reRender()
+            const modal = container.querySelector('#taskModal') as HTMLElement
+            modal?.classList.remove('hidden')
+          }
+        }
+      })
+    }
   })
 
   container.querySelectorAll('.drop-zone').forEach(zone => {

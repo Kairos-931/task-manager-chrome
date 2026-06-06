@@ -39,6 +39,7 @@ export const getTodayStr = (): string => formatDate(new Date())
 let state: AppState = {
   tasks: [],
   categories: [],
+  defaultCategory: '',
   hideCompleted: false,
   hideOverdue: false,
   showNoTimeLimitOnly: false,
@@ -144,6 +145,7 @@ export const persistState = async (): Promise<void> => {
     await saveData({
       tasks: state.tasks,
       categories: state.categories,
+      defaultCategory: state.defaultCategory,
       hideCompleted: state.hideCompleted,
       hideOverdue: state.hideOverdue,
       showNoTimeLimitOnly: state.showNoTimeLimitOnly,

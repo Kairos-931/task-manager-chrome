@@ -25,6 +25,7 @@ export const defaultCategories: Category[] = [
 export const getDefaultData = (): StorageData => ({
   tasks: [],
   categories: defaultCategories,
+  defaultCategory: '',
   hideCompleted: false,
   hideOverdue: false,
   showNoTimeLimitOnly: false,
@@ -291,6 +292,7 @@ export const mergeRemoteData = async (remoteData: StorageData): Promise<StorageD
   const merged: StorageData = {
     tasks: mergedTasks,
     categories: mergedCategories,
+    defaultCategory: remoteData.defaultCategory || localData.defaultCategory,
     hideCompleted: remoteData.darkMode !== undefined ? remoteData.hideCompleted : localData.hideCompleted,
     hideOverdue: remoteData.darkMode !== undefined ? remoteData.hideOverdue : localData.hideOverdue,
     showNoTimeLimitOnly: remoteData.showNoTimeLimitOnly ?? localData.showNoTimeLimitOnly,
