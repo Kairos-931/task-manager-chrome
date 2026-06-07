@@ -28,6 +28,9 @@ function copyDir(src, dest) {
 
 const syncDir = join(rootDir, 'chrome-extension-sync')
 
+// Copy manifest (contains key, permissions — must be synced)
+cpSync(join(rootDir, 'manifest.json'), join(syncDir, 'manifest.json'))
+
 // Copy HTML files
 cpSync(join(rootDir, 'popup/popup.html'), join(syncDir, 'popup/popup.html'))
 cpSync(join(rootDir, 'newtab/newtab.html'), join(syncDir, 'newtab/newtab.html'))

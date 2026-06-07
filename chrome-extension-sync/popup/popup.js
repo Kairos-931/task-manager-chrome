@@ -48,6 +48,7 @@ var TaskManager = (() => {
     renderFilters: () => renderFilters,
     renderHeader: () => renderHeader,
     renderListView: () => renderListView,
+    renderMobileSyncPanel: () => renderMobileSyncPanel,
     renderModal: () => renderModal,
     renderMonthView: () => renderMonthView,
     renderStats: () => renderStats,
@@ -79,6 +80,7 @@ var TaskManager = (() => {
   var getDefaultData = () => ({
     tasks: [],
     categories: defaultCategories,
+    defaultCategory: "",
     hideCompleted: false,
     hideOverdue: false,
     showNoTimeLimitOnly: false,
@@ -312,6 +314,7 @@ var TaskManager = (() => {
     const merged = {
       tasks: mergedTasks,
       categories: mergedCategories,
+      defaultCategory: remoteData.defaultCategory || localData.defaultCategory,
       hideCompleted: remoteData.darkMode !== void 0 ? remoteData.hideCompleted : localData.hideCompleted,
       hideOverdue: remoteData.darkMode !== void 0 ? remoteData.hideOverdue : localData.hideOverdue,
       showNoTimeLimitOnly: remoteData.showNoTimeLimitOnly ?? localData.showNoTimeLimitOnly,
@@ -335,7 +338,7 @@ var TaskManager = (() => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    const date = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+    const date = `${(/* @__PURE__ */ new Date()).getFullYear()}-${String((/* @__PURE__ */ new Date()).getMonth() + 1).padStart(2, "0")}-${String((/* @__PURE__ */ new Date()).getDate()).padStart(2, "0")}`;
     a.download = `task-manager-backup-${date}.json`;
     a.click();
     URL.revokeObjectURL(url);
@@ -488,7 +491,12 @@ var TaskManager = (() => {
     div.textContent = str;
     return div.innerHTML;
   };
-  var formatDate = (d) => d.toISOString().split("T")[0];
+  var formatDate = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
   var parseDate = (s) => /* @__PURE__ */ new Date(s + "T00:00:00");
   var formatHours = (m) => (m / 60).toFixed(1) + "h";
   var getDateLabel = (d) => {
@@ -509,6 +517,7 @@ var TaskManager = (() => {
   var state = {
     tasks: [],
     categories: [],
+    defaultCategory: "",
     hideCompleted: false,
     hideOverdue: false,
     showNoTimeLimitOnly: false,
@@ -615,6 +624,7 @@ var TaskManager = (() => {
       await saveData({
         tasks: state.tasks,
         categories: state.categories,
+        defaultCategory: state.defaultCategory,
         hideCompleted: state.hideCompleted,
         hideOverdue: state.hideOverdue,
         showNoTimeLimitOnly: state.showNoTimeLimitOnly,
@@ -804,6 +814,9 @@ var TaskManager = (() => {
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
         </button>
         <button id="manageCategoryBtn" class="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition text-sm">\u5206\u7C7B</button>
+        <button id="mobileSyncSettingsBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="\u624B\u673A\u540C\u6B65\u8BBE\u7F6E">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+        </button>
         ` : ""}
         <button id="addTaskBtn" class="px-4 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm font-medium">+ \u6DFB\u52A0</button>
       </div>
@@ -962,7 +975,7 @@ var TaskManager = (() => {
       </div>
       <div>
         ${days.map((d) => {
-      const dayTasks = getFilteredTasks().filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, d));
+      const dayTasks = getState().tasks.filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, d));
       const isToday = d === todayStr;
       const pendingMin = dayTasks.filter((t) => !t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
       const completedMin = dayTasks.filter((t) => t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
@@ -1044,7 +1057,7 @@ var TaskManager = (() => {
       const dayDate = parseDate(d);
       const isCurrentMonth = dayDate.getMonth() === month;
       const isToday = d === formatDate(/* @__PURE__ */ new Date());
-      const dayTasks = getFilteredTasks().filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, d));
+      const dayTasks = getState().tasks.filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, d));
       return `
             <div class="min-h-[100px] p-2 border-b border-r dark:border-gray-700 ${isCurrentMonth ? "" : "bg-gray-50 dark:bg-gray-900/50"} ${isToday ? "bg-blue-50/50 dark:bg-blue-900/20" : ""} hover:bg-gray-100 dark:hover:bg-gray-700/30 transition cursor-pointer drop-zone" data-date="${d}">
               <div class="text-sm mb-1 ${isCurrentMonth ? "" : "text-gray-300 dark:text-gray-600"} ${isToday ? "font-bold text-blue-500" : ""}">${dayDate.getDate()}</div>
@@ -1075,13 +1088,13 @@ var TaskManager = (() => {
     }
   };
   var renderModal = () => {
-    const { editingTask, categories = [] } = getState();
+    const { editingTask, categories = [], defaultCategory } = getState();
     const isEditing = editingTask !== null;
     const task = editingTask || {
       title: "",
       description: "",
       priority: "medium",
-      category: categories[0]?.id || "",
+      category: defaultCategory || categories[0]?.id || "",
       dueDate: formatDate(/* @__PURE__ */ new Date()),
       duration: 60,
       repeatType: "none",
@@ -1193,7 +1206,7 @@ var TaskManager = (() => {
   `;
   };
   var renderCategoryModal = () => {
-    const { categories = [] } = getState();
+    const { categories = [], defaultCategory } = getState();
     return `
     <div id="categoryModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
       <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[90%] max-w-md">
@@ -1210,8 +1223,12 @@ var TaskManager = (() => {
                 <div class="flex items-center gap-2 flex-1">
                   <input type="color" value="${cat.color}" class="category-color w-8 h-8 rounded cursor-pointer border-0" data-id="${cat.id}">
                   <input type="text" value="${escapeHtml(cat.name)}" class="category-name flex-1 px-2 py-1 border dark:border-gray-600 rounded bg-white dark:bg-gray-700 dark:text-white text-sm" data-id="${cat.id}">
+                  ${defaultCategory === cat.id ? '<span class="text-xs text-blue-500 font-medium">\u9ED8\u8BA4</span>' : ""}
                 </div>
                 <div class="flex gap-1">
+                  <button class="set-default-category p-1 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded text-blue-500 transition ${defaultCategory === cat.id ? "opacity-30" : ""}" data-id="${cat.id}" title="\u8BBE\u4E3A\u9ED8\u8BA4\u5206\u7C7B">
+                    <svg class="w-4 h-4" fill="${defaultCategory === cat.id ? "currentColor" : "none"}" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
+                  </button>
                   <button class="save-category p-1 hover:bg-green-50 dark:hover:bg-green-900/20 rounded text-green-500 transition" data-id="${cat.id}" title="\u4FDD\u5B58">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
                   </button>
@@ -1356,6 +1373,39 @@ var TaskManager = (() => {
     <input type="file" id="syncImportInput" accept=".json" style="opacity:0;position:absolute;pointer-events:none;">
   `;
   };
+  var renderMobileSyncPanel = () => {
+    return `
+    <div id="mobileSyncModal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+      <div class="fixed inset-0 bg-black/50" id="mobileSyncOverlay"></div>
+      <div class="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md mx-8 p-10 max-h-[90vh] overflow-y-auto">
+        <div class="flex items-center justify-between mb-8">
+          <h3 class="text-xl font-semibold text-gray-900 dark:text-white">\u624B\u673A\u540C\u6B65\u8BBE\u7F6E</h3>
+          <button id="mobileSyncClose" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="space-y-6">
+          <div>
+            <label class="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-2.5">API \u5730\u5740</label>
+            <input type="url" id="mobileSyncApiUrl" class="w-full px-4 py-3 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" placeholder="https://your-worker.workers.dev">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-2.5">API \u5BC6\u94A5</label>
+            <input type="text" id="mobileSyncApiToken" class="w-full px-4 py-3 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" placeholder="\u7C98\u8D34\u4F60\u7684 API Token" autocomplete="off">
+          </div>
+          <div class="flex gap-4 pt-2">
+            <button id="mobileSyncSaveBtn" class="flex-1 px-4 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm font-medium">\u4FDD\u5B58\u8BBE\u7F6E</button>
+            <button id="mobileSyncNowBtn" class="flex-1 px-4 py-3 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition text-sm font-medium">\u7ACB\u5373\u540C\u6B65</button>
+          </div>
+          <div id="mobileSyncStatus" class="text-xs text-gray-500 dark:text-gray-400 min-h-[1.25rem]"></div>
+          <div class="pt-4 border-t dark:border-gray-700">
+            <p class="text-xs text-gray-400 dark:text-gray-500 leading-relaxed">\u624B\u673A\u8BBF\u95EE\u4F60\u7684 Worker \u5730\u5740\u5373\u53EF\u6DFB\u52A0\u4EFB\u52A1\uFF0C\u4E5F\u53EF\u901A\u8FC7 Telegram Bot \u53D1\u6D88\u606F\u6DFB\u52A0\u3002</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  };
   var renderApp = (container) => {
     const { darkMode } = getState();
     if (darkMode) {
@@ -1372,6 +1422,7 @@ var TaskManager = (() => {
       ${renderModal()}
       ${renderCategoryModal()}
       ${renderSyncModal()}
+      ${renderMobileSyncPanel()}
     </div>
   `;
   };
@@ -1379,6 +1430,19 @@ var TaskManager = (() => {
   // shared/events.ts
   var draggedTaskId = null;
   var currentContainer = null;
+  function syncToast(message, type = "success") {
+    document.querySelectorAll(".sync-action-toast").forEach((el) => el.remove());
+    const toast = document.createElement("div");
+    toast.className = "sync-action-toast";
+    const bgColor = type === "success" ? "#22c55e" : "#ef4444";
+    toast.style.cssText = `position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);padding:0.75rem 1.5rem;border-radius:0.75rem;box-shadow:0 10px 25px rgba(0,0,0,0.15);color:#fff;font-size:0.875rem;font-weight:500;z-index:10000;background:${bgColor};transition:opacity 0.3s;white-space:nowrap;`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = "0";
+      setTimeout(() => toast.remove(), 300);
+    }, 3e3);
+  }
   function reRender() {
     if (!currentContainer)
       return;
@@ -1670,6 +1734,9 @@ var TaskManager = (() => {
           if (id && getState().categories.length > 1) {
             if (confirm("\u786E\u5B9A\u5220\u9664\u6B64\u5206\u7C7B\uFF1F")) {
               deleteCategory(id);
+              if (getState().defaultCategory === id) {
+                setState({ defaultCategory: "" });
+              }
               await persistState();
               reRender();
               const modal = container.querySelector("#categoryModal");
@@ -1677,6 +1744,19 @@ var TaskManager = (() => {
             }
           } else if (id && getState().categories.length <= 1) {
             alert("\u81F3\u5C11\u4FDD\u7559\u4E00\u4E2A\u5206\u7C7B");
+          }
+        });
+      });
+      container.querySelectorAll(".set-default-category").forEach((btn) => {
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const id = e.currentTarget.dataset.id;
+          if (id) {
+            setState({ defaultCategory: id });
+            await persistState();
+            reRender();
+            const modal = container.querySelector("#categoryModal");
+            modal?.classList.remove("hidden");
           }
         });
       });
@@ -1761,10 +1841,58 @@ var TaskManager = (() => {
           syncImportInput.value = "";
         }
       });
+      container.querySelector("#mobileSyncSettingsBtn")?.addEventListener("click", () => {
+        const modal = container.querySelector("#mobileSyncModal");
+        modal?.classList.remove("hidden");
+        chrome.runtime.sendMessage({ action: "getSyncSettings" }, (settings) => {
+          const urlInput = container.querySelector("#mobileSyncApiUrl");
+          const tokenInput = container.querySelector("#mobileSyncApiToken");
+          if (urlInput && settings?.apiUrl)
+            urlInput.value = settings.apiUrl;
+          if (tokenInput && settings?.apiToken)
+            tokenInput.value = settings.apiToken;
+        });
+      });
+      container.querySelector("#mobileSyncClose")?.addEventListener("click", () => {
+        container.querySelector("#mobileSyncModal")?.classList.add("hidden");
+      });
+      container.querySelector("#mobileSyncOverlay")?.addEventListener("click", () => {
+        container.querySelector("#mobileSyncModal")?.classList.add("hidden");
+      });
+      container.querySelector("#mobileSyncSaveBtn")?.addEventListener("click", () => {
+        const apiUrl = container.querySelector("#mobileSyncApiUrl")?.value.replace(/\/+$/, "").trim();
+        const apiToken = container.querySelector("#mobileSyncApiToken")?.value.trim();
+        if (!apiUrl || !apiToken) {
+          syncToast("\u8BF7\u586B\u5199 API \u5730\u5740\u548C\u5BC6\u94A5", "error");
+          return;
+        }
+        chrome.runtime.sendMessage({ action: "saveSyncSettings", settings: { apiUrl, apiToken } }, () => {
+          syncToast("\u8BBE\u7F6E\u5DF2\u4FDD\u5B58", "success");
+        });
+      });
+      container.querySelector("#mobileSyncNowBtn")?.addEventListener("click", () => {
+        const statusEl = container.querySelector("#mobileSyncStatus");
+        if (statusEl)
+          statusEl.textContent = "\u540C\u6B65\u4E2D...";
+        chrome.runtime.sendMessage({ action: "syncRemoteTasks" }, (result) => {
+          if (result?.synced > 0) {
+            syncToast(`\u5DF2\u540C\u6B65 ${result.synced} \u4E2A\u4EFB\u52A1`, "success");
+            if (statusEl)
+              statusEl.textContent = `\u4E0A\u6B21\u540C\u6B65: \u6210\u529F\uFF0C${result.synced} \u4E2A\u4EFB\u52A1`;
+          } else if (result?.error) {
+            syncToast("\u540C\u6B65\u5931\u8D25: " + result.error, "error");
+            if (statusEl)
+              statusEl.textContent = "\u540C\u6B65\u5931\u8D25: " + result.error;
+          } else {
+            if (statusEl)
+              statusEl.textContent = "\u6CA1\u6709\u65B0\u7684\u5F85\u540C\u6B65\u4EFB\u52A1";
+          }
+        });
+      });
     }
     setupDragAndDrop(container);
   };
-  var setupDragAndDrop = (container) => {
+  function setupDragAndDrop(container) {
     container.querySelectorAll('[draggable="true"]').forEach((el) => {
       el.addEventListener("dragstart", async (e) => {
         const taskId = e.target.dataset.taskId;
@@ -1803,6 +1931,23 @@ var TaskManager = (() => {
         }
       });
     });
+    container.querySelectorAll('[data-task-id][draggable="true"]').forEach((el) => {
+      if (!el.classList.contains("week-task-item") && !el.classList.contains("month-task-item")) {
+        el.addEventListener("dblclick", (e) => {
+          e.stopPropagation();
+          const taskId = el.dataset.taskId;
+          if (taskId) {
+            const task = getState().tasks.find((t) => t.id === taskId);
+            if (task) {
+              setState({ editingTask: task });
+              reRender();
+              const modal = container.querySelector("#taskModal");
+              modal?.classList.remove("hidden");
+            }
+          }
+        });
+      }
+    });
     container.querySelectorAll(".drop-zone").forEach((zone) => {
       zone.addEventListener("dragover", (e) => {
         e.preventDefault();
@@ -1826,9 +1971,22 @@ var TaskManager = (() => {
         }
       });
     });
-  };
+  }
 
   // shared/entry.ts
+  function syncActionToast(message, type = "success") {
+    document.querySelectorAll(".sync-action-toast").forEach((el) => el.remove());
+    const toast = document.createElement("div");
+    toast.className = "sync-action-toast";
+    const bgColor = type === "success" ? "#22c55e" : "#ef4444";
+    toast.style.cssText = `position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);padding:0.75rem 1.5rem;border-radius:0.75rem;box-shadow:0 10px 25px rgba(0,0,0,0.15);color:#fff;font-size:0.875rem;font-weight:500;z-index:10000;background:${bgColor};transition:opacity 0.3s;white-space:nowrap;`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = "0";
+      setTimeout(() => toast.remove(), 300);
+    }, 3e3);
+  }
   function autoInit() {
     const container = document.getElementById("app");
     if (!container) {
@@ -1839,16 +1997,19 @@ var TaskManager = (() => {
       renderApp(container);
       attachEventListeners(container);
     };
-    loadState().then(() => {
-      const state2 = getState();
-      if (state2.tasks.length > 0) {
-        persistState().catch(() => {
-        });
-      } else {
-        console.warn("[TaskMaster] loadState \u8FD4\u56DE\u7A7A\u6570\u636E\uFF0C\u8DF3\u8FC7 persist\uFF08\u9632\u6B62\u8986\u76D6\uFF09");
+    loadState().then(async () => {
+      const { tasks } = getState();
+      if (tasks.length > 0) {
+        await persistState();
+        console.log(`[TaskMaster] \u5DF2\u52A0\u8F7D ${tasks.length} \u4E2A\u4EFB\u52A1`);
       }
       renderApp(container);
       attachEventListeners(container);
+      chrome.runtime.sendMessage({ action: "syncRemoteTasks" }, (result) => {
+        if (result?.synced > 0) {
+          syncActionToast(`\u5DF2\u4ECE\u624B\u673A\u540C\u6B65 ${result.synced} \u4E2A\u4EFB\u52A1`, "success");
+        }
+      });
       initSyncMonitor(reRender2);
       onSyncStatusChange(() => {
         const indicator = container.querySelector("#syncIndicator");
