@@ -239,7 +239,7 @@ export const renderWeekView = (): string => {
       </div>
       <div>
         ${days.map(d => {
-          const dayTasks = getFilteredTasks().filter(t => !t.noTimeLimit && isTaskDueOnDate(t, d))
+          const dayTasks = getState().tasks.filter(t => !t.noTimeLimit && isTaskDueOnDate(t, d))
           const isToday = d === todayStr
           const pendingMin = dayTasks.filter(t => !t.completed && t.repeatType === 'none').reduce((s, t) => s + t.duration, 0)
           const completedMin = dayTasks.filter(t => t.completed && t.repeatType === 'none').reduce((s, t) => s + t.duration, 0)
@@ -320,7 +320,7 @@ export const renderMonthView = (): string => {
           const dayDate = parseDate(d)
           const isCurrentMonth = dayDate.getMonth() === month
           const isToday = d === formatDate(new Date())
-          const dayTasks = getFilteredTasks().filter(t => !t.noTimeLimit && isTaskDueOnDate(t, d))
+          const dayTasks = getState().tasks.filter(t => !t.noTimeLimit && isTaskDueOnDate(t, d))
           return `
             <div class="min-h-[100px] p-2 border-b border-r dark:border-gray-700 ${isCurrentMonth ? '' : 'bg-gray-50 dark:bg-gray-900/50'} ${isToday ? 'bg-blue-50/50 dark:bg-blue-900/20' : ''} hover:bg-gray-100 dark:hover:bg-gray-700/30 transition cursor-pointer drop-zone" data-date="${d}">
               <div class="text-sm mb-1 ${isCurrentMonth ? '' : 'text-gray-300 dark:text-gray-600'} ${isToday ? 'font-bold text-blue-500' : ''}">${dayDate.getDate()}</div>
