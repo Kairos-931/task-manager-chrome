@@ -1,4 +1,5 @@
 // Background script for Chrome extension
+import { createAutoBackup, loadData, saveData } from './storage'
 
 const ALARM_NAME = 'tm_daily_backup'
 const ALARM_PERIOD_MINUTES = 24 * 60 // once per day
@@ -28,7 +29,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 async function triggerBackup() {
   try {
-    const { createAutoBackup } = await import('./storage')
     const result = await createAutoBackup()
     if (result.success) {
       console.log('[TaskMaster BG] auto backup completed')
@@ -86,8 +86,6 @@ async function handleRemoteSync(): Promise<{ synced?: number; error?: string }> 
       return { synced: 0 }
     }
 
-    // Import via mergeRemoteData
-    const { loadData, saveData } = await import('./storage')
     const localData = await loadData()
 
     const newTasks = remoteTasks.filter((rt: any) => {
