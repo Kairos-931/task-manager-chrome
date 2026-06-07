@@ -325,7 +325,8 @@ var Background = (() => {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === "openNewTab") {
       chrome.tabs.create({ url: chrome.runtime.getURL("newtab/newtab.html") });
-      return;
+      sendResponse({});
+      return false;
     }
     if (message.action === "getSyncSettings") {
       chrome.storage.local.get(["tm_sync_settings"], (result) => {
@@ -343,6 +344,8 @@ var Background = (() => {
       handleRemoteSync().then(sendResponse).catch((e) => sendResponse({ error: String(e) }));
       return true;
     }
+    sendResponse({});
+    return false;
   });
   async function handleRemoteSync() {
     try {

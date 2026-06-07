@@ -44,7 +44,8 @@ async function triggerBackup() {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'openNewTab') {
     chrome.tabs.create({ url: chrome.runtime.getURL('newtab/newtab.html') })
-    return
+    sendResponse({})
+    return false
   }
 
   if (message.action === 'getSyncSettings') {
@@ -65,6 +66,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleRemoteSync().then(sendResponse).catch(e => sendResponse({ error: String(e) }))
     return true
   }
+
+  // Unknown action — respond immediately to avoid port-closed error
+  sendResponse({})
+  return false
 })
 
 async function handleRemoteSync(): Promise<{ synced?: number; error?: string }> {
