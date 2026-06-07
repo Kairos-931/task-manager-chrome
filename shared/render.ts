@@ -632,6 +632,23 @@ export const renderSyncModal = (): string => {
             导入文件
           </button>
         </div>
+        <!-- 数据备份区域 -->
+        <div id="backupSection" class="border-t dark:border-gray-700" style="padding:16px 24px 20px;">
+          <div class="flex items-center justify-between mb-3">
+            <span style="font-size:13px;font-weight:600;color:#374151;" class="dark:text-gray-300">数据备份</span>
+            <div class="flex items-center gap-2">
+              <span id="storageUsageText" style="font-size:11px;color:#9ca3af;">计算中...</span>
+              <button id="createBackupBtn" style="font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid #d1d5db;background:white;color:#374151;cursor:pointer;transition:all 0.15s;" class="dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600">立即备份</button>
+            </div>
+          </div>
+          <!-- 存储用量条 -->
+          <div style="height:4px;background:#f3f4f6;border-radius:2px;margin-bottom:12px;overflow:hidden;" class="dark:bg-gray-700">
+            <div id="storageUsageBar" style="height:100%;width:0%;background:#3b82f6;border-radius:2px;transition:width 0.3s;"></div>
+          </div>
+          <div id="backupList" style="font-size:12px;color:#6b7280;" class="dark:text-gray-400">
+            加载中...
+          </div>
+        </div>
       </div>
     </div>
     <input type="file" id="syncImportInput" accept=".json" style="opacity:0;position:absolute;pointer-events:none;">

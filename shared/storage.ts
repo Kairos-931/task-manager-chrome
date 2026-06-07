@@ -302,6 +302,141 @@ export const mergeRemoteData = async (remoteData: StorageData): Promise<StorageD
   return merged
 }
 
+// ==================== 自动备份（保留最近 3 天）====================
+
+const BACKUP_PREFIX = 'tm_auto_backup_'
+const MAX_BACKUPS = 3
+
+export interface BackupInfo {
+  key: string
+  timestamp: number
+  dateStr: string
+  taskCount: number
+  categoryCount: number
+}
+
+const formatDateKey = (ts: number): string => {
+  const d = new Date(ts)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const h = String(d.getHours()).padStart(2, '0')
+  const min = String(d.getMinutes()).padStart(2, '0')
+  return `${y}${m}${day}_${h}${min}`
+}
+
+export const createAutoBackup = async (): Promise<{ success: boolean; error?: string }> => {
+  try {
+    const data = await loadData()
+    const now = Date.now()
+    const key = BACKUP_PREFIX + formatDateKey(now)
+    const payload = JSON.stringify({ timestamp: now, data })
+
+    await new Promise<void>((resolve, reject) => {
+      chrome.storage.local.set({ [key]: payload }, () => {
+        if (chrome.runtime.lastError) reject(chrome.runtime.lastError)
+        else resolve()
+      })
+    })
+
+    await cleanOldBackups()
+    console.log('[TaskMaster] auto backup created:', key)
+    return { success: true }
+  } catch (e) {
+    console.error('[TaskMaster] auto backup failed:', e)
+    return { success: false, error: String(e) }
+  }
+}
+
+export const listBackups = async (): Promise<BackupInfo[]> => {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(null, (all) => {
+      if (chrome.runtime.lastError) {
+        resolve([])
+        return
+      }
+      const backups: BackupInfo[] = []
+      for (const key of Object.keys(all)) {
+        if (!key.startsWith(BACKUP_PREFIX)) continue
+        try {
+          const parsed = typeof all[key] === 'string' ? JSON.parse(all[key]) : all[key]
+          const d = parsed.data
+          const ts = parsed.timestamp || 0
+          const dd = new Date(ts)
+          const dateStr = `${dd.getFullYear()}-${String(dd.getMonth() + 1).padStart(2, '0')}-${String(dd.getDate()).padStart(2, '0')} ${String(dd.getHours()).padStart(2, '0')}:${String(dd.getMinutes()).padStart(2, '0')}`
+          backups.push({
+            key,
+            timestamp: ts,
+            dateStr,
+            taskCount: d?.tasks?.length || 0,
+            categoryCount: d?.categories?.length || 0
+          })
+        } catch { /* skip corrupt */ }
+      }
+      backups.sort((a, b) => b.timestamp - a.timestamp)
+      resolve(backups)
+    })
+  })
+}
+
+export const restoreBackup = async (key: string): Promise<{ success: boolean; error?: string }> => {
+  try {
+    const result = await new Promise<string | null>((resolve) => {
+      chrome.storage.local.get([key], (r) => {
+        if (chrome.runtime.lastError) { resolve(null); return }
+        resolve(r[key] || null)
+      })
+    })
+    if (!result) return { success: false, error: '备份不存在' }
+    const parsed = JSON.parse(result)
+    if (!parsed.data?.tasks) return { success: false, error: '备份数据损坏' }
+    await saveData(parsed.data)
+    return { success: true }
+  } catch (e) {
+    return { success: false, error: String(e) }
+  }
+}
+
+export const deleteBackup = async (key: string): Promise<void> => {
+  return new Promise((resolve) => {
+    chrome.storage.local.remove([key], () => resolve())
+  })
+}
+
+const cleanOldBackups = async (): Promise<void> => {
+  const backups = await listBackups()
+  if (backups.length <= MAX_BACKUPS) return
+  const toRemove = backups.slice(MAX_BACKUPS).map(b => b.key)
+  if (toRemove.length === 0) return
+  await new Promise<void>((resolve) => {
+    chrome.storage.local.remove(toRemove, () => resolve())
+  })
+  console.log('[TaskMaster] cleaned', toRemove.length, 'old backups')
+}
+
+export const getStorageUsage = async (): Promise<{ used: number; total: number; percentage: number; breakdown: { key: string; size: number }[] }> => {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(null, (all) => {
+      let totalSize = 0
+      const breakdown: { key: string; size: number }[] = []
+      for (const [key, value] of Object.entries(all)) {
+        const size = JSON.stringify(value).length
+        totalSize += size
+        breakdown.push({ key, size })
+      }
+      breakdown.sort((a, b) => b.size - a.size)
+      // chrome.storage.local limit is 5MB (5,242,880 bytes)
+      const limit = 5 * 1024 * 1024
+      resolve({
+        used: totalSize,
+        total: limit,
+        percentage: Math.round((totalSize / limit) * 100),
+        breakdown
+      })
+    })
+  })
+}
+
 // ==================== 数据导入/导出 ====================
 
 export interface ExportData {

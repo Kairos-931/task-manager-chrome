@@ -498,6 +498,94 @@ export const attachEventListeners = (container: HTMLElement): void => {
         syncImportInput.value = ''
       }
     })
+    // ==================== 备份功能（在同步面板内）====================
+
+    const refreshBackupUI = async () => {
+      const { listBackups, getStorageUsage } = await import('./storage')
+      const [backups, usage] = await Promise.all([listBackups(), getStorageUsage()])
+
+      // Update storage bar
+      const bar = container.querySelector('#storageUsageBar') as HTMLElement
+      const text = container.querySelector('#storageUsageText') as HTMLElement
+      if (bar) bar.style.width = usage.percentage + '%'
+      if (text) {
+        const usedMB = (usage.used / 1024 / 1024).toFixed(2)
+        text.textContent = `${usedMB} MB / 5 MB`
+      }
+
+      // Update backup list
+      const listEl = container.querySelector('#backupList') as HTMLElement
+      if (!listEl) return
+
+      if (backups.length === 0) {
+        listEl.innerHTML = '<div style="text-align:center;padding:8px 0;color:#d1d5db;">暂无备份</div>'
+        return
+      }
+
+      listEl.innerHTML = backups.map(b => `
+        <div class="flex items-center justify-between" style="padding:6px 0;border-bottom:1px solid #f3f4f6;" data-backup-key="${b.key}">
+          <div>
+            <span style="color:#374151;" class="dark:text-gray-300">${b.dateStr}</span>
+            <span style="color:#9ca3af;margin-left:8px;">${b.taskCount} 个任务</span>
+          </div>
+          <div class="flex gap-2">
+            <button class="backup-restore-btn" data-key="${b.key}" style="font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid #d1d5db;background:white;color:#374151;cursor:pointer;" class="dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300">恢复</button>
+            <button class="backup-delete-btn" data-key="${b.key}" style="font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid #fecaca;background:white;color:#ef4444;cursor:pointer;">删除</button>
+          </div>
+        </div>
+      `).join('')
+
+      // Bind restore buttons
+      listEl.querySelectorAll('.backup-restore-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const key = (btn as HTMLElement).dataset.key!
+          if (!confirm('恢复此备份将覆盖当前所有数据，确定？')) return
+          const { restoreBackup } = await import('./storage')
+          const result = await restoreBackup(key)
+          if (result.success) {
+            await loadState()
+            reRender()
+            showToast(container, '已恢复备份', 'success')
+          } else {
+            showToast(container, result.error || '恢复失败', 'error')
+          }
+        })
+      })
+
+      // Bind delete buttons
+      listEl.querySelectorAll('.backup-delete-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const key = (btn as HTMLElement).dataset.key!
+          const { deleteBackup } = await import('./storage')
+          await deleteBackup(key)
+          refreshBackupUI()
+          showToast(container, '备份已删除', 'success')
+        })
+      })
+    }
+
+    // When sync modal opens, refresh backup UI
+    container.querySelector('#syncDataBtn')?.addEventListener('click', () => {
+      const modal = container.querySelector('#syncModal') as HTMLElement
+      modal?.classList.remove('hidden')
+      refreshBackupUI()
+    })
+
+    // Create backup button
+    container.querySelector('#createBackupBtn')?.addEventListener('click', async () => {
+      const btn = container.querySelector('#createBackupBtn') as HTMLElement
+      if (btn) btn.textContent = '备份中...'
+      const { createAutoBackup } = await import('./storage')
+      const result = await createAutoBackup()
+      if (btn) btn.textContent = '立即备份'
+      if (result.success) {
+        showToast(container, '备份已创建', 'success')
+        refreshBackupUI()
+      } else {
+        showToast(container, result.error || '备份失败', 'error')
+      }
+    })
+
     // ==================== 手机同步设置（newtab only）====================
     container.querySelector('#mobileSyncSettingsBtn')?.addEventListener('click', () => {
       const modal = container.querySelector('#mobileSyncModal') as HTMLElement

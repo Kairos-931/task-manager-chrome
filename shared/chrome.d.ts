@@ -9,6 +9,12 @@ interface StorageArea {
   remove(keys: string | string[], callback?: () => void): void
 }
 
+interface ChromeAlarm {
+  name: string
+  scheduledTime: number
+  periodInMinutes?: number
+}
+
 declare const chrome: {
   runtime: {
     lastError?: { message: string }
@@ -17,6 +23,12 @@ declare const chrome: {
     sendMessage(message: any, responseCallback?: (response: any) => void): void
     onMessage: {
       addListener(callback: (message: any, sender: any, sendResponse: (response?: any) => void) => void): void
+    }
+    onInstalled: {
+      addListener(callback: (details: { reason: string; previousVersion?: string }) => void): void
+    }
+    onStartup: {
+      addListener(callback: () => void): void
     }
   }
   tabs: {
@@ -27,6 +39,13 @@ declare const chrome: {
     local: StorageArea
     onChanged: {
       addListener(callback: (changes: { [key: string]: StorageChange }, areaName: string) => void): void
+    }
+  }
+  alarms: {
+    create(name: string, alarmInfo: { when?: number; periodInMinutes?: number; delayInMinutes?: number }): void
+    get(name: string, callback: (alarm: ChromeAlarm | undefined) => void): void
+    onAlarm: {
+      addListener(callback: (alarm: ChromeAlarm) => void): void
     }
   }
 }
