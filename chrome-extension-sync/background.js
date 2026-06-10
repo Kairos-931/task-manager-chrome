@@ -89,6 +89,7 @@ var Background = (() => {
   var saveToSyncChunked = (data) => {
     const meta = {
       categories: data.categories,
+      defaultCategory: data.defaultCategory,
       hideCompleted: data.hideCompleted,
       hideOverdue: data.hideOverdue,
       showNoTimeLimitOnly: data.showNoTimeLimitOnly,
@@ -175,7 +176,70 @@ var Background = (() => {
       });
     });
   };
+  var CLOUD_SYNC_SETTINGS_KEY = "tm_sync_settings";
+  var getCloudSettings = async () => {
+    return new Promise((resolve) => {
+      chrome.storage.local.get([CLOUD_SYNC_SETTINGS_KEY], (r) => {
+        resolve(r[CLOUD_SYNC_SETTINGS_KEY] || {});
+      });
+    });
+  };
+  var syncToCloud = async (data) => {
+    try {
+      const settings = await getCloudSettings();
+      if (!settings.apiUrl || !settings.apiToken) {
+        return { success: false, error: "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" };
+      }
+      const resp = await fetch(`${settings.apiUrl}/api/fullsync`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${settings.apiToken}`
+        },
+        body: JSON.stringify({ data })
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+        return { success: false, error: err.error || `HTTP ${resp.status}` };
+      }
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: String(e) };
+    }
+  };
+  var syncFromCloud = async () => {
+    try {
+      const settings = await getCloudSettings();
+      if (!settings.apiUrl || !settings.apiToken) {
+        return { data: null, error: "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" };
+      }
+      const resp = await fetch(`${settings.apiUrl}/api/fullsync`, {
+        method: "GET",
+        headers: { "Authorization": `Bearer ${settings.apiToken}` }
+      });
+      if (!resp.ok) {
+        return { data: null, error: `HTTP ${resp.status}` };
+      }
+      const result = await resp.json();
+      if (!result.data) {
+        return { data: null };
+      }
+      return { data: result.data };
+    } catch (e) {
+      return { data: null, error: String(e) };
+    }
+  };
   var loadData = async () => {
+    const cloudResult = await syncFromCloud();
+    if (cloudResult.data && cloudResult.data.tasks && cloudResult.data.tasks.length > 0) {
+      cloudResult.data.tasks = cloudResult.data.tasks.map((t) => ({
+        ...t,
+        updatedAt: t.updatedAt || t.createdAt || Date.now()
+      }));
+      await saveToLocal(cloudResult.data);
+      console.log("[TaskMaster] loadData: got", cloudResult.data.tasks.length, "tasks from cloud");
+      return cloudResult.data;
+    }
     const syncData = await loadFromSyncChunked();
     if (syncData) {
       syncData.tasks = syncData.tasks.map((t) => ({
@@ -210,7 +274,8 @@ var Background = (() => {
   };
   var saveData = async (data) => {
     await saveToLocal(data);
-    await saveToSyncChunked(data);
+    saveToSyncChunked(data).catch((e) => console.warn("[TaskMaster] chrome.storage.sync write failed:", e));
+    syncToCloud(data).catch((e) => console.warn("[TaskMaster] cloud sync write failed:", e));
   };
   var BACKUP_PREFIX = "tm_auto_backup_";
   var MAX_BACKUPS = 3;

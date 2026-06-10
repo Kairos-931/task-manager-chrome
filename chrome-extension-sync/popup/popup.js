@@ -33,14 +33,17 @@ var TaskManager = (() => {
     getDefaultData: () => getDefaultData,
     getStorageUsage: () => getStorageUsage,
     importDataFromFile: () => importDataFromFile,
+    isCloudConfigured: () => isCloudConfigured,
     listBackups: () => listBackups,
     loadData: () => loadData,
     mergeRemoteData: () => mergeRemoteData,
     restoreBackup: () => restoreBackup,
     saveData: () => saveData,
+    syncFromCloud: () => syncFromCloud,
+    syncToCloud: () => syncToCloud,
     validateImportData: () => validateImportData
   });
-  var STORAGE_KEY, META_KEY, INDEX_KEY, CHUNK_PREFIX, CHUNK_SIZE, LOCAL_BACKUP_KEY, OLD_SIMPLE_KEY, generateId, defaultCategories, getDefaultData, splitTasksToChunks, loadFromSyncChunked, saveToSyncChunked, loadFromSyncSimple, loadFromLocal, saveToLocal, mergeTasks, mergeCategories, loadData, saveData, mergeRemoteData, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
+  var STORAGE_KEY, META_KEY, INDEX_KEY, CHUNK_PREFIX, CHUNK_SIZE, LOCAL_BACKUP_KEY, OLD_SIMPLE_KEY, generateId, defaultCategories, getDefaultData, splitTasksToChunks, loadFromSyncChunked, saveToSyncChunked, loadFromSyncSimple, loadFromLocal, saveToLocal, mergeTasks, mergeCategories, CLOUD_SYNC_SETTINGS_KEY, getCloudSettings, syncToCloud, syncFromCloud, isCloudConfigured, loadData, saveData, mergeRemoteData, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
   var init_storage = __esm({
     "shared/storage.ts"() {
       STORAGE_KEY = "tm_data";
@@ -133,6 +136,7 @@ var TaskManager = (() => {
       saveToSyncChunked = (data) => {
         const meta = {
           categories: data.categories,
+          defaultCategory: data.defaultCategory,
           hideCompleted: data.hideCompleted,
           hideOverdue: data.hideOverdue,
           showNoTimeLimitOnly: data.showNoTimeLimitOnly,
@@ -251,7 +255,74 @@ var TaskManager = (() => {
         }
         return result;
       };
+      CLOUD_SYNC_SETTINGS_KEY = "tm_sync_settings";
+      getCloudSettings = async () => {
+        return new Promise((resolve) => {
+          chrome.storage.local.get([CLOUD_SYNC_SETTINGS_KEY], (r) => {
+            resolve(r[CLOUD_SYNC_SETTINGS_KEY] || {});
+          });
+        });
+      };
+      syncToCloud = async (data) => {
+        try {
+          const settings = await getCloudSettings();
+          if (!settings.apiUrl || !settings.apiToken) {
+            return { success: false, error: "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" };
+          }
+          const resp = await fetch(`${settings.apiUrl}/api/fullsync`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${settings.apiToken}`
+            },
+            body: JSON.stringify({ data })
+          });
+          if (!resp.ok) {
+            const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+            return { success: false, error: err.error || `HTTP ${resp.status}` };
+          }
+          return { success: true };
+        } catch (e) {
+          return { success: false, error: String(e) };
+        }
+      };
+      syncFromCloud = async () => {
+        try {
+          const settings = await getCloudSettings();
+          if (!settings.apiUrl || !settings.apiToken) {
+            return { data: null, error: "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" };
+          }
+          const resp = await fetch(`${settings.apiUrl}/api/fullsync`, {
+            method: "GET",
+            headers: { "Authorization": `Bearer ${settings.apiToken}` }
+          });
+          if (!resp.ok) {
+            return { data: null, error: `HTTP ${resp.status}` };
+          }
+          const result = await resp.json();
+          if (!result.data) {
+            return { data: null };
+          }
+          return { data: result.data };
+        } catch (e) {
+          return { data: null, error: String(e) };
+        }
+      };
+      isCloudConfigured = async () => {
+        const settings = await getCloudSettings();
+        return !!(settings.apiUrl && settings.apiToken);
+      };
       loadData = async () => {
+        const cloudResult = await syncFromCloud();
+        if (cloudResult.data && cloudResult.data.tasks && cloudResult.data.tasks.length > 0) {
+          cloudResult.data.tasks = cloudResult.data.tasks.map((t) => ({
+            ...t,
+            updatedAt: t.updatedAt || t.createdAt || Date.now()
+          }));
+          await saveToLocal(cloudResult.data);
+          console.log("[TaskMaster] loadData: got", cloudResult.data.tasks.length, "tasks from cloud");
+          return cloudResult.data;
+        }
         const syncData = await loadFromSyncChunked();
         if (syncData) {
           syncData.tasks = syncData.tasks.map((t) => ({
@@ -286,20 +357,23 @@ var TaskManager = (() => {
       };
       saveData = async (data) => {
         await saveToLocal(data);
-        await saveToSyncChunked(data);
+        saveToSyncChunked(data).catch((e) => console.warn("[TaskMaster] chrome.storage.sync write failed:", e));
+        syncToCloud(data).catch((e) => console.warn("[TaskMaster] cloud sync write failed:", e));
       };
-      mergeRemoteData = async (remoteData) => {
-        const localData = await loadData();
-        const mergedTasks = mergeTasks(localData.tasks, remoteData.tasks);
-        const mergedCategories = mergeCategories(localData.categories, remoteData.categories);
+      mergeRemoteData = async (localState) => {
+        const remoteData = await loadFromSyncChunked();
+        if (!remoteData)
+          return localState;
+        const mergedTasks = mergeTasks(localState.tasks, remoteData.tasks);
+        const mergedCategories = mergeCategories(localState.categories, remoteData.categories);
         const merged = {
           tasks: mergedTasks,
           categories: mergedCategories,
-          defaultCategory: remoteData.defaultCategory || localData.defaultCategory,
-          hideCompleted: remoteData.darkMode !== void 0 ? remoteData.hideCompleted : localData.hideCompleted,
-          hideOverdue: remoteData.darkMode !== void 0 ? remoteData.hideOverdue : localData.hideOverdue,
-          showNoTimeLimitOnly: remoteData.showNoTimeLimitOnly ?? localData.showNoTimeLimitOnly,
-          darkMode: remoteData.darkMode ?? localData.darkMode
+          defaultCategory: remoteData.defaultCategory || localState.defaultCategory,
+          hideCompleted: remoteData.hideCompleted ?? localState.hideCompleted,
+          hideOverdue: remoteData.hideOverdue ?? localState.hideOverdue,
+          showNoTimeLimitOnly: remoteData.showNoTimeLimitOnly ?? localState.showNoTimeLimitOnly,
+          darkMode: remoteData.darkMode ?? localState.darkMode
         };
         await saveData(merged);
         return merged;
@@ -493,6 +567,420 @@ var TaskManager = (() => {
     }
   });
 
+  // shared/sync.ts
+  function showSyncToast() {
+    const existing = document.querySelector(".sync-toast");
+    existing?.remove();
+    const toast = document.createElement("div");
+    toast.className = "sync-toast fixed bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm z-50 bg-blue-500 transition-opacity duration-500";
+    toast.innerHTML = `
+    <svg class="w-4 h-4 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+    </svg>
+    \u5DF2\u540C\u6B65\u6765\u81EA\u5176\u4ED6\u8BBE\u5907\u7684\u66F4\u65B0
+  `;
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = "0";
+      setTimeout(() => toast.remove(), 500);
+    }, 3e3);
+  }
+  function showToast(container, message, type = "success") {
+    const existing = container.querySelector(".toast-message");
+    existing?.remove();
+    const toast = document.createElement("div");
+    toast.className = `toast-message fixed bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm z-50 ${type === "success" ? "bg-green-500" : "bg-red-500"}`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.remove();
+    }, 3e3);
+  }
+  var syncStatus, statusChangeCallback, localSaveTime, statusTimeoutId, reRenderFn, getSyncStatus, setSyncStatus, onSyncStatusChange, markLocalSave, markSaveComplete, initSyncMonitor;
+  var init_sync = __esm({
+    "shared/sync.ts"() {
+      init_task();
+      init_storage();
+      syncStatus = "idle";
+      statusChangeCallback = null;
+      localSaveTime = 0;
+      statusTimeoutId = null;
+      reRenderFn = null;
+      getSyncStatus = () => syncStatus;
+      setSyncStatus = (status) => {
+        syncStatus = status;
+        statusChangeCallback?.(status);
+      };
+      onSyncStatusChange = (cb) => {
+        statusChangeCallback = cb;
+      };
+      markLocalSave = () => {
+        localSaveTime = Date.now();
+      };
+      markSaveComplete = () => {
+        setSyncStatus("synced");
+        if (statusTimeoutId)
+          clearTimeout(statusTimeoutId);
+        statusTimeoutId = setTimeout(() => {
+          if (syncStatus === "synced") {
+            setSyncStatus("idle");
+            reRenderFn?.();
+          }
+        }, 3e3);
+      };
+      initSyncMonitor = (reRender2) => {
+        reRenderFn = reRender2;
+        chrome.storage.onChanged.addListener((changes, areaName) => {
+          if (areaName !== "sync")
+            return;
+          const now = Date.now();
+          if (localSaveTime > 0 && now - localSaveTime < 2e3) {
+            return;
+          }
+          const hasMetaChange = !!changes["tm_meta"];
+          const hasChunkChange = Object.keys(changes).some((k) => k.startsWith("tm_tasks_"));
+          if (!hasMetaChange && !hasChunkChange)
+            return;
+          const metaChange = changes["tm_meta"];
+          if (metaChange && metaChange.newValue === void 0) {
+            const current = getState();
+            if (current.tasks.length > 0 || current.categories.length > 0) {
+              console.warn("[TaskMaster] \u68C0\u6D4B\u5230sync\u88AB\u6E05\u7A7A\uFF0C\u4ECE\u5185\u5B58\u56DE\u5199\u6570\u636E");
+              markLocalSave();
+              persistState().catch(() => {
+              });
+            }
+            return;
+          }
+          setSyncStatus("remote-updated");
+          const localState = getState();
+          mergeRemoteData(localState).then(() => {
+            loadState().then(() => {
+              reRender2();
+              showSyncToast();
+              if (statusTimeoutId)
+                clearTimeout(statusTimeoutId);
+              statusTimeoutId = setTimeout(() => {
+                if (syncStatus === "remote-updated") {
+                  setSyncStatus("idle");
+                  reRender2();
+                }
+              }, 4e3);
+            });
+          }).catch(() => {
+            setSyncStatus("error");
+          });
+        });
+      };
+    }
+  });
+
+  // shared/task.ts
+  var task_exports = {};
+  __export(task_exports, {
+    addCategory: () => addCategory,
+    addTask: () => addTask,
+    deleteCategory: () => deleteCategory,
+    deleteTask: () => deleteTask,
+    escapeHtml: () => escapeHtml,
+    formatDate: () => formatDate,
+    formatHours: () => formatHours,
+    getCatColor: () => getCatColor,
+    getCatName: () => getCatName,
+    getDateLabel: () => getDateLabel,
+    getFilteredTasks: () => getFilteredTasks,
+    getPriorityColor: () => getPriorityColor,
+    getRemainingTime: () => getRemainingTime,
+    getState: () => getState,
+    getStats: () => getStats,
+    getTodayStr: () => getTodayStr,
+    isOverdue: () => isOverdue,
+    isTaskDueOnDate: () => isTaskDueOnDate,
+    loadState: () => loadState,
+    moveTaskToDate: () => moveTaskToDate,
+    parseDate: () => parseDate,
+    persistState: () => persistState,
+    resetEditingTask: () => resetEditingTask,
+    setState: () => setState,
+    toggleTask: () => toggleTask,
+    updateCategory: () => updateCategory,
+    updateTask: () => updateTask
+  });
+  var escapeHtml, formatDate, parseDate, formatHours, getDateLabel, getTodayStr, state, getState, setState, resetEditingTask, getRemainingTime, isOverdue, isTaskDueOnDate, getPriorityColor, getCatColor, getCatName, loadState, persistState, getFilteredTasks, addTask, updateTask, deleteTask, toggleTask, moveTaskToDate, getNextUncompletedDate, addCategory, updateCategory, deleteCategory, getStats;
+  var init_task = __esm({
+    "shared/task.ts"() {
+      init_storage();
+      init_sync();
+      escapeHtml = (str) => {
+        const div = document.createElement("div");
+        div.textContent = str;
+        return div.innerHTML;
+      };
+      formatDate = (d) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+      };
+      parseDate = (s) => /* @__PURE__ */ new Date(s + "T00:00:00");
+      formatHours = (m) => (m / 60).toFixed(1) + "h";
+      getDateLabel = (d) => {
+        const today = formatDate(/* @__PURE__ */ new Date());
+        const tomorrow = formatDate(new Date(Date.now() + 864e5));
+        const yesterday = formatDate(new Date(Date.now() - 864e5));
+        if (d === today)
+          return "\u4ECA\u5929";
+        if (d === tomorrow)
+          return "\u660E\u5929";
+        if (d === yesterday)
+          return "\u6628\u5929";
+        const date = parseDate(d);
+        const w = ["\u5468\u65E5", "\u5468\u4E00", "\u5468\u4E8C", "\u5468\u4E09", "\u5468\u56DB", "\u5468\u4E94", "\u5468\u516D"][date.getDay()];
+        return `${date.getMonth() + 1}\u6708${date.getDate()}\u65E5 ${w}`;
+      };
+      getTodayStr = () => formatDate(/* @__PURE__ */ new Date());
+      state = {
+        tasks: [],
+        categories: [],
+        defaultCategory: "",
+        hideCompleted: false,
+        hideOverdue: false,
+        showNoTimeLimitOnly: false,
+        darkMode: false,
+        editingTask: null,
+        currentView: "list",
+        currentDate: getTodayStr(),
+        filterPriority: "all",
+        filterCategory: "all",
+        draggedTaskId: null
+      };
+      getState = () => state;
+      setState = (newState) => {
+        state = { ...state, ...newState };
+      };
+      resetEditingTask = () => {
+        state.editingTask = null;
+      };
+      getRemainingTime = (d, completed) => {
+        if (completed)
+          return "\u5DF2\u5B8C\u6210";
+        const todayStr = getTodayStr();
+        const tomorrowStr = formatDate(new Date(Date.now() + 864e5));
+        if (d === todayStr)
+          return "\u4ECA\u5929\u5230\u671F";
+        if (d === tomorrowStr)
+          return "\u660E\u5929\u5230\u671F";
+        const date = parseDate(d);
+        const today = parseDate(todayStr);
+        const diff = date.getTime() - today.getTime();
+        const days = Math.floor(diff / 864e5);
+        if (days < 0) {
+          const overdueDays = Math.abs(days);
+          return overdueDays === 1 ? "\u5DF2\u8FC7\u671F" : `\u5DF2\u8FC7\u671F ${overdueDays} \u5929`;
+        }
+        return `${days} \u5929\u540E\u5230\u671F`;
+      };
+      isOverdue = (d, completed) => {
+        if (completed)
+          return false;
+        const todayStr = getTodayStr();
+        return d < todayStr;
+      };
+      isTaskDueOnDate = (t, d) => {
+        if (t.noTimeLimit)
+          return false;
+        if (!t.repeatType || t.repeatType === "none") {
+          return t.dueDate === d;
+        }
+        const anchor = t.repeatStartDate || t.dueDate;
+        if (anchor === d)
+          return true;
+        const date = parseDate(d);
+        const anchorDate = parseDate(anchor);
+        switch (t.repeatType) {
+          case "daily":
+            return date >= anchorDate;
+          case "weekly":
+            return date >= anchorDate && (t.repeatDays || []).includes(date.getDay());
+          case "monthly":
+            return date >= anchorDate && date.getDate() === anchorDate.getDate();
+          case "workdays":
+            return date >= anchorDate && date.getDay() >= 1 && date.getDay() <= 5;
+          case "custom":
+            if (date < anchorDate)
+              return false;
+            const daysDiff = Math.floor((date.getTime() - anchorDate.getTime()) / 864e5);
+            return daysDiff % (t.repeatInterval || 1) === 0;
+          default:
+            return anchor === d;
+        }
+      };
+      getPriorityColor = (p) => {
+        switch (p) {
+          case "high":
+            return "bg-red-500";
+          case "medium":
+            return "bg-yellow-500";
+          case "low":
+            return "bg-green-500";
+        }
+      };
+      getCatColor = (id) => {
+        const c = state.categories.find((x) => x.id === id);
+        return c ? c.color : "#6b7280";
+      };
+      getCatName = (id) => {
+        const c = state.categories.find((x) => x.id === id);
+        return c ? c.name : "";
+      };
+      loadState = async () => {
+        const data = await loadData();
+        state = {
+          ...state,
+          ...data,
+          categories: data.categories || defaultCategories,
+          editingTask: null,
+          draggedTaskId: null
+        };
+      };
+      persistState = async () => {
+        markLocalSave();
+        try {
+          await saveData({
+            tasks: state.tasks,
+            categories: state.categories,
+            defaultCategory: state.defaultCategory,
+            hideCompleted: state.hideCompleted,
+            hideOverdue: state.hideOverdue,
+            showNoTimeLimitOnly: state.showNoTimeLimitOnly,
+            darkMode: state.darkMode
+          });
+          markSaveComplete();
+        } catch {
+        }
+      };
+      getFilteredTasks = () => {
+        return state.tasks.filter((t) => {
+          if (state.showNoTimeLimitOnly && !t.noTimeLimit)
+            return false;
+          if (state.hideCompleted && t.completed)
+            return false;
+          if (state.hideOverdue && !t.noTimeLimit && t.dueDate < getTodayStr())
+            return false;
+          if (state.filterPriority !== "all" && t.priority !== state.filterPriority)
+            return false;
+          if (state.filterCategory !== "all" && t.category !== state.filterCategory)
+            return false;
+          return true;
+        }).sort((a, b) => {
+          if (a.noTimeLimit !== b.noTimeLimit)
+            return a.noTimeLimit ? 1 : -1;
+          if (a.completed !== b.completed)
+            return a.completed ? 1 : -1;
+          if (a.noTimeLimit && b.noTimeLimit)
+            return b.createdAt - a.createdAt;
+          return parseDate(a.dueDate).getTime() - parseDate(b.dueDate).getTime();
+        });
+      };
+      addTask = (task) => {
+        const now = Date.now();
+        const newTask = {
+          ...task,
+          id: generateId(),
+          createdAt: now,
+          updatedAt: now,
+          completed: false,
+          completedDates: []
+        };
+        if (newTask.repeatType && newTask.repeatType !== "none" && !newTask.noTimeLimit) {
+          newTask.repeatStartDate = newTask.dueDate;
+        }
+        state.tasks.push(newTask);
+      };
+      updateTask = (id, updates) => {
+        const idx = state.tasks.findIndex((t) => t.id === id);
+        if (idx !== -1) {
+          state.tasks[idx] = { ...state.tasks[idx], ...updates, updatedAt: Date.now() };
+        }
+      };
+      deleteTask = (id) => {
+        state.tasks = state.tasks.filter((t) => t.id !== id);
+      };
+      toggleTask = (id) => {
+        const task = state.tasks.find((t) => t.id === id);
+        if (!task)
+          return;
+        if (!task.completed && task.repeatType && task.repeatType !== "none") {
+          const completedDate = task.dueDate;
+          if (!task.completedDates)
+            task.completedDates = [];
+          if (!task.completedDates.includes(completedDate)) {
+            task.completedDates.push(completedDate);
+          }
+          if (!task.repeatStartDate) {
+            task.repeatStartDate = task.dueDate;
+          }
+          task.dueDate = getNextUncompletedDate(task, completedDate);
+          task.updatedAt = Date.now();
+        } else {
+          task.completed = !task.completed;
+          task.completedAt = task.completed ? Date.now() : void 0;
+          task.updatedAt = Date.now();
+        }
+      };
+      moveTaskToDate = (id, date) => {
+        const task = state.tasks.find((t) => t.id === id);
+        if (task) {
+          task.dueDate = date;
+          task.noTimeLimit = false;
+          task.updatedAt = Date.now();
+        }
+      };
+      getNextUncompletedDate = (task, afterDate) => {
+        const completed = task.completedDates || [];
+        const after = afterDate ? parseDate(afterDate) : parseDate(getTodayStr());
+        const start = new Date(after);
+        start.setDate(start.getDate() + 1);
+        for (let i = 0; i < 365; i++) {
+          const candidate = new Date(start);
+          candidate.setDate(candidate.getDate() + i);
+          const dateStr = formatDate(candidate);
+          if (isTaskDueOnDate(task, dateStr) && !completed.includes(dateStr)) {
+            return dateStr;
+          }
+        }
+        return formatDate(start);
+      };
+      addCategory = (name, color) => {
+        state.categories.push({ id: generateId(), name, color });
+      };
+      updateCategory = (id, name, color) => {
+        const cat = state.categories.find((c) => c.id === id);
+        if (cat) {
+          cat.name = name;
+          cat.color = color;
+        }
+      };
+      deleteCategory = (id) => {
+        if (state.categories.length > 1) {
+          state.categories = state.categories.filter((c) => c.id !== id);
+          if (state.filterCategory === id)
+            state.filterCategory = "all";
+        }
+      };
+      getStats = () => {
+        const tasks = getFilteredTasks();
+        const pending = tasks.filter((t) => !t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
+        const done = tasks.filter((t) => t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
+        const overdueCount = tasks.filter((t) => !t.completed && !t.noTimeLimit && isOverdue(t.dueDate, false)).length;
+        const todayStr = formatDate(/* @__PURE__ */ new Date());
+        const todayTasks = tasks.filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, todayStr));
+        const todayDone = todayTasks.filter((t) => t.completed).length;
+        return { pending, done, overdueCount, todayTotal: todayTasks.length, todayDone };
+      };
+    }
+  });
+
   // shared/entry.ts
   var entry_exports = {};
   __export(entry_exports, {
@@ -537,381 +1025,11 @@ var TaskManager = (() => {
     toggleTask: () => toggleTask,
     updateTask: () => updateTask
   });
-
-  // shared/task.ts
-  init_storage();
-
-  // shared/sync.ts
-  init_storage();
-  var syncStatus = "idle";
-  var statusChangeCallback = null;
-  var localSaveTime = 0;
-  var statusTimeoutId = null;
-  var reRenderFn = null;
-  var getSyncStatus = () => syncStatus;
-  var setSyncStatus = (status) => {
-    syncStatus = status;
-    statusChangeCallback?.(status);
-  };
-  var onSyncStatusChange = (cb) => {
-    statusChangeCallback = cb;
-  };
-  var markLocalSave = () => {
-    localSaveTime = Date.now();
-  };
-  var markSaveComplete = () => {
-    setSyncStatus("synced");
-    if (statusTimeoutId)
-      clearTimeout(statusTimeoutId);
-    statusTimeoutId = setTimeout(() => {
-      if (syncStatus === "synced") {
-        setSyncStatus("idle");
-        reRenderFn?.();
-      }
-    }, 3e3);
-  };
-  var initSyncMonitor = (reRender2) => {
-    reRenderFn = reRender2;
-    chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName !== "sync")
-        return;
-      const now = Date.now();
-      if (localSaveTime > 0 && now - localSaveTime < 2e3) {
-        return;
-      }
-      const hasMetaChange = !!changes["tm_meta"];
-      const hasChunkChange = Object.keys(changes).some((k) => k.startsWith("tm_tasks_"));
-      if (!hasMetaChange && !hasChunkChange)
-        return;
-      const metaChange = changes["tm_meta"];
-      if (metaChange && metaChange.newValue === void 0) {
-        const current = getState();
-        if (current.tasks.length > 0 || current.categories.length > 0) {
-          console.warn("[TaskMaster] \u68C0\u6D4B\u5230sync\u88AB\u6E05\u7A7A\uFF0C\u4ECE\u5185\u5B58\u56DE\u5199\u6570\u636E");
-          markLocalSave();
-          persistState().catch(() => {
-          });
-        }
-        return;
-      }
-      setSyncStatus("remote-updated");
-      mergeRemoteData(getState()).then(() => {
-        loadState().then(() => {
-          reRender2();
-          showSyncToast();
-          if (statusTimeoutId)
-            clearTimeout(statusTimeoutId);
-          statusTimeoutId = setTimeout(() => {
-            if (syncStatus === "remote-updated") {
-              setSyncStatus("idle");
-              reRender2();
-            }
-          }, 4e3);
-        });
-      }).catch(() => {
-        setSyncStatus("error");
-      });
-    });
-  };
-  function showSyncToast() {
-    const existing = document.querySelector(".sync-toast");
-    existing?.remove();
-    const toast = document.createElement("div");
-    toast.className = "sync-toast fixed bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm z-50 bg-blue-500 transition-opacity duration-500";
-    toast.innerHTML = `
-    <svg class="w-4 h-4 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-    </svg>
-    \u5DF2\u540C\u6B65\u6765\u81EA\u5176\u4ED6\u8BBE\u5907\u7684\u66F4\u65B0
-  `;
-    document.body.appendChild(toast);
-    setTimeout(() => {
-      toast.style.opacity = "0";
-      setTimeout(() => toast.remove(), 500);
-    }, 3e3);
-  }
-  function showToast(container, message, type = "success") {
-    const existing = container.querySelector(".toast-message");
-    existing?.remove();
-    const toast = document.createElement("div");
-    toast.className = `toast-message fixed bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm z-50 ${type === "success" ? "bg-green-500" : "bg-red-500"}`;
-    toast.textContent = message;
-    document.body.appendChild(toast);
-    setTimeout(() => {
-      toast.remove();
-    }, 3e3);
-  }
-
-  // shared/task.ts
-  var escapeHtml = (str) => {
-    const div = document.createElement("div");
-    div.textContent = str;
-    return div.innerHTML;
-  };
-  var formatDate = (d) => {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
-  };
-  var parseDate = (s) => /* @__PURE__ */ new Date(s + "T00:00:00");
-  var formatHours = (m) => (m / 60).toFixed(1) + "h";
-  var getDateLabel = (d) => {
-    const today = formatDate(/* @__PURE__ */ new Date());
-    const tomorrow = formatDate(new Date(Date.now() + 864e5));
-    const yesterday = formatDate(new Date(Date.now() - 864e5));
-    if (d === today)
-      return "\u4ECA\u5929";
-    if (d === tomorrow)
-      return "\u660E\u5929";
-    if (d === yesterday)
-      return "\u6628\u5929";
-    const date = parseDate(d);
-    const w = ["\u5468\u65E5", "\u5468\u4E00", "\u5468\u4E8C", "\u5468\u4E09", "\u5468\u56DB", "\u5468\u4E94", "\u5468\u516D"][date.getDay()];
-    return `${date.getMonth() + 1}\u6708${date.getDate()}\u65E5 ${w}`;
-  };
-  var getTodayStr = () => formatDate(/* @__PURE__ */ new Date());
-  var state = {
-    tasks: [],
-    categories: [],
-    defaultCategory: "",
-    hideCompleted: false,
-    hideOverdue: false,
-    showNoTimeLimitOnly: false,
-    darkMode: false,
-    editingTask: null,
-    currentView: "list",
-    currentDate: getTodayStr(),
-    filterPriority: "all",
-    filterCategory: "all",
-    draggedTaskId: null
-  };
-  var getState = () => state;
-  var setState = (newState) => {
-    state = { ...state, ...newState };
-  };
-  var resetEditingTask = () => {
-    state.editingTask = null;
-  };
-  var getRemainingTime = (d, completed) => {
-    if (completed)
-      return "\u5DF2\u5B8C\u6210";
-    const todayStr = getTodayStr();
-    const tomorrowStr = formatDate(new Date(Date.now() + 864e5));
-    if (d === todayStr)
-      return "\u4ECA\u5929\u5230\u671F";
-    if (d === tomorrowStr)
-      return "\u660E\u5929\u5230\u671F";
-    const date = parseDate(d);
-    const today = parseDate(todayStr);
-    const diff = date.getTime() - today.getTime();
-    const days = Math.floor(diff / 864e5);
-    if (days < 0) {
-      const overdueDays = Math.abs(days);
-      return overdueDays === 1 ? "\u5DF2\u8FC7\u671F" : `\u5DF2\u8FC7\u671F ${overdueDays} \u5929`;
-    }
-    return `${days} \u5929\u540E\u5230\u671F`;
-  };
-  var isOverdue = (d, completed) => {
-    if (completed)
-      return false;
-    const todayStr = getTodayStr();
-    return d < todayStr;
-  };
-  var isTaskDueOnDate = (t, d) => {
-    if (t.noTimeLimit)
-      return false;
-    if (!t.repeatType || t.repeatType === "none") {
-      return t.dueDate === d;
-    }
-    const anchor = t.repeatStartDate || t.dueDate;
-    if (anchor === d)
-      return true;
-    const date = parseDate(d);
-    const anchorDate = parseDate(anchor);
-    switch (t.repeatType) {
-      case "daily":
-        return date >= anchorDate;
-      case "weekly":
-        return date >= anchorDate && (t.repeatDays || []).includes(date.getDay());
-      case "monthly":
-        return date >= anchorDate && date.getDate() === anchorDate.getDate();
-      case "workdays":
-        return date >= anchorDate && date.getDay() >= 1 && date.getDay() <= 5;
-      case "custom":
-        if (date < anchorDate)
-          return false;
-        const daysDiff = Math.floor((date.getTime() - anchorDate.getTime()) / 864e5);
-        return daysDiff % (t.repeatInterval || 1) === 0;
-      default:
-        return anchor === d;
-    }
-  };
-  var getPriorityColor = (p) => {
-    switch (p) {
-      case "high":
-        return "bg-red-500";
-      case "medium":
-        return "bg-yellow-500";
-      case "low":
-        return "bg-green-500";
-    }
-  };
-  var getCatColor = (id) => {
-    const c = state.categories.find((x) => x.id === id);
-    return c ? c.color : "#6b7280";
-  };
-  var getCatName = (id) => {
-    const c = state.categories.find((x) => x.id === id);
-    return c ? c.name : "";
-  };
-  var loadState = async () => {
-    const data = await loadData();
-    state = {
-      ...state,
-      ...data,
-      categories: data.categories || defaultCategories,
-      editingTask: null,
-      draggedTaskId: null
-    };
-  };
-  var persistState = async () => {
-    markLocalSave();
-    try {
-      await saveData({
-        tasks: state.tasks,
-        categories: state.categories,
-        defaultCategory: state.defaultCategory,
-        hideCompleted: state.hideCompleted,
-        hideOverdue: state.hideOverdue,
-        showNoTimeLimitOnly: state.showNoTimeLimitOnly,
-        darkMode: state.darkMode
-      });
-      markSaveComplete();
-    } catch {
-    }
-  };
-  var getFilteredTasks = () => {
-    return state.tasks.filter((t) => {
-      if (state.showNoTimeLimitOnly && !t.noTimeLimit)
-        return false;
-      if (state.hideCompleted && t.completed)
-        return false;
-      if (state.hideOverdue && !t.noTimeLimit && t.dueDate < getTodayStr())
-        return false;
-      if (state.filterPriority !== "all" && t.priority !== state.filterPriority)
-        return false;
-      if (state.filterCategory !== "all" && t.category !== state.filterCategory)
-        return false;
-      return true;
-    }).sort((a, b) => {
-      if (a.noTimeLimit !== b.noTimeLimit)
-        return a.noTimeLimit ? 1 : -1;
-      if (a.completed !== b.completed)
-        return a.completed ? 1 : -1;
-      if (a.noTimeLimit && b.noTimeLimit)
-        return b.createdAt - a.createdAt;
-      return parseDate(a.dueDate).getTime() - parseDate(b.dueDate).getTime();
-    });
-  };
-  var addTask = (task) => {
-    const now = Date.now();
-    const newTask = {
-      ...task,
-      id: generateId(),
-      createdAt: now,
-      updatedAt: now,
-      completed: false,
-      completedDates: []
-    };
-    if (newTask.repeatType && newTask.repeatType !== "none" && !newTask.noTimeLimit) {
-      newTask.repeatStartDate = newTask.dueDate;
-    }
-    state.tasks.push(newTask);
-  };
-  var updateTask = (id, updates) => {
-    const idx = state.tasks.findIndex((t) => t.id === id);
-    if (idx !== -1) {
-      state.tasks[idx] = { ...state.tasks[idx], ...updates, updatedAt: Date.now() };
-    }
-  };
-  var deleteTask = (id) => {
-    state.tasks = state.tasks.filter((t) => t.id !== id);
-  };
-  var toggleTask = (id) => {
-    const task = state.tasks.find((t) => t.id === id);
-    if (!task)
-      return;
-    if (!task.completed && task.repeatType && task.repeatType !== "none") {
-      const completedDate = task.dueDate;
-      if (!task.completedDates)
-        task.completedDates = [];
-      if (!task.completedDates.includes(completedDate)) {
-        task.completedDates.push(completedDate);
-      }
-      if (!task.repeatStartDate) {
-        task.repeatStartDate = task.dueDate;
-      }
-      task.dueDate = getNextUncompletedDate(task, completedDate);
-      task.updatedAt = Date.now();
-    } else {
-      task.completed = !task.completed;
-      task.completedAt = task.completed ? Date.now() : void 0;
-      task.updatedAt = Date.now();
-    }
-  };
-  var moveTaskToDate = (id, date) => {
-    const task = state.tasks.find((t) => t.id === id);
-    if (task) {
-      task.dueDate = date;
-      task.noTimeLimit = false;
-      task.updatedAt = Date.now();
-    }
-  };
-  var getNextUncompletedDate = (task, afterDate) => {
-    const completed = task.completedDates || [];
-    const after = afterDate ? parseDate(afterDate) : parseDate(getTodayStr());
-    const start = new Date(after);
-    start.setDate(start.getDate() + 1);
-    for (let i = 0; i < 365; i++) {
-      const candidate = new Date(start);
-      candidate.setDate(candidate.getDate() + i);
-      const dateStr = formatDate(candidate);
-      if (isTaskDueOnDate(task, dateStr) && !completed.includes(dateStr)) {
-        return dateStr;
-      }
-    }
-    return formatDate(start);
-  };
-  var addCategory = (name, color) => {
-    state.categories.push({ id: generateId(), name, color });
-  };
-  var updateCategory = (id, name, color) => {
-    const cat = state.categories.find((c) => c.id === id);
-    if (cat) {
-      cat.name = name;
-      cat.color = color;
-    }
-  };
-  var deleteCategory = (id) => {
-    if (state.categories.length > 1) {
-      state.categories = state.categories.filter((c) => c.id !== id);
-      if (state.filterCategory === id)
-        state.filterCategory = "all";
-    }
-  };
-  var getStats = () => {
-    const tasks = getFilteredTasks();
-    const pending = tasks.filter((t) => !t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
-    const done = tasks.filter((t) => t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
-    const overdueCount = tasks.filter((t) => !t.completed && !t.noTimeLimit && isOverdue(t.dueDate, false)).length;
-    const todayStr = formatDate(/* @__PURE__ */ new Date());
-    const todayTasks = tasks.filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, todayStr));
-    const todayDone = todayTasks.filter((t) => t.completed).length;
-    return { pending, done, overdueCount, todayTotal: todayTasks.length, todayDone };
-  };
+  init_task();
 
   // shared/render.ts
+  init_task();
+  init_sync();
   var renderSyncIndicator = () => {
     const status = getSyncStatus();
     if (status === "idle")
@@ -1602,7 +1720,10 @@ var TaskManager = (() => {
   };
 
   // shared/events.ts
+  init_task();
+  init_task();
   init_storage();
+  init_sync();
   var draggedTaskId = null;
   var currentContainer = null;
   function syncToast(message, type = "success") {
@@ -1974,17 +2095,41 @@ var TaskManager = (() => {
       });
       container.querySelector("#forceUploadBtn")?.addEventListener("click", async () => {
         try {
-          await persistState();
-          showToast(container, "\u5DF2\u4E0A\u4F20\u5230\u4E91\u7AEF", "success");
+          const { syncToCloud: syncToCloud2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
+          const { getState: getState2 } = await Promise.resolve().then(() => (init_task(), task_exports));
+          const state2 = getState2();
+          const result = await syncToCloud2({
+            tasks: state2.tasks,
+            categories: state2.categories,
+            defaultCategory: state2.defaultCategory,
+            hideCompleted: state2.hideCompleted,
+            hideOverdue: state2.hideOverdue,
+            showNoTimeLimitOnly: state2.showNoTimeLimitOnly,
+            darkMode: state2.darkMode
+          });
+          if (result.success) {
+            await persistState();
+            showToast(container, "\u5DF2\u4E0A\u4F20\u5230\u4E91\u7AEF", "success");
+          } else {
+            showToast(container, "\u4E0A\u4F20\u5931\u8D25: " + (result.error || "\u672A\u77E5\u9519\u8BEF"), "error");
+          }
         } catch {
           showToast(container, "\u4E0A\u4F20\u5931\u8D25", "error");
         }
       });
       container.querySelector("#forceDownloadBtn")?.addEventListener("click", async () => {
         try {
-          await loadState();
-          reRender();
-          showToast(container, "\u5DF2\u4ECE\u4E91\u7AEF\u62C9\u53D6", "success");
+          const { syncFromCloud: syncFromCloud2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
+          const result = await syncFromCloud2();
+          if (result.data && result.data.tasks) {
+            const { saveData: saveData2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
+            await saveData2(result.data);
+            await loadState();
+            reRender();
+            showToast(container, `\u5DF2\u4ECE\u4E91\u7AEF\u62C9\u53D6 ${result.data.tasks.length} \u4E2A\u4EFB\u52A1`, "success");
+          } else {
+            showToast(container, "\u4E91\u7AEF\u6682\u65E0\u6570\u636E", "error");
+          }
         } catch {
           showToast(container, "\u62C9\u53D6\u5931\u8D25", "error");
         }
@@ -2225,6 +2370,7 @@ var TaskManager = (() => {
   }
 
   // shared/entry.ts
+  init_sync();
   function syncActionToast(message, type = "success") {
     document.querySelectorAll(".sync-action-toast").forEach((el) => el.remove());
     const toast = document.createElement("div");

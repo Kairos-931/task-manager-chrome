@@ -8,6 +8,19 @@ import { showToast } from './sync'
 let draggedTaskId: string | null = null
 let currentContainer: HTMLElement | null = null
 
+// 同步面板内联反馈
+function showSyncFeedback(container: HTMLElement, message: string, type: 'success' | 'error' | 'info' = 'success') {
+  const el = container.querySelector('#syncFeedback') as HTMLElement
+  if (!el) return
+  const colors: Record<string, string> = {
+    success: 'background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;',
+    error: 'background:#fef2f2;color:#dc2626;border:1px solid #fecaca;',
+    info: 'background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;',
+  }
+  el.style.cssText = `margin:0 24px 0;padding:8px 12px;border-radius:8px;font-size:12px;display:block;${colors[type]}`
+  el.textContent = message
+}
+
 // 同步操作反馈 toast（inline styles，不依赖 Tailwind 编译）
 function syncToast(message: string, type: 'success' | 'error' = 'success') {
   document.querySelectorAll('.sync-action-toast').forEach(el => el.remove())
@@ -451,21 +464,57 @@ export const attachEventListeners = (container: HTMLElement): void => {
     })
 
     container.querySelector('#forceUploadBtn')?.addEventListener('click', async () => {
+      const btn = container.querySelector('#forceUploadBtn') as HTMLElement
+      const origHTML = btn?.innerHTML
       try {
-        await persistState()
-        showToast(container, '已上传到云端', 'success')
-      } catch {
-        showToast(container, '上传失败', 'error')
+        if (btn) btn.innerHTML = '<div class="card-title" style="color:#6b7280;">上传中...</div>'
+        showSyncFeedback(container, '正在上传数据到云端...', 'info')
+        const { syncToCloud } = await import('./storage')
+        const { getState } = await import('./task')
+        const state = getState()
+        const result = await syncToCloud({
+          tasks: state.tasks,
+          categories: state.categories,
+          defaultCategory: state.defaultCategory,
+          hideCompleted: state.hideCompleted,
+          hideOverdue: state.hideOverdue,
+          showNoTimeLimitOnly: state.showNoTimeLimitOnly,
+          darkMode: state.darkMode
+        })
+        if (result.success) {
+          await persistState()
+          showSyncFeedback(container, `上传成功 — ${state.tasks.length} 个任务已同步到云端`, 'success')
+        } else {
+          showSyncFeedback(container, '上传失败: ' + (result.error || '未知错误'), 'error')
+        }
+      } catch (e: any) {
+        showSyncFeedback(container, '上传失败: ' + (e?.message || '网络错误'), 'error')
+      } finally {
+        if (btn) btn.innerHTML = origHTML
       }
     })
 
     container.querySelector('#forceDownloadBtn')?.addEventListener('click', async () => {
+      const btn = container.querySelector('#forceDownloadBtn') as HTMLElement
+      const origHTML = btn?.innerHTML
       try {
-        await loadState()
-        reRender()
-        showToast(container, '已从云端拉取', 'success')
-      } catch {
-        showToast(container, '拉取失败', 'error')
+        if (btn) btn.innerHTML = '<div class="card-title" style="color:#6b7280;">拉取中...</div>'
+        showSyncFeedback(container, '正在从云端拉取数据...', 'info')
+        const { syncFromCloud } = await import('./storage')
+        const result = await syncFromCloud()
+        if (result.data && result.data.tasks) {
+          const { saveData } = await import('./storage')
+          await saveData(result.data)
+          await loadState()
+          reRender()
+          showSyncFeedback(container, `拉取成功 — 已恢复 ${result.data.tasks.length} 个任务`, 'success')
+        } else {
+          showSyncFeedback(container, '云端暂无数据', 'error')
+        }
+      } catch (e: any) {
+        showSyncFeedback(container, '拉取失败: ' + (e?.message || '网络错误'), 'error')
+      } finally {
+        if (btn) btn.innerHTML = origHTML
       }
     })
 

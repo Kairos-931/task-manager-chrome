@@ -49,6 +49,14 @@ export default {
       return handleSaveCategories(request, env);
     }
 
+    // Full data sync — primary cross-device sync
+    if (url.pathname === '/api/fullsync' && method === 'GET') {
+      return handleFullSyncGet(env);
+    }
+    if (url.pathname === '/api/fullsync' && method === 'POST') {
+      return handleFullSyncSet(request, env);
+    }
+
     return jsonResp({ error: 'Not Found' }, 404);
   }
 };
@@ -366,6 +374,35 @@ function formatDate(date) {
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+}
+
+// ── Full Data Sync ─────────────────────────────────────
+
+async function handleFullSyncGet(env) {
+  const row = await env.DB.prepare(
+    `SELECT value, updated_at FROM user_data WHERE key = 'full_sync'`
+  ).first();
+  if (!row) {
+    return jsonResp({ data: null, updatedAt: null });
+  }
+  const data = JSON.parse(row.value);
+  return jsonResp({ data, updatedAt: row.updated_at });
+}
+
+async function handleFullSyncSet(request, env) {
+  const body = await request.json();
+  if (!body.data || typeof body.data !== 'object') {
+    return jsonResp({ error: 'data object required' }, 400);
+  }
+  // Validate basic structure
+  if (!Array.isArray(body.data.tasks)) {
+    return jsonResp({ error: 'data.tasks must be an array' }, 400);
+  }
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT OR REPLACE INTO user_data (key, value, updated_at) VALUES ('full_sync', ?, ?)`
+  ).bind(JSON.stringify(body.data), now).run();
+  return jsonResp({ ok: true, updatedAt: now });
 }
 
 // ── Embedded static files ─────────────────────────────

@@ -13,7 +13,7 @@
 - **筛选过滤** — 按优先级/分类筛选，隐藏已完成或过期任务
 - **拖拽操作** — 任务拖拽到不同日期
 - **深色模式** — 明暗主题一键切换
-- **数据同步** — 通过 chrome.storage.sync 跨设备同步，chrome.storage.local 本地兜底防丢失
+- **数据同步** — 通过 Cloudflare Worker 实现跨设备同步，手动上传/拉取，支持 Telegram Bot 添加任务
 - **同步管理面板** — 手动上传到云端、从云端拉取、导出文件、导入文件
 - **冲突合并** — 多设备离线编辑时按时间戳自动合并，两端修改不丢失
 - **数据导入导出** — JSON 格式备份与恢复
@@ -56,8 +56,8 @@ npm run build
 | Chrome Extension MV3 | 浏览器扩展框架 |
 | Tailwind CSS | UI 样式 |
 | esbuild | IIFE 打包 |
-| chrome.storage.sync | 跨设备数据同步 |
-| chrome.storage.local | 本地数据备份 |
+| Cloudflare Worker + D1 | 跨设备数据同步 & Telegram Bot |
+| chrome.storage.local | 本地数据存储与备份 |
 
 ## 项目结构
 
@@ -75,6 +75,7 @@ npm run build
 │   ├── entry.ts               # 打包入口
 │   ├── background.ts          # Service Worker
 │   └── chrome.d.ts            # Chrome API 类型声明
+├── backend/                   # Cloudflare Worker 后端（D1 数据库）
 ├── chrome-extension-sync/     # 可直接加载的构建产物（推荐）
 ├── popup/                     # 弹窗入口 HTML
 ├── newtab/                    # 全屏管理页入口 HTML
@@ -85,33 +86,81 @@ npm run build
 
 ## 数据同步说明
 
-插件使用 `chrome.storage.sync` 实现跨设备数据同步，配合 `chrome.storage.local` 作为本地备份：
+插件通过 **Cloudflare Worker + D1 数据库** 实现跨设备同步，不依赖 chrome.storage.sync。
 
-- **自动同步**：添加、编辑、删除任务后自动同步到同一 Chrome 账号的其他设备
-- **本地备份**：每次保存同时写入本地存储，防止因其他设备卸载插件导致数据丢失
-- **自动恢复**：检测到 sync 数据被清空时，自动从本地备份恢复
+### 同步架构
+
+```
+设备 A（Chrome 插件）
+  → 增删改任务 → POST /api/fullsync → Cloudflare D1
+                                        ↓
+设备 B（Chrome 插件）
+  → 手动拉取 → GET /api/fullsync ← Cloudflare D1
+```
+
+| 功能 | API | 说明 |
+|------|-----|------|
+| 全量上传 | `POST /api/fullsync` | 每次操作自动触发，全量覆盖云端数据 |
+| 全量拉取 | `GET /api/fullsync` | 设置面板手动触发，替换本地数据 |
+| 创建任务 | `POST /api/tasks` | 手机网页 / Telegram Bot 使用 |
+| Telegram Bot | `POST /api/telegram/webhook` | 通过 Telegram 消息添加任务 |
+
+### 后端部署（Cloudflare Worker）
+
+后端代码在 `backend/` 目录，部署步骤：
+
+1. **创建 D1 数据库**
+   ```bash
+   npx wrangler d1 create taskmaster-db
+   ```
+
+2. **初始化数据库表结构**
+   ```bash
+   npx wrangler d1 execute taskmaster-db --command "CREATE TABLE IF NOT EXISTS user_data (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);"
+   npx wrangler d1 execute taskmaster-db --command "CREATE TABLE IF NOT EXISTS pending_tasks (id TEXT PRIMARY KEY, title TEXT, description TEXT DEFAULT '', priority TEXT DEFAULT 'medium', category TEXT DEFAULT '', due_date TEXT DEFAULT '', duration INTEGER DEFAULT 60, no_time_limit INTEGER DEFAULT 0, source TEXT DEFAULT 'web', synced INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')));"
+   npx wrangler d1 execute taskmaster-db --command "CREATE TABLE IF NOT EXISTS telegram_users (telegram_user_id INTEGER PRIMARY KEY, api_token TEXT);"
+   ```
+
+3. **配置 wrangler.toml**
+   - `backend/wrangler.toml` 中填入 D1 database_id
+   - 设置环境变量：`API_TOKEN`（自定义密钥，插件设置中填写同一个值）、`TELEGRAM_BOT_TOKEN`（可选）
+
+4. **部署**
+   ```bash
+   cd backend
+   npx wrangler deploy
+   ```
+
+   部署成功后会得到 Worker URL（如 `https://taskmaster-api.your-name.workers.dev`）。
+
+### 插件端配置
+
+1. 打开 TaskMaster 弹窗 → 点击齿轮进入设置
+2. 在「手机同步设置」中填入：
+   - **API 地址**：你的 Worker URL（如 `https://taskmaster-api.your-name.workers.dev`）
+   - **API 密钥**：你设置的 `API_TOKEN`
+3. 保存后即可使用同步功能
+
+### Telegram Bot（可选）
+
+1. 通过 [@BotFather](https://t.me/BotFather) 创建 Bot，获取 Token
+2. 在 Cloudflare Worker 环境变量中设置 `TELEGRAM_BOT_TOKEN`
+3. 设置 Webhook：`https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://your-worker.workers.dev/api/telegram/webhook?secret=<TOKEN>`
+4. 在 Telegram 中发送 `/token <你的API密钥>` 绑定账号
+5. 之后直接发消息即可添加任务
 
 **注意事项**：
-- 所有用户共享同一个 Extension ID（manifest 中的 `"key"` 字段确保），无需手动检查
-- 需要登录同一个 Chrome 账号并开启同步
-- 国内使用需要 VPN，且需确保 Google 同步域名走代理（详见下方 FAQ）
-- `chrome.storage.sync` 总容量限制为 100KB，任务数据采用分块存储突破单条 8KB 限制
+- 同步为全量覆盖模式，非增量同步。以最后一次写入为准
+- 国内使用无需 VPN（Cloudflare Worker 全球可达）
 - 建议定期使用"导出数据"功能备份重要数据
 
 ## 常见问题
 
-### 跨设备同步不生效（控制台显示 "local和sync都为空"）
+### 同步不生效
 
-**排查步骤：**
-
-1. **确认 Chrome 同步已开启** — `chrome://settings/syncSetup` 确认已登录同一 Google 账号且同步开关打开
-2. **检查同步引擎状态** — 打开 `chrome://sync-internals/`，查看顶部 Summary：
-   - `Server Connection` 应无报错（如有 `auth error` 说明同步认证失败）
-   - `Updates Downloaded` / `Successful Commits` 应大于 0
-3. **国内用户：确认 VPN 覆盖 Google 同步域名** — Chrome 同步使用 `clients4.google.com`，普通 VPN 规则可能未包含此域名。解决方法：
-   - **推荐**：开启 Clash 的 TUN 模式，所有流量自动走代理
-   - 或在 Clash Merge 配置中添加规则：`DOMAIN-SUFFIX,google.com,你的代理组名`
-4. **修改后等待** — 数据变更后同步通常需要 1-3 分钟生效
+1. **确认 API 地址和密钥正确** — 打开设置面板检查是否填写
+2. **确认 Worker 已部署** — 直接访问 Worker URL，应返回 `{"error":"Not Found"}`（说明 Worker 在线）
+3. **确认 D1 数据库已绑定** — 检查 wrangler.toml 中的 database_id 是否正确
 
 ## 开发
 

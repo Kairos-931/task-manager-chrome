@@ -102,6 +102,7 @@ const loadFromSyncChunked = (): Promise<StorageData | null> => {
 const saveToSyncChunked = (data: StorageData): Promise<void> => {
   const meta = {
     categories: data.categories,
+    defaultCategory: data.defaultCategory,
     hideCompleted: data.hideCompleted,
     hideOverdue: data.hideOverdue,
     showNoTimeLimitOnly: data.showNoTimeLimitOnly,
@@ -236,10 +237,86 @@ const mergeCategories = (local: Category[], remote: Category[]): Category[] => {
   return result
 }
 
+// ==================== Cloudflare 全量同步 ====================
+
+const CLOUD_SYNC_SETTINGS_KEY = 'tm_sync_settings'
+
+const getCloudSettings = async (): Promise<{ apiUrl?: string; apiToken?: string }> => {
+  return new Promise((resolve) => {
+    chrome.storage.local.get([CLOUD_SYNC_SETTINGS_KEY], (r) => {
+      resolve(r[CLOUD_SYNC_SETTINGS_KEY] || {})
+    })
+  })
+}
+
+export const syncToCloud = async (data: StorageData): Promise<{ success: boolean; error?: string }> => {
+  try {
+    const settings = await getCloudSettings()
+    if (!settings.apiUrl || !settings.apiToken) {
+      return { success: false, error: '未配置同步设置' }
+    }
+    const resp = await fetch(`${settings.apiUrl}/api/fullsync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${settings.apiToken}`
+      },
+      body: JSON.stringify({ data })
+    })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }))
+      return { success: false, error: err.error || `HTTP ${resp.status}` }
+    }
+    return { success: true }
+  } catch (e) {
+    return { success: false, error: String(e) }
+  }
+}
+
+export const syncFromCloud = async (): Promise<{ data: StorageData | null; error?: string }> => {
+  try {
+    const settings = await getCloudSettings()
+    if (!settings.apiUrl || !settings.apiToken) {
+      return { data: null, error: '未配置同步设置' }
+    }
+    const resp = await fetch(`${settings.apiUrl}/api/fullsync`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${settings.apiToken}` }
+    })
+    if (!resp.ok) {
+      return { data: null, error: `HTTP ${resp.status}` }
+    }
+    const result = await resp.json()
+    if (!result.data) {
+      return { data: null }
+    }
+    return { data: result.data as StorageData }
+  } catch (e) {
+    return { data: null, error: String(e) }
+  }
+}
+
+export const isCloudConfigured = async (): Promise<boolean> => {
+  const settings = await getCloudSettings()
+  return !!(settings.apiUrl && settings.apiToken)
+}
+
 // ==================== 公开 API ====================
 
 export const loadData = async (): Promise<StorageData> => {
-  // 1. 尝试从 sync 分块读取（当前版本）
+  // 1. Try Cloudflare full sync (if configured)
+  const cloudResult = await syncFromCloud()
+  if (cloudResult.data && cloudResult.data.tasks && cloudResult.data.tasks.length > 0) {
+    cloudResult.data.tasks = cloudResult.data.tasks.map(t => ({
+      ...t,
+      updatedAt: t.updatedAt || t.createdAt || Date.now()
+    }))
+    await saveToLocal(cloudResult.data)
+    console.log('[TaskMaster] loadData: got', cloudResult.data.tasks.length, 'tasks from cloud')
+    return cloudResult.data
+  }
+
+  // 2. Try chrome.storage.sync chunked
   const syncData = await loadFromSyncChunked()
   if (syncData) {
     // 确保有 updatedAt（兼容旧数据）
@@ -282,21 +359,25 @@ export const loadData = async (): Promise<StorageData> => {
 
 export const saveData = async (data: StorageData): Promise<void> => {
   await saveToLocal(data)
-  await saveToSyncChunked(data)
+  // Write to chrome.storage.sync (bonus, don't block on failure)
+  saveToSyncChunked(data).catch(e => console.warn('[TaskMaster] chrome.storage.sync write failed:', e))
+  // Write to Cloudflare (primary sync, don't block on failure)
+  syncToCloud(data).catch(e => console.warn('[TaskMaster] cloud sync write failed:', e))
 }
 
-export const mergeRemoteData = async (remoteData: StorageData): Promise<StorageData> => {
-  const localData = await loadData()
-  const mergedTasks = mergeTasks(localData.tasks, remoteData.tasks)
-  const mergedCategories = mergeCategories(localData.categories, remoteData.categories)
+export const mergeRemoteData = async (localState: StorageData): Promise<StorageData> => {
+  const remoteData = await loadFromSyncChunked()
+  if (!remoteData) return localState
+  const mergedTasks = mergeTasks(localState.tasks, remoteData.tasks)
+  const mergedCategories = mergeCategories(localState.categories, remoteData.categories)
   const merged: StorageData = {
     tasks: mergedTasks,
     categories: mergedCategories,
-    defaultCategory: remoteData.defaultCategory || localData.defaultCategory,
-    hideCompleted: remoteData.darkMode !== undefined ? remoteData.hideCompleted : localData.hideCompleted,
-    hideOverdue: remoteData.darkMode !== undefined ? remoteData.hideOverdue : localData.hideOverdue,
-    showNoTimeLimitOnly: remoteData.showNoTimeLimitOnly ?? localData.showNoTimeLimitOnly,
-    darkMode: remoteData.darkMode ?? localData.darkMode
+    defaultCategory: remoteData.defaultCategory || localState.defaultCategory,
+    hideCompleted: remoteData.hideCompleted ?? localState.hideCompleted,
+    hideOverdue: remoteData.hideOverdue ?? localState.hideOverdue,
+    showNoTimeLimitOnly: remoteData.showNoTimeLimitOnly ?? localState.showNoTimeLimitOnly,
+    darkMode: remoteData.darkMode ?? localState.darkMode
   }
   await saveData(merged)
   return merged

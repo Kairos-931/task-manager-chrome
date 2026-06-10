@@ -1,8 +1,6 @@
-var TaskManager = (() => {
+(() => {
   var __defProp = Object.defineProperty;
-  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
   var __getOwnPropNames = Object.getOwnPropertyNames;
-  var __hasOwnProp = Object.prototype.hasOwnProperty;
   var __esm = (fn, res) => function __init() {
     return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
   };
@@ -10,15 +8,6 @@ var TaskManager = (() => {
     for (var name in all)
       __defProp(target, name, { get: all[name], enumerable: true });
   };
-  var __copyProps = (to, from, except, desc) => {
-    if (from && typeof from === "object" || typeof from === "function") {
-      for (let key of __getOwnPropNames(from))
-        if (!__hasOwnProp.call(to, key) && key !== except)
-          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-    }
-    return to;
-  };
-  var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
   // shared/storage.ts
   var storage_exports = {};
@@ -216,10 +205,8 @@ var TaskManager = (() => {
       saveToLocal = (data) => {
         return new Promise((resolve, reject) => {
           chrome.storage.local.set({ [LOCAL_BACKUP_KEY]: JSON.stringify(data) }, () => {
-            if (chrome.runtime.lastError)
-              reject(chrome.runtime.lastError);
-            else
-              resolve();
+            if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
+            else resolve();
           });
         });
       };
@@ -238,8 +225,7 @@ var TaskManager = (() => {
             const remoteTime = remoteTask.updatedAt || remoteTask.createdAt || 0;
             if (remoteTime > localTime) {
               const idx = result.findIndex((t) => t.id === remoteTask.id);
-              if (idx !== -1)
-                result[idx] = remoteTask;
+              if (idx !== -1) result[idx] = remoteTask;
             }
           }
         }
@@ -362,8 +348,7 @@ var TaskManager = (() => {
       };
       mergeRemoteData = async (localState) => {
         const remoteData = await loadFromSyncChunked();
-        if (!remoteData)
-          return localState;
+        if (!remoteData) return localState;
         const mergedTasks = mergeTasks(localState.tasks, remoteData.tasks);
         const mergedCategories = mergeCategories(localState.categories, remoteData.categories);
         const merged = {
@@ -397,10 +382,8 @@ var TaskManager = (() => {
           const payload = JSON.stringify({ timestamp: now, data });
           await new Promise((resolve, reject) => {
             chrome.storage.local.set({ [key]: payload }, () => {
-              if (chrome.runtime.lastError)
-                reject(chrome.runtime.lastError);
-              else
-                resolve();
+              if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
+              else resolve();
             });
           });
           await cleanOldBackups();
@@ -420,8 +403,7 @@ var TaskManager = (() => {
             }
             const backups = [];
             for (const key of Object.keys(all)) {
-              if (!key.startsWith(BACKUP_PREFIX))
-                continue;
+              if (!key.startsWith(BACKUP_PREFIX)) continue;
               try {
                 const parsed = typeof all[key] === "string" ? JSON.parse(all[key]) : all[key];
                 const d = parsed.data;
@@ -454,11 +436,9 @@ var TaskManager = (() => {
               resolve(r[key] || null);
             });
           });
-          if (!result)
-            return { success: false, error: "\u5907\u4EFD\u4E0D\u5B58\u5728" };
+          if (!result) return { success: false, error: "\u5907\u4EFD\u4E0D\u5B58\u5728" };
           const parsed = JSON.parse(result);
-          if (!parsed.data?.tasks)
-            return { success: false, error: "\u5907\u4EFD\u6570\u636E\u635F\u574F" };
+          if (!parsed.data?.tasks) return { success: false, error: "\u5907\u4EFD\u6570\u636E\u635F\u574F" };
           await saveData(parsed.data);
           return { success: true };
         } catch (e) {
@@ -472,11 +452,9 @@ var TaskManager = (() => {
       };
       cleanOldBackups = async () => {
         const backups = await listBackups();
-        if (backups.length <= MAX_BACKUPS)
-          return;
+        if (backups.length <= MAX_BACKUPS) return;
         const toRemove = backups.slice(MAX_BACKUPS).map((b) => b.key);
-        if (toRemove.length === 0)
-          return;
+        if (toRemove.length === 0) return;
         await new Promise((resolve) => {
           chrome.storage.local.remove(toRemove, () => resolve());
         });
@@ -619,8 +597,7 @@ var TaskManager = (() => {
       };
       markSaveComplete = () => {
         setSyncStatus("synced");
-        if (statusTimeoutId)
-          clearTimeout(statusTimeoutId);
+        if (statusTimeoutId) clearTimeout(statusTimeoutId);
         statusTimeoutId = setTimeout(() => {
           if (syncStatus === "synced") {
             setSyncStatus("idle");
@@ -631,16 +608,14 @@ var TaskManager = (() => {
       initSyncMonitor = (reRender2) => {
         reRenderFn = reRender2;
         chrome.storage.onChanged.addListener((changes, areaName) => {
-          if (areaName !== "sync")
-            return;
+          if (areaName !== "sync") return;
           const now = Date.now();
           if (localSaveTime > 0 && now - localSaveTime < 2e3) {
             return;
           }
           const hasMetaChange = !!changes["tm_meta"];
           const hasChunkChange = Object.keys(changes).some((k) => k.startsWith("tm_tasks_"));
-          if (!hasMetaChange && !hasChunkChange)
-            return;
+          if (!hasMetaChange && !hasChunkChange) return;
           const metaChange = changes["tm_meta"];
           if (metaChange && metaChange.newValue === void 0) {
             const current = getState();
@@ -658,8 +633,7 @@ var TaskManager = (() => {
             loadState().then(() => {
               reRender2();
               showSyncToast();
-              if (statusTimeoutId)
-                clearTimeout(statusTimeoutId);
+              if (statusTimeoutId) clearTimeout(statusTimeoutId);
               statusTimeoutId = setTimeout(() => {
                 if (syncStatus === "remote-updated") {
                   setSyncStatus("idle");
@@ -728,12 +702,9 @@ var TaskManager = (() => {
         const today = formatDate(/* @__PURE__ */ new Date());
         const tomorrow = formatDate(new Date(Date.now() + 864e5));
         const yesterday = formatDate(new Date(Date.now() - 864e5));
-        if (d === today)
-          return "\u4ECA\u5929";
-        if (d === tomorrow)
-          return "\u660E\u5929";
-        if (d === yesterday)
-          return "\u6628\u5929";
+        if (d === today) return "\u4ECA\u5929";
+        if (d === tomorrow) return "\u660E\u5929";
+        if (d === yesterday) return "\u6628\u5929";
         const date = parseDate(d);
         const w = ["\u5468\u65E5", "\u5468\u4E00", "\u5468\u4E8C", "\u5468\u4E09", "\u5468\u56DB", "\u5468\u4E94", "\u5468\u516D"][date.getDay()];
         return `${date.getMonth() + 1}\u6708${date.getDate()}\u65E5 ${w}`;
@@ -762,14 +733,11 @@ var TaskManager = (() => {
         state.editingTask = null;
       };
       getRemainingTime = (d, completed) => {
-        if (completed)
-          return "\u5DF2\u5B8C\u6210";
+        if (completed) return "\u5DF2\u5B8C\u6210";
         const todayStr = getTodayStr();
         const tomorrowStr = formatDate(new Date(Date.now() + 864e5));
-        if (d === todayStr)
-          return "\u4ECA\u5929\u5230\u671F";
-        if (d === tomorrowStr)
-          return "\u660E\u5929\u5230\u671F";
+        if (d === todayStr) return "\u4ECA\u5929\u5230\u671F";
+        if (d === tomorrowStr) return "\u660E\u5929\u5230\u671F";
         const date = parseDate(d);
         const today = parseDate(todayStr);
         const diff = date.getTime() - today.getTime();
@@ -781,20 +749,17 @@ var TaskManager = (() => {
         return `${days} \u5929\u540E\u5230\u671F`;
       };
       isOverdue = (d, completed) => {
-        if (completed)
-          return false;
+        if (completed) return false;
         const todayStr = getTodayStr();
         return d < todayStr;
       };
       isTaskDueOnDate = (t, d) => {
-        if (t.noTimeLimit)
-          return false;
+        if (t.noTimeLimit) return false;
         if (!t.repeatType || t.repeatType === "none") {
           return t.dueDate === d;
         }
         const anchor = t.repeatStartDate || t.dueDate;
-        if (anchor === d)
-          return true;
+        if (anchor === d) return true;
         const date = parseDate(d);
         const anchorDate = parseDate(anchor);
         switch (t.repeatType) {
@@ -807,8 +772,7 @@ var TaskManager = (() => {
           case "workdays":
             return date >= anchorDate && date.getDay() >= 1 && date.getDay() <= 5;
           case "custom":
-            if (date < anchorDate)
-              return false;
+            if (date < anchorDate) return false;
             const daysDiff = Math.floor((date.getTime() - anchorDate.getTime()) / 864e5);
             return daysDiff % (t.repeatInterval || 1) === 0;
           default:
@@ -861,24 +825,16 @@ var TaskManager = (() => {
       };
       getFilteredTasks = () => {
         return state.tasks.filter((t) => {
-          if (state.showNoTimeLimitOnly && !t.noTimeLimit)
-            return false;
-          if (state.hideCompleted && t.completed)
-            return false;
-          if (state.hideOverdue && !t.noTimeLimit && t.dueDate < getTodayStr())
-            return false;
-          if (state.filterPriority !== "all" && t.priority !== state.filterPriority)
-            return false;
-          if (state.filterCategory !== "all" && t.category !== state.filterCategory)
-            return false;
+          if (state.showNoTimeLimitOnly && !t.noTimeLimit) return false;
+          if (state.hideCompleted && t.completed) return false;
+          if (state.hideOverdue && !t.noTimeLimit && t.dueDate < getTodayStr()) return false;
+          if (state.filterPriority !== "all" && t.priority !== state.filterPriority) return false;
+          if (state.filterCategory !== "all" && t.category !== state.filterCategory) return false;
           return true;
         }).sort((a, b) => {
-          if (a.noTimeLimit !== b.noTimeLimit)
-            return a.noTimeLimit ? 1 : -1;
-          if (a.completed !== b.completed)
-            return a.completed ? 1 : -1;
-          if (a.noTimeLimit && b.noTimeLimit)
-            return b.createdAt - a.createdAt;
+          if (a.noTimeLimit !== b.noTimeLimit) return a.noTimeLimit ? 1 : -1;
+          if (a.completed !== b.completed) return a.completed ? 1 : -1;
+          if (a.noTimeLimit && b.noTimeLimit) return b.createdAt - a.createdAt;
           return parseDate(a.dueDate).getTime() - parseDate(b.dueDate).getTime();
         });
       };
@@ -908,12 +864,10 @@ var TaskManager = (() => {
       };
       toggleTask = (id) => {
         const task = state.tasks.find((t) => t.id === id);
-        if (!task)
-          return;
+        if (!task) return;
         if (!task.completed && task.repeatType && task.repeatType !== "none") {
           const completedDate = task.dueDate;
-          if (!task.completedDates)
-            task.completedDates = [];
+          if (!task.completedDates) task.completedDates = [];
           if (!task.completedDates.includes(completedDate)) {
             task.completedDates.push(completedDate);
           }
@@ -964,8 +918,7 @@ var TaskManager = (() => {
       deleteCategory = (id) => {
         if (state.categories.length > 1) {
           state.categories = state.categories.filter((c) => c.id !== id);
-          if (state.filterCategory === id)
-            state.filterCategory = "all";
+          if (state.filterCategory === id) state.filterCategory = "all";
         }
       };
       getStats = () => {
@@ -982,49 +935,6 @@ var TaskManager = (() => {
   });
 
   // shared/entry.ts
-  var entry_exports = {};
-  __export(entry_exports, {
-    addCategory: () => addCategory,
-    addTask: () => addTask,
-    attachEventListeners: () => attachEventListeners,
-    deleteCategory: () => deleteCategory,
-    deleteTask: () => deleteTask,
-    escapeHtml: () => escapeHtml,
-    formatDate: () => formatDate,
-    formatHours: () => formatHours,
-    getCatColor: () => getCatColor,
-    getCatName: () => getCatName,
-    getDateLabel: () => getDateLabel,
-    getFilteredTasks: () => getFilteredTasks,
-    getPriorityColor: () => getPriorityColor,
-    getRemainingTime: () => getRemainingTime,
-    getState: () => getState,
-    getStats: () => getStats,
-    isOverdue: () => isOverdue,
-    isTaskDueOnDate: () => isTaskDueOnDate,
-    loadState: () => loadState,
-    moveTaskToDate: () => moveTaskToDate,
-    parseDate: () => parseDate,
-    persistState: () => persistState,
-    renderApp: () => renderApp,
-    renderCategoryModal: () => renderCategoryModal,
-    renderDayView: () => renderDayView,
-    renderFilters: () => renderFilters,
-    renderHeader: () => renderHeader,
-    renderListView: () => renderListView,
-    renderMobileSyncPanel: () => renderMobileSyncPanel,
-    renderModal: () => renderModal,
-    renderMonthView: () => renderMonthView,
-    renderStats: () => renderStats,
-    renderSyncModal: () => renderSyncModal,
-    renderTaskItem: () => renderTaskItem,
-    renderTaskList: () => renderTaskList,
-    renderWeekView: () => renderWeekView,
-    resetEditingTask: () => resetEditingTask,
-    setState: () => setState,
-    toggleTask: () => toggleTask,
-    updateTask: () => updateTask
-  });
   init_task();
 
   // shared/render.ts
@@ -1032,8 +942,7 @@ var TaskManager = (() => {
   init_sync();
   var renderSyncIndicator = () => {
     const status = getSyncStatus();
-    if (status === "idle")
-      return "";
+    if (status === "idle") return "";
     const icons = {
       idle: "",
       saving: `<span id="syncIndicator" class="p-2 rounded-lg transition text-blue-500" title="\u6B63\u5728\u540C\u6B65...">
@@ -1174,15 +1083,12 @@ var TaskManager = (() => {
     const groups = /* @__PURE__ */ new Map();
     tasks.forEach((t) => {
       const key = t.noTimeLimit ? "no-date" : t.dueDate;
-      if (!groups.has(key))
-        groups.set(key, []);
+      if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(t);
     });
     const dates = Array.from(groups.keys()).sort((a, b) => {
-      if (a === "no-date")
-        return 1;
-      if (b === "no-date")
-        return -1;
+      if (a === "no-date") return 1;
+      if (b === "no-date") return -1;
       return a.localeCompare(b);
     });
     return dates.map((d) => `
@@ -1613,8 +1519,9 @@ var TaskManager = (() => {
               <svg style="width:18px;height:18px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
           </div>
-          <p style="font-size:12px;color:#9ca3af;margin-top:4px;">${tasks.length} \u4E2A\u4EFB\u52A1 \xB7 ${categories.length} \u4E2A\u5206\u7C7B \xB7 \u901A\u8FC7 Chrome Sync \u540C\u6B65</p>
+          <p style="font-size:12px;color:#9ca3af;margin-top:4px;">${tasks.length} \u4E2A\u4EFB\u52A1 \xB7 ${categories.length} \u4E2A\u5206\u7C7B \xB7 \u4E91\u7AEF\u540C\u6B65</p>
         </div>
+        <div id="syncFeedback" style="margin:0 24px 0;padding:8px 12px;border-radius:8px;font-size:12px;display:none;"></div>
         <div style="padding:0 24px 20px;">
           <div class="flex gap-3">
             <button id="forceUploadBtn" class="sync-card card-upload">
@@ -1726,6 +1633,17 @@ var TaskManager = (() => {
   init_sync();
   var draggedTaskId = null;
   var currentContainer = null;
+  function showSyncFeedback(container, message, type = "success") {
+    const el = container.querySelector("#syncFeedback");
+    if (!el) return;
+    const colors = {
+      success: "background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;",
+      error: "background:#fef2f2;color:#dc2626;border:1px solid #fecaca;",
+      info: "background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;"
+    };
+    el.style.cssText = `margin:0 24px 0;padding:8px 12px;border-radius:8px;font-size:12px;display:block;${colors[type]}`;
+    el.textContent = message;
+  }
   function syncToast(message, type = "success") {
     document.querySelectorAll(".sync-action-toast").forEach((el) => el.remove());
     const toast = document.createElement("div");
@@ -1740,8 +1658,7 @@ var TaskManager = (() => {
     }, 3e3);
   }
   function reRender() {
-    if (!currentContainer)
-      return;
+    if (!currentContainer) return;
     renderApp(currentContainer);
     attachEventListeners(currentContainer);
   }
@@ -1972,10 +1889,8 @@ var TaskManager = (() => {
       const weeklyDays = container.querySelector("#weeklyDays");
       const customInterval = container.querySelector("#customInterval");
       const value = e.target.value;
-      if (weeklyDays)
-        weeklyDays.classList.toggle("hidden", value !== "weekly");
-      if (customInterval)
-        customInterval.classList.toggle("hidden", value !== "custom");
+      if (weeklyDays) weeklyDays.classList.toggle("hidden", value !== "weekly");
+      if (customInterval) customInterval.classList.toggle("hidden", value !== "custom");
     });
     const isNewTab = window.location.pathname.includes("newtab");
     if (isNewTab) {
@@ -2094,7 +2009,11 @@ var TaskManager = (() => {
         }
       });
       container.querySelector("#forceUploadBtn")?.addEventListener("click", async () => {
+        const btn = container.querySelector("#forceUploadBtn");
+        const origHTML = btn?.innerHTML;
         try {
+          if (btn) btn.innerHTML = '<div class="card-title" style="color:#6b7280;">\u4E0A\u4F20\u4E2D...</div>';
+          showSyncFeedback(container, "\u6B63\u5728\u4E0A\u4F20\u6570\u636E\u5230\u4E91\u7AEF...", "info");
           const { syncToCloud: syncToCloud2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
           const { getState: getState2 } = await Promise.resolve().then(() => (init_task(), task_exports));
           const state2 = getState2();
@@ -2109,16 +2028,22 @@ var TaskManager = (() => {
           });
           if (result.success) {
             await persistState();
-            showToast(container, "\u5DF2\u4E0A\u4F20\u5230\u4E91\u7AEF", "success");
+            showSyncFeedback(container, `\u4E0A\u4F20\u6210\u529F \u2014 ${state2.tasks.length} \u4E2A\u4EFB\u52A1\u5DF2\u540C\u6B65\u5230\u4E91\u7AEF`, "success");
           } else {
-            showToast(container, "\u4E0A\u4F20\u5931\u8D25: " + (result.error || "\u672A\u77E5\u9519\u8BEF"), "error");
+            showSyncFeedback(container, "\u4E0A\u4F20\u5931\u8D25: " + (result.error || "\u672A\u77E5\u9519\u8BEF"), "error");
           }
-        } catch {
-          showToast(container, "\u4E0A\u4F20\u5931\u8D25", "error");
+        } catch (e) {
+          showSyncFeedback(container, "\u4E0A\u4F20\u5931\u8D25: " + (e?.message || "\u7F51\u7EDC\u9519\u8BEF"), "error");
+        } finally {
+          if (btn) btn.innerHTML = origHTML;
         }
       });
       container.querySelector("#forceDownloadBtn")?.addEventListener("click", async () => {
+        const btn = container.querySelector("#forceDownloadBtn");
+        const origHTML = btn?.innerHTML;
         try {
+          if (btn) btn.innerHTML = '<div class="card-title" style="color:#6b7280;">\u62C9\u53D6\u4E2D...</div>';
+          showSyncFeedback(container, "\u6B63\u5728\u4ECE\u4E91\u7AEF\u62C9\u53D6\u6570\u636E...", "info");
           const { syncFromCloud: syncFromCloud2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
           const result = await syncFromCloud2();
           if (result.data && result.data.tasks) {
@@ -2126,12 +2051,14 @@ var TaskManager = (() => {
             await saveData2(result.data);
             await loadState();
             reRender();
-            showToast(container, `\u5DF2\u4ECE\u4E91\u7AEF\u62C9\u53D6 ${result.data.tasks.length} \u4E2A\u4EFB\u52A1`, "success");
+            showSyncFeedback(container, `\u62C9\u53D6\u6210\u529F \u2014 \u5DF2\u6062\u590D ${result.data.tasks.length} \u4E2A\u4EFB\u52A1`, "success");
           } else {
-            showToast(container, "\u4E91\u7AEF\u6682\u65E0\u6570\u636E", "error");
+            showSyncFeedback(container, "\u4E91\u7AEF\u6682\u65E0\u6570\u636E", "error");
           }
-        } catch {
-          showToast(container, "\u62C9\u53D6\u5931\u8D25", "error");
+        } catch (e) {
+          showSyncFeedback(container, "\u62C9\u53D6\u5931\u8D25: " + (e?.message || "\u7F51\u7EDC\u9519\u8BEF"), "error");
+        } finally {
+          if (btn) btn.innerHTML = origHTML;
         }
       });
       container.querySelector("#exportFileBtn")?.addEventListener("click", async () => {
@@ -2166,15 +2093,13 @@ var TaskManager = (() => {
         const [backups, usage] = await Promise.all([listBackups2(), getStorageUsage2()]);
         const bar = container.querySelector("#storageUsageBar");
         const text = container.querySelector("#storageUsageText");
-        if (bar)
-          bar.style.width = usage.percentage + "%";
+        if (bar) bar.style.width = usage.percentage + "%";
         if (text) {
           const usedMB = (usage.used / 1024 / 1024).toFixed(2);
           text.textContent = `${usedMB} MB / 5 MB`;
         }
         const listEl = container.querySelector("#backupList");
-        if (!listEl)
-          return;
+        if (!listEl) return;
         if (backups.length === 0) {
           listEl.innerHTML = '<div style="text-align:center;padding:8px 0;color:#d1d5db;">\u6682\u65E0\u5907\u4EFD</div>';
           return;
@@ -2194,8 +2119,7 @@ var TaskManager = (() => {
         listEl.querySelectorAll(".backup-restore-btn").forEach((btn) => {
           btn.addEventListener("click", async () => {
             const key = btn.dataset.key;
-            if (!confirm("\u6062\u590D\u6B64\u5907\u4EFD\u5C06\u8986\u76D6\u5F53\u524D\u6240\u6709\u6570\u636E\uFF0C\u786E\u5B9A\uFF1F"))
-              return;
+            if (!confirm("\u6062\u590D\u6B64\u5907\u4EFD\u5C06\u8986\u76D6\u5F53\u524D\u6240\u6709\u6570\u636E\uFF0C\u786E\u5B9A\uFF1F")) return;
             const { restoreBackup: restoreBackup2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
             const result = await restoreBackup2(key);
             if (result.success) {
@@ -2224,12 +2148,10 @@ var TaskManager = (() => {
       });
       container.querySelector("#createBackupBtn")?.addEventListener("click", async () => {
         const btn = container.querySelector("#createBackupBtn");
-        if (btn)
-          btn.textContent = "\u5907\u4EFD\u4E2D...";
+        if (btn) btn.textContent = "\u5907\u4EFD\u4E2D...";
         const { createAutoBackup: createAutoBackup2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
         const result = await createAutoBackup2();
-        if (btn)
-          btn.textContent = "\u7ACB\u5373\u5907\u4EFD";
+        if (btn) btn.textContent = "\u7ACB\u5373\u5907\u4EFD";
         if (result.success) {
           showToast(container, "\u5907\u4EFD\u5DF2\u521B\u5EFA", "success");
           refreshBackupUI();
@@ -2243,10 +2165,8 @@ var TaskManager = (() => {
         chrome.runtime.sendMessage({ action: "getSyncSettings" }, (settings) => {
           const urlInput = container.querySelector("#mobileSyncApiUrl");
           const tokenInput = container.querySelector("#mobileSyncApiToken");
-          if (urlInput && settings?.apiUrl)
-            urlInput.value = settings.apiUrl;
-          if (tokenInput && settings?.apiToken)
-            tokenInput.value = settings.apiToken;
+          if (urlInput && settings?.apiUrl) urlInput.value = settings.apiUrl;
+          if (tokenInput && settings?.apiToken) tokenInput.value = settings.apiToken;
         });
       });
       container.querySelector("#mobileSyncClose")?.addEventListener("click", () => {
@@ -2268,20 +2188,16 @@ var TaskManager = (() => {
       });
       container.querySelector("#mobileSyncNowBtn")?.addEventListener("click", () => {
         const statusEl = container.querySelector("#mobileSyncStatus");
-        if (statusEl)
-          statusEl.textContent = "\u540C\u6B65\u4E2D...";
+        if (statusEl) statusEl.textContent = "\u540C\u6B65\u4E2D...";
         chrome.runtime.sendMessage({ action: "syncRemoteTasks" }, (result) => {
           if (result?.synced > 0) {
             syncToast(`\u5DF2\u540C\u6B65 ${result.synced} \u4E2A\u4EFB\u52A1`, "success");
-            if (statusEl)
-              statusEl.textContent = `\u4E0A\u6B21\u540C\u6B65: \u6210\u529F\uFF0C${result.synced} \u4E2A\u4EFB\u52A1`;
+            if (statusEl) statusEl.textContent = `\u4E0A\u6B21\u540C\u6B65: \u6210\u529F\uFF0C${result.synced} \u4E2A\u4EFB\u52A1`;
           } else if (result?.error) {
             syncToast("\u540C\u6B65\u5931\u8D25: " + result.error, "error");
-            if (statusEl)
-              statusEl.textContent = "\u540C\u6B65\u5931\u8D25: " + result.error;
+            if (statusEl) statusEl.textContent = "\u540C\u6B65\u5931\u8D25: " + result.error;
           } else {
-            if (statusEl)
-              statusEl.textContent = "\u6CA1\u6709\u65B0\u7684\u5F85\u540C\u6B65\u4EFB\u52A1";
+            if (statusEl) statusEl.textContent = "\u6CA1\u6709\u65B0\u7684\u5F85\u540C\u6B65\u4EFB\u52A1";
           }
         });
       });
@@ -2348,8 +2264,7 @@ var TaskManager = (() => {
       zone.addEventListener("dragover", (e) => {
         e.preventDefault();
         const dt = e.dataTransfer;
-        if (dt)
-          dt.dropEffect = "move";
+        if (dt) dt.dropEffect = "move";
         zone.classList.add("bg-blue-100", "dark:bg-blue-900/30");
       });
       zone.addEventListener("dragleave", (e) => {
@@ -2423,5 +2338,4 @@ var TaskManager = (() => {
   } else {
     autoInit();
   }
-  return __toCommonJS(entry_exports);
 })();

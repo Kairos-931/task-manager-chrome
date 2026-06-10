@@ -602,8 +602,9 @@ export const renderSyncModal = (): string => {
               <svg style="width:18px;height:18px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
           </div>
-          <p style="font-size:12px;color:#9ca3af;margin-top:4px;">${tasks.length} 个任务 · ${categories.length} 个分类 · 通过 Chrome Sync 同步</p>
+          <p style="font-size:12px;color:#9ca3af;margin-top:4px;">${tasks.length} 个任务 · ${categories.length} 个分类 · 云端同步</p>
         </div>
+        <div id="syncFeedback" style="margin:0 24px 0;padding:8px 12px;border-radius:8px;font-size:12px;display:none;"></div>
         <div style="padding:0 24px 20px;">
           <div class="flex gap-3">
             <button id="forceUploadBtn" class="sync-card card-upload">

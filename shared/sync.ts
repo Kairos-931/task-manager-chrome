@@ -1,5 +1,5 @@
 import { loadState, persistState, getState } from './task'
-import { mergeRemoteData } from './storage'
+import { mergeRemoteData, loadData } from './storage'
 
 export type SyncStatus = 'idle' | 'saving' | 'synced' | 'remote-updated' | 'error'
 
@@ -62,7 +62,8 @@ export const initSyncMonitor = (reRender: () => void) => {
     }
 
     setSyncStatus('remote-updated')
-    mergeRemoteData(getState()).then(() => {
+    const localState = getState()
+    mergeRemoteData(localState).then(() => {
       loadState().then(() => {
         reRender()
         showSyncToast()
