@@ -201,10 +201,17 @@ export const deleteTask = (id: string): void => {
   state.tasks = state.tasks.filter(t => t.id !== id)
 }
 
+// 防止循环任务快速双击导致重复推进日期
+let toggleThrottleMap: Map<string, number> = new Map()
+
 export const toggleTask = (id: string): void => {
   const task = state.tasks.find(t => t.id === id)
   if (!task) return
   if (!task.completed && task.repeatType && task.repeatType !== 'none') {
+    // 防重入：500ms 内不重复 toggle 同一个循环任务
+    const last = toggleThrottleMap.get(id) || 0
+    if (Date.now() - last < 500) return
+    toggleThrottleMap.set(id, Date.now())
     // Recurring task: record completion date, advance to next uncompleted
     const completedDate = task.dueDate
     if (!task.completedDates) task.completedDates = []

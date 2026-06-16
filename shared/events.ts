@@ -480,7 +480,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
           hideOverdue: state.hideOverdue,
           showNoTimeLimitOnly: state.showNoTimeLimitOnly,
           darkMode: state.darkMode
-        })
+        }, { force: true })
         if (result.success) {
           await persistState()
           showSyncFeedback(container, `上传成功 — ${state.tasks.length} 个任务已同步到云端`, 'success')

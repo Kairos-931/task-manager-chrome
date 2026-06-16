@@ -398,6 +398,40 @@ async function handleFullSyncSet(request, env) {
   if (!Array.isArray(body.data.tasks)) {
     return jsonResp({ error: 'data.tasks must be an array' }, 400);
   }
+  const force = body.force === true;
+
+  // Read current cloud state once (feeds both empty-guard and optimistic lock)
+  const existing = await env.DB.prepare(
+    `SELECT value, updated_at FROM user_data WHERE key = 'full_sync'`
+  ).first();
+  let existingTaskCount = 0;
+  let currentUpdatedAt = null;
+  if (existing) {
+    currentUpdatedAt = existing.updated_at;
+    try {
+      const parsed = JSON.parse(existing.value);
+      existingTaskCount = Array.isArray(parsed.tasks) ? parsed.tasks.length : 0;
+    } catch (e) {}
+  }
+
+  // Guard 1: refuse empty data overwriting non-empty cloud (reinstall wipe protection)
+  if (!force && body.data.tasks.length === 0 && existingTaskCount > 0) {
+    return jsonResp({
+      error: 'refused: empty overwrite',
+      existingTaskCount,
+      hint: 'send force:true to confirm intentional wipe'
+    }, 409);
+  }
+
+  // Guard 2: optimistic lock — reject stale base version to prevent partial overwrite
+  if (!force && body.baseUpdatedAt && currentUpdatedAt && body.baseUpdatedAt !== currentUpdatedAt) {
+    return jsonResp({
+      error: 'conflict',
+      currentUpdatedAt,
+      existingTaskCount
+    }, 409);
+  }
+
   const now = new Date().toISOString();
   await env.DB.prepare(
     `INSERT OR REPLACE INTO user_data (key, value, updated_at) VALUES ('full_sync', ?, ?)`

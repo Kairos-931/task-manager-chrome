@@ -81,13 +81,15 @@ async function handleRemoteSync(): Promise<{ synced?: number; error?: string }> 
       return { error: '未配置同步设置' }
     }
 
-    const resp = await fetch(`${settings.apiUrl}/api/tasks?token=${settings.apiToken}`, {
-      method: 'GET'
+    const resp = await fetch(`${settings.apiUrl}/api/tasks`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${settings.apiToken}` }
     })
     if (!resp.ok) return { error: `HTTP ${resp.status}` }
 
-    const remoteTasks = await resp.json()
-    if (!Array.isArray(remoteTasks) || remoteTasks.length === 0) {
+    const respData = await resp.json()
+    const remoteTasks: any[] = Array.isArray(respData) ? respData : (respData.tasks || [])
+    if (remoteTasks.length === 0) {
       return { synced: 0 }
     }
 

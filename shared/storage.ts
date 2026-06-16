@@ -2,12 +2,7 @@ import type { StorageData, Category, Task } from './types'
 
 export const STORAGE_KEY = 'tm_data'
 
-const META_KEY = 'tm_meta'
-const INDEX_KEY = 'tm_index'
-const CHUNK_PREFIX = 'tm_tasks_'
-const CHUNK_SIZE = 7000
 const LOCAL_BACKUP_KEY = 'tm_local_backup'
-const OLD_SIMPLE_KEY = 'task_manager_data'
 
 // 生成唯一ID
 export const generateId = (): string => {
@@ -31,138 +26,6 @@ export const getDefaultData = (): StorageData => ({
   showNoTimeLimitOnly: false,
   darkMode: false
 })
-
-const splitTasksToChunks = (tasks: Task[]): Task[][] => {
-  const chunks: Task[][] = []
-  let current: Task[] = []
-  let currentSize = 0
-  for (const task of tasks) {
-    const taskStr = JSON.stringify(task)
-    if (currentSize + taskStr.length + 1 > CHUNK_SIZE && current.length > 0) {
-      chunks.push(current)
-      current = []
-      currentSize = 0
-    }
-    current.push(task)
-    currentSize += taskStr.length + 1
-  }
-  if (current.length > 0) {
-    chunks.push(current)
-  }
-  return chunks
-}
-
-// ==================== 分块 Sync 读写 ====================
-
-const loadFromSyncChunked = (): Promise<StorageData | null> => {
-  return new Promise((resolve) => {
-    chrome.storage.sync.get([META_KEY, INDEX_KEY], (result) => {
-      if (chrome.runtime.lastError) {
-        console.error('[TaskMaster] loadData meta error:', chrome.runtime.lastError)
-        resolve(null)
-        return
-      }
-      if (!result[META_KEY]) {
-        console.log('[TaskMaster] loadData: no tm_meta found in sync')
-        resolve(null)
-        return
-      }
-      const meta = result[META_KEY]
-      const index = result[INDEX_KEY] || { chunkCount: 0 }
-      const chunkKeys: string[] = []
-      for (let i = 0; i < index.chunkCount; i++) {
-        chunkKeys.push(CHUNK_PREFIX + i)
-      }
-      if (chunkKeys.length === 0) {
-        resolve({ ...meta, tasks: [] })
-        return
-      }
-      chrome.storage.sync.get(chunkKeys, (chunkResult) => {
-        if (chrome.runtime.lastError) {
-          console.error('[TaskMaster] loadData chunks error:', chrome.runtime.lastError)
-          resolve({ ...meta, tasks: [] })
-          return
-        }
-        const tasks: Task[] = []
-        for (let i = 0; i < index.chunkCount; i++) {
-          const chunk = chunkResult[CHUNK_PREFIX + i]
-          if (Array.isArray(chunk)) {
-            tasks.push(...chunk)
-          } else {
-            console.warn('[TaskMaster] loadData: chunk', i, 'missing or not array', chunk)
-          }
-        }
-        console.log('[TaskMaster] loadData: got', tasks.length, 'tasks from', index.chunkCount, 'chunks')
-        resolve({ ...meta, tasks })
-      })
-    })
-  })
-}
-
-const saveToSyncChunked = (data: StorageData): Promise<void> => {
-  const meta = {
-    categories: data.categories,
-    defaultCategory: data.defaultCategory,
-    hideCompleted: data.hideCompleted,
-    hideOverdue: data.hideOverdue,
-    showNoTimeLimitOnly: data.showNoTimeLimitOnly,
-    darkMode: data.darkMode
-  }
-  const tasks = data.tasks || []
-  const chunks = splitTasksToChunks(tasks)
-  const newIndex = { chunkCount: chunks.length }
-  const update: Record<string, unknown> = {
-    [META_KEY]: meta,
-    [INDEX_KEY]: newIndex
-  }
-  chunks.forEach((chunk, i) => {
-    update[CHUNK_PREFIX + i] = chunk
-  })
-  return new Promise((resolve, reject) => {
-    chrome.storage.sync.get([INDEX_KEY], (r) => {
-      const oldIndex = r[INDEX_KEY]
-      const removeKeys: string[] = []
-      if (oldIndex) {
-        for (let i = chunks.length; i < (oldIndex.chunkCount || 0); i++) {
-          removeKeys.push(CHUNK_PREFIX + i)
-        }
-      }
-      chrome.storage.sync.set(update, () => {
-        if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError)
-          return
-        }
-        if (removeKeys.length > 0) {
-          chrome.storage.sync.remove(removeKeys, () => resolve())
-        } else {
-          resolve()
-        }
-      })
-    })
-  })
-}
-
-// ==================== 旧版 Simple Key 迁移 ====================
-
-const loadFromSyncSimple = (): Promise<StorageData | null> => {
-  return new Promise((resolve) => {
-    chrome.storage.sync.get([OLD_SIMPLE_KEY], (result) => {
-      if (result[OLD_SIMPLE_KEY]) {
-        try {
-          const parsed = JSON.parse(result[OLD_SIMPLE_KEY])
-          if (parsed && Array.isArray(parsed.tasks) && Array.isArray(parsed.categories)) {
-            console.log('[TaskMaster] loadData: migrated from old simple key, got', parsed.tasks.length, 'tasks')
-            // Clean up old key after successful migration
-            chrome.storage.sync.remove([OLD_SIMPLE_KEY])
-            resolve(parsed as StorageData)
-            return
-          }
-        } catch { /* ignore */ }
-      }
-      resolve(null)
-    })
-  })
-}
 
 const loadFromLocal = (): Promise<StorageData | null> => {
   return new Promise((resolve) => {
@@ -215,9 +78,23 @@ const mergeTasks = (local: Task[], remote: Task[]): Task[] => {
       const localTime = localTask.updatedAt || localTask.createdAt || 0
       const remoteTime = remoteTask.updatedAt || remoteTask.createdAt || 0
       if (remoteTime > localTime) {
-        // 远端更新，替换
+        // 远端更新，替换 — 循环任务保留本地的 completedDates / repeatDays 防丢失
         const idx = result.findIndex(t => t.id === remoteTask.id)
-        if (idx !== -1) result[idx] = remoteTask
+        if (idx !== -1) {
+          const merged: any = { ...remoteTask }
+          if (localTask.repeatType && localTask.repeatType !== 'none') {
+            if (Array.isArray(localTask.completedDates) && localTask.completedDates.length > 0) {
+              merged.completedDates = localTask.completedDates
+            }
+            if (Array.isArray(localTask.repeatDays) && localTask.repeatDays.length > 0 && (!merged.repeatDays || merged.repeatDays.length === 0)) {
+              merged.repeatDays = localTask.repeatDays
+            }
+            if (localTask.repeatStartDate && !merged.repeatStartDate) {
+              merged.repeatStartDate = localTask.repeatStartDate
+            }
+          }
+          result[idx] = merged
+        }
       }
       // 否则保留本地版本
     }
@@ -237,6 +114,18 @@ const mergeCategories = (local: Category[], remote: Category[]): Category[] => {
   return result
 }
 
+// Merge two full snapshots: union of tasks (newest updatedAt wins), union of categories,
+// scalar settings prefer remote. Keeps unsynced local edits when pulling cloud.
+const mergeStorageData = (local: StorageData, remote: StorageData): StorageData => ({
+  tasks: mergeTasks(local.tasks, remote.tasks),
+  categories: mergeCategories(local.categories, remote.categories),
+  defaultCategory: remote.defaultCategory || local.defaultCategory,
+  hideCompleted: remote.hideCompleted ?? local.hideCompleted,
+  hideOverdue: remote.hideOverdue ?? local.hideOverdue,
+  showNoTimeLimitOnly: remote.showNoTimeLimitOnly ?? local.showNoTimeLimitOnly,
+  darkMode: remote.darkMode ?? local.darkMode
+})
+
 // ==================== Cloudflare 全量同步 ====================
 
 const CLOUD_SYNC_SETTINGS_KEY = 'tm_sync_settings'
@@ -249,31 +138,68 @@ const getCloudSettings = async (): Promise<{ apiUrl?: string; apiToken?: string 
   })
 }
 
-export const syncToCloud = async (data: StorageData): Promise<{ success: boolean; error?: string }> => {
+// Cloud base version (optimistic lock): the updatedAt of the cloud snapshot the
+// local data is based on. Set after every successful pull/push, sent on every push.
+const CLOUD_BASE_AT_KEY = 'tm_cloud_base_at'
+
+const getCloudBaseAt = (): Promise<string | null> => {
+  return new Promise((resolve) => {
+    chrome.storage.local.get([CLOUD_BASE_AT_KEY], (r) => {
+      resolve(r[CLOUD_BASE_AT_KEY] || null)
+    })
+  })
+}
+
+const setCloudBaseAt = (at: string | null): Promise<void> => {
+  return new Promise((resolve) => {
+    if (at) {
+      chrome.storage.local.set({ [CLOUD_BASE_AT_KEY]: at }, () => resolve())
+    } else {
+      chrome.storage.local.remove([CLOUD_BASE_AT_KEY], () => resolve())
+    }
+  })
+}
+
+export const syncToCloud = async (
+  data: StorageData,
+  opts?: { force?: boolean }
+): Promise<{ success: boolean; conflict?: boolean; currentUpdatedAt?: string; error?: string; updatedAt?: string }> => {
   try {
     const settings = await getCloudSettings()
     if (!settings.apiUrl || !settings.apiToken) {
       return { success: false, error: '未配置同步设置' }
     }
+    const baseUpdatedAt = await getCloudBaseAt()
     const resp = await fetch(`${settings.apiUrl}/api/fullsync`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${settings.apiToken}`
       },
-      body: JSON.stringify({ data })
+      body: JSON.stringify({ data, baseUpdatedAt, force: opts?.force === true })
     })
+    if (resp.status === 409) {
+      const err = await resp.json().catch(() => ({ error: 'HTTP 409' }))
+      if (err.error === 'conflict') {
+        return { success: false, conflict: true, currentUpdatedAt: err.currentUpdatedAt, error: 'conflict' }
+      }
+      return { success: false, error: err.error || 'refused' }
+    }
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }))
       return { success: false, error: err.error || `HTTP ${resp.status}` }
     }
-    return { success: true }
+    const result = await resp.json()
+    if (result.updatedAt) {
+      await setCloudBaseAt(result.updatedAt)
+    }
+    return { success: true, updatedAt: result.updatedAt }
   } catch (e) {
     return { success: false, error: String(e) }
   }
 }
 
-export const syncFromCloud = async (): Promise<{ data: StorageData | null; error?: string }> => {
+export const syncFromCloud = async (): Promise<{ data: StorageData | null; updatedAt?: string; error?: string }> => {
   try {
     const settings = await getCloudSettings()
     if (!settings.apiUrl || !settings.apiToken) {
@@ -290,7 +216,10 @@ export const syncFromCloud = async (): Promise<{ data: StorageData | null; error
     if (!result.data) {
       return { data: null }
     }
-    return { data: result.data as StorageData }
+    if (result.updatedAt) {
+      await setCloudBaseAt(result.updatedAt)
+    }
+    return { data: result.data as StorageData, updatedAt: result.updatedAt }
   } catch (e) {
     return { data: null, error: String(e) }
   }
@@ -304,83 +233,104 @@ export const isCloudConfigured = async (): Promise<boolean> => {
 // ==================== 公开 API ====================
 
 export const loadData = async (): Promise<StorageData> => {
+  // 本地备份可能含未上云的改动，先读出，与云端合并，避免被云端覆盖
+  const localBackup = await loadFromLocal()
+
   // 1. Try Cloudflare full sync (if configured)
   const cloudResult = await syncFromCloud()
   if (cloudResult.data && cloudResult.data.tasks && cloudResult.data.tasks.length > 0) {
-    cloudResult.data.tasks = cloudResult.data.tasks.map(t => ({
+    let data = cloudResult.data
+    if (localBackup && localBackup.tasks && localBackup.tasks.length > 0) {
+      data = mergeStorageData(localBackup, cloudResult.data)
+    }
+    data.tasks = data.tasks.map(t => ({
       ...t,
       updatedAt: t.updatedAt || t.createdAt || Date.now()
     }))
-    await saveToLocal(cloudResult.data)
-    console.log('[TaskMaster] loadData: got', cloudResult.data.tasks.length, 'tasks from cloud')
-    return cloudResult.data
+    await saveToLocal(data)
+    console.log('[TaskMaster] loadData: cloud', cloudResult.data.tasks.length, '+ local', localBackup?.tasks?.length || 0, '→ merged', data.tasks.length)
+    return data
   }
 
-  // 2. Try chrome.storage.sync chunked
-  const syncData = await loadFromSyncChunked()
-  if (syncData) {
-    // 确保有 updatedAt（兼容旧数据）
-    syncData.tasks = syncData.tasks.map(t => ({
+  // 2. 云端不可用 → 从本地备份恢复（开头已读到 localBackup）
+  if (localBackup && localBackup.tasks && localBackup.tasks.length > 0) {
+    console.warn('[TaskMaster] 云端为空，从本地备份恢复')
+    localBackup.tasks = localBackup.tasks.map(t => ({
       ...t,
       updatedAt: t.updatedAt || t.createdAt || Date.now()
     }))
-    await saveToLocal(syncData)
-    return syncData
+    return localBackup
   }
 
-  // 2. 尝试从 sync 旧版 simple key 读取（v1.1.0 build 产物）
-  const oldSyncData = await loadFromSyncSimple()
-  if (oldSyncData) {
-    oldSyncData.tasks = oldSyncData.tasks.map(t => ({
-      ...t,
-      updatedAt: t.updatedAt || t.createdAt || Date.now()
-    }))
-    await saveToLocal(oldSyncData)
-    await saveToSyncChunked(oldSyncData)
-    return oldSyncData
-  }
-
-  // 3. 尝试从 local 备份读取
-  const localData = await loadFromLocal()
-  if (localData) {
-    console.warn('[TaskMaster] sync为空，从local恢复数据')
-    localData.tasks = localData.tasks.map(t => ({
-      ...t,
-      updatedAt: t.updatedAt || t.createdAt || Date.now()
-    }))
-    await saveToSyncChunked(localData)
-    return localData
-  }
-
-  // 4. 全新安装
-  console.warn('[TaskMaster] local和sync都为空，返回默认数据')
+  // 3. 全新安装
+  console.warn('[TaskMaster] 云端和本地都为空，返回默认数据')
   return getDefaultData()
 }
 
-export const saveData = async (data: StorageData): Promise<void> => {
-  await saveToLocal(data)
-  // Write to chrome.storage.sync (bonus, don't block on failure)
-  saveToSyncChunked(data).catch(e => console.warn('[TaskMaster] chrome.storage.sync write failed:', e))
-  // Write to Cloudflare (primary sync, don't block on failure)
-  syncToCloud(data).catch(e => console.warn('[TaskMaster] cloud sync write failed:', e))
+/** 修复循环任务数据一致性：completed 必须为 false，completedDates 必须为数组，从 repeatStartDate/dueDate 反推丢失的完成记录 */
+const fixRecurringTasks = (tasks: any[]): any[] => tasks.map(t => {
+  if (t.repeatType && t.repeatType !== 'none') {
+    t.completed = false
+    if (!Array.isArray(t.completedDates)) t.completedDates = []
+    if (t.repeatType === 'weekly' && (!Array.isArray(t.repeatDays) || t.repeatDays.length === 0)) {
+      if (t.repeatStartDate || t.dueDate) {
+        const anchor = new Date(t.repeatStartDate || t.dueDate)
+        t.repeatDays = [anchor.getDay()]
+      }
+    }
+    // completedDates 为空但 dueDate 已推进 → 反推历史完成日期
+    if (t.completedDates.length === 0 && t.repeatStartDate && t.dueDate && t.dueDate > t.repeatStartDate) {
+      const start = new Date(t.repeatStartDate)
+      const current = new Date(t.dueDate)
+      const completed: string[] = []
+      const check = new Date(start)
+      while (check < current) {
+        const ds = `${check.getFullYear()}-${String(check.getMonth() + 1).padStart(2, '0')}-${String(check.getDate()).padStart(2, '0')}`
+        if (isTaskMatchRepeat(t, check)) {
+          completed.push(ds)
+        }
+        check.setDate(check.getDate() + 1)
+      }
+      t.completedDates = completed
+    }
+  }
+  return t
+})
+
+/** 判断某天是否匹配循环任务的规则 */
+const isTaskMatchRepeat = (t: any, date: Date): boolean => {
+  const anchor = new Date(t.repeatStartDate || t.dueDate)
+  if (date < anchor) return false
+  switch (t.repeatType) {
+    case 'daily': return true
+    case 'weekly': return (t.repeatDays || []).includes(date.getDay())
+    case 'monthly': return date.getDate() === anchor.getDate()
+    case 'workdays': return date.getDay() >= 1 && date.getDay() <= 5
+    case 'custom': {
+      const diff = Math.floor((date.getTime() - anchor.getTime()) / 86400000)
+      return diff % (t.repeatInterval || 1) === 0
+    }
+    default: return false
+  }
 }
 
-export const mergeRemoteData = async (localState: StorageData): Promise<StorageData> => {
-  const remoteData = await loadFromSyncChunked()
-  if (!remoteData) return localState
-  const mergedTasks = mergeTasks(localState.tasks, remoteData.tasks)
-  const mergedCategories = mergeCategories(localState.categories, remoteData.categories)
-  const merged: StorageData = {
-    tasks: mergedTasks,
-    categories: mergedCategories,
-    defaultCategory: remoteData.defaultCategory || localState.defaultCategory,
-    hideCompleted: remoteData.hideCompleted ?? localState.hideCompleted,
-    hideOverdue: remoteData.hideOverdue ?? localState.hideOverdue,
-    showNoTimeLimitOnly: remoteData.showNoTimeLimitOnly ?? localState.showNoTimeLimitOnly,
-    darkMode: remoteData.darkMode ?? localState.darkMode
+export const saveData = async (data: StorageData): Promise<void> => {
+  data.tasks = fixRecurringTasks(data.tasks)
+  await saveToLocal(data)
+  // Write to Cloudflare. On version conflict, pull latest to refresh the base;
+  // the local edit survives via loadData merge and goes up on the next save.
+  cloudSyncWrite(data).catch(e => console.warn('[TaskMaster] cloud sync write failed:', e))
+}
+
+const cloudSyncWrite = async (data: StorageData): Promise<void> => {
+  const result = await syncToCloud(data)
+  if (result.success) return
+  if (result.conflict) {
+    console.warn('[TaskMaster] cloud sync conflict (stale base), refreshing base from cloud')
+    await syncFromCloud().catch(() => {})
+    return
   }
-  await saveData(merged)
-  return merged
+  console.warn('[TaskMaster] cloud sync failed:', result.error)
 }
 
 // ==================== 自动备份（保留最近 3 天）====================

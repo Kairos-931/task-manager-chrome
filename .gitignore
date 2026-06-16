@@ -34,3 +34,6 @@ Desktop.ini
 # Logs
 *.log
 npm-debug.log*
+
+# Wrangler local state
+.wrangler/

@@ -36,23 +36,17 @@ var TaskManager = (() => {
     isCloudConfigured: () => isCloudConfigured,
     listBackups: () => listBackups,
     loadData: () => loadData,
-    mergeRemoteData: () => mergeRemoteData,
     restoreBackup: () => restoreBackup,
     saveData: () => saveData,
     syncFromCloud: () => syncFromCloud,
     syncToCloud: () => syncToCloud,
     validateImportData: () => validateImportData
   });
-  var STORAGE_KEY, META_KEY, INDEX_KEY, CHUNK_PREFIX, CHUNK_SIZE, LOCAL_BACKUP_KEY, OLD_SIMPLE_KEY, generateId, defaultCategories, getDefaultData, splitTasksToChunks, loadFromSyncChunked, saveToSyncChunked, loadFromSyncSimple, loadFromLocal, saveToLocal, mergeTasks, mergeCategories, CLOUD_SYNC_SETTINGS_KEY, getCloudSettings, syncToCloud, syncFromCloud, isCloudConfigured, loadData, saveData, mergeRemoteData, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
+  var STORAGE_KEY, LOCAL_BACKUP_KEY, generateId, defaultCategories, getDefaultData, loadFromLocal, saveToLocal, mergeTasks, mergeCategories, mergeStorageData, CLOUD_SYNC_SETTINGS_KEY, getCloudSettings, CLOUD_BASE_AT_KEY, getCloudBaseAt, setCloudBaseAt, syncToCloud, syncFromCloud, isCloudConfigured, loadData, fixRecurringTasks, isTaskMatchRepeat, saveData, cloudSyncWrite, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
   var init_storage = __esm({
     "shared/storage.ts"() {
       STORAGE_KEY = "tm_data";
-      META_KEY = "tm_meta";
-      INDEX_KEY = "tm_index";
-      CHUNK_PREFIX = "tm_tasks_";
-      CHUNK_SIZE = 7e3;
       LOCAL_BACKUP_KEY = "tm_local_backup";
-      OLD_SIMPLE_KEY = "task_manager_data";
       generateId = () => {
         return Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
       };
@@ -70,130 +64,6 @@ var TaskManager = (() => {
         showNoTimeLimitOnly: false,
         darkMode: false
       });
-      splitTasksToChunks = (tasks) => {
-        const chunks = [];
-        let current = [];
-        let currentSize = 0;
-        for (const task of tasks) {
-          const taskStr = JSON.stringify(task);
-          if (currentSize + taskStr.length + 1 > CHUNK_SIZE && current.length > 0) {
-            chunks.push(current);
-            current = [];
-            currentSize = 0;
-          }
-          current.push(task);
-          currentSize += taskStr.length + 1;
-        }
-        if (current.length > 0) {
-          chunks.push(current);
-        }
-        return chunks;
-      };
-      loadFromSyncChunked = () => {
-        return new Promise((resolve) => {
-          chrome.storage.sync.get([META_KEY, INDEX_KEY], (result) => {
-            if (chrome.runtime.lastError) {
-              console.error("[TaskMaster] loadData meta error:", chrome.runtime.lastError);
-              resolve(null);
-              return;
-            }
-            if (!result[META_KEY]) {
-              console.log("[TaskMaster] loadData: no tm_meta found in sync");
-              resolve(null);
-              return;
-            }
-            const meta = result[META_KEY];
-            const index = result[INDEX_KEY] || { chunkCount: 0 };
-            const chunkKeys = [];
-            for (let i = 0; i < index.chunkCount; i++) {
-              chunkKeys.push(CHUNK_PREFIX + i);
-            }
-            if (chunkKeys.length === 0) {
-              resolve({ ...meta, tasks: [] });
-              return;
-            }
-            chrome.storage.sync.get(chunkKeys, (chunkResult) => {
-              if (chrome.runtime.lastError) {
-                console.error("[TaskMaster] loadData chunks error:", chrome.runtime.lastError);
-                resolve({ ...meta, tasks: [] });
-                return;
-              }
-              const tasks = [];
-              for (let i = 0; i < index.chunkCount; i++) {
-                const chunk = chunkResult[CHUNK_PREFIX + i];
-                if (Array.isArray(chunk)) {
-                  tasks.push(...chunk);
-                } else {
-                  console.warn("[TaskMaster] loadData: chunk", i, "missing or not array", chunk);
-                }
-              }
-              console.log("[TaskMaster] loadData: got", tasks.length, "tasks from", index.chunkCount, "chunks");
-              resolve({ ...meta, tasks });
-            });
-          });
-        });
-      };
-      saveToSyncChunked = (data) => {
-        const meta = {
-          categories: data.categories,
-          defaultCategory: data.defaultCategory,
-          hideCompleted: data.hideCompleted,
-          hideOverdue: data.hideOverdue,
-          showNoTimeLimitOnly: data.showNoTimeLimitOnly,
-          darkMode: data.darkMode
-        };
-        const tasks = data.tasks || [];
-        const chunks = splitTasksToChunks(tasks);
-        const newIndex = { chunkCount: chunks.length };
-        const update = {
-          [META_KEY]: meta,
-          [INDEX_KEY]: newIndex
-        };
-        chunks.forEach((chunk, i) => {
-          update[CHUNK_PREFIX + i] = chunk;
-        });
-        return new Promise((resolve, reject) => {
-          chrome.storage.sync.get([INDEX_KEY], (r) => {
-            const oldIndex = r[INDEX_KEY];
-            const removeKeys = [];
-            if (oldIndex) {
-              for (let i = chunks.length; i < (oldIndex.chunkCount || 0); i++) {
-                removeKeys.push(CHUNK_PREFIX + i);
-              }
-            }
-            chrome.storage.sync.set(update, () => {
-              if (chrome.runtime.lastError) {
-                reject(chrome.runtime.lastError);
-                return;
-              }
-              if (removeKeys.length > 0) {
-                chrome.storage.sync.remove(removeKeys, () => resolve());
-              } else {
-                resolve();
-              }
-            });
-          });
-        });
-      };
-      loadFromSyncSimple = () => {
-        return new Promise((resolve) => {
-          chrome.storage.sync.get([OLD_SIMPLE_KEY], (result) => {
-            if (result[OLD_SIMPLE_KEY]) {
-              try {
-                const parsed = JSON.parse(result[OLD_SIMPLE_KEY]);
-                if (parsed && Array.isArray(parsed.tasks) && Array.isArray(parsed.categories)) {
-                  console.log("[TaskMaster] loadData: migrated from old simple key, got", parsed.tasks.length, "tasks");
-                  chrome.storage.sync.remove([OLD_SIMPLE_KEY]);
-                  resolve(parsed);
-                  return;
-                }
-              } catch {
-              }
-            }
-            resolve(null);
-          });
-        });
-      };
       loadFromLocal = () => {
         return new Promise((resolve) => {
           chrome.storage.local.get([LOCAL_BACKUP_KEY], (result) => {
@@ -238,8 +108,21 @@ var TaskManager = (() => {
             const remoteTime = remoteTask.updatedAt || remoteTask.createdAt || 0;
             if (remoteTime > localTime) {
               const idx = result.findIndex((t) => t.id === remoteTask.id);
-              if (idx !== -1)
-                result[idx] = remoteTask;
+              if (idx !== -1) {
+                const merged = { ...remoteTask };
+                if (localTask.repeatType && localTask.repeatType !== "none") {
+                  if (Array.isArray(localTask.completedDates) && localTask.completedDates.length > 0) {
+                    merged.completedDates = localTask.completedDates;
+                  }
+                  if (Array.isArray(localTask.repeatDays) && localTask.repeatDays.length > 0 && (!merged.repeatDays || merged.repeatDays.length === 0)) {
+                    merged.repeatDays = localTask.repeatDays;
+                  }
+                  if (localTask.repeatStartDate && !merged.repeatStartDate) {
+                    merged.repeatStartDate = localTask.repeatStartDate;
+                  }
+                }
+                result[idx] = merged;
+              }
             }
           }
         }
@@ -255,6 +138,15 @@ var TaskManager = (() => {
         }
         return result;
       };
+      mergeStorageData = (local, remote) => ({
+        tasks: mergeTasks(local.tasks, remote.tasks),
+        categories: mergeCategories(local.categories, remote.categories),
+        defaultCategory: remote.defaultCategory || local.defaultCategory,
+        hideCompleted: remote.hideCompleted ?? local.hideCompleted,
+        hideOverdue: remote.hideOverdue ?? local.hideOverdue,
+        showNoTimeLimitOnly: remote.showNoTimeLimitOnly ?? local.showNoTimeLimitOnly,
+        darkMode: remote.darkMode ?? local.darkMode
+      });
       CLOUD_SYNC_SETTINGS_KEY = "tm_sync_settings";
       getCloudSettings = async () => {
         return new Promise((resolve) => {
@@ -263,25 +155,54 @@ var TaskManager = (() => {
           });
         });
       };
-      syncToCloud = async (data) => {
+      CLOUD_BASE_AT_KEY = "tm_cloud_base_at";
+      getCloudBaseAt = () => {
+        return new Promise((resolve) => {
+          chrome.storage.local.get([CLOUD_BASE_AT_KEY], (r) => {
+            resolve(r[CLOUD_BASE_AT_KEY] || null);
+          });
+        });
+      };
+      setCloudBaseAt = (at) => {
+        return new Promise((resolve) => {
+          if (at) {
+            chrome.storage.local.set({ [CLOUD_BASE_AT_KEY]: at }, () => resolve());
+          } else {
+            chrome.storage.local.remove([CLOUD_BASE_AT_KEY], () => resolve());
+          }
+        });
+      };
+      syncToCloud = async (data, opts) => {
         try {
           const settings = await getCloudSettings();
           if (!settings.apiUrl || !settings.apiToken) {
             return { success: false, error: "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" };
           }
+          const baseUpdatedAt = await getCloudBaseAt();
           const resp = await fetch(`${settings.apiUrl}/api/fullsync`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
               "Authorization": `Bearer ${settings.apiToken}`
             },
-            body: JSON.stringify({ data })
+            body: JSON.stringify({ data, baseUpdatedAt, force: opts?.force === true })
           });
+          if (resp.status === 409) {
+            const err = await resp.json().catch(() => ({ error: "HTTP 409" }));
+            if (err.error === "conflict") {
+              return { success: false, conflict: true, currentUpdatedAt: err.currentUpdatedAt, error: "conflict" };
+            }
+            return { success: false, error: err.error || "refused" };
+          }
           if (!resp.ok) {
             const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
             return { success: false, error: err.error || `HTTP ${resp.status}` };
           }
-          return { success: true };
+          const result = await resp.json();
+          if (result.updatedAt) {
+            await setCloudBaseAt(result.updatedAt);
+          }
+          return { success: true, updatedAt: result.updatedAt };
         } catch (e) {
           return { success: false, error: String(e) };
         }
@@ -303,7 +224,10 @@ var TaskManager = (() => {
           if (!result.data) {
             return { data: null };
           }
-          return { data: result.data };
+          if (result.updatedAt) {
+            await setCloudBaseAt(result.updatedAt);
+          }
+          return { data: result.data, updatedAt: result.updatedAt };
         } catch (e) {
           return { data: null, error: String(e) };
         }
@@ -313,70 +237,97 @@ var TaskManager = (() => {
         return !!(settings.apiUrl && settings.apiToken);
       };
       loadData = async () => {
+        const localBackup = await loadFromLocal();
         const cloudResult = await syncFromCloud();
         if (cloudResult.data && cloudResult.data.tasks && cloudResult.data.tasks.length > 0) {
-          cloudResult.data.tasks = cloudResult.data.tasks.map((t) => ({
+          let data = cloudResult.data;
+          if (localBackup && localBackup.tasks && localBackup.tasks.length > 0) {
+            data = mergeStorageData(localBackup, cloudResult.data);
+          }
+          data.tasks = data.tasks.map((t) => ({
             ...t,
             updatedAt: t.updatedAt || t.createdAt || Date.now()
           }));
-          await saveToLocal(cloudResult.data);
-          console.log("[TaskMaster] loadData: got", cloudResult.data.tasks.length, "tasks from cloud");
-          return cloudResult.data;
+          await saveToLocal(data);
+          console.log("[TaskMaster] loadData: cloud", cloudResult.data.tasks.length, "+ local", localBackup?.tasks?.length || 0, "\u2192 merged", data.tasks.length);
+          return data;
         }
-        const syncData = await loadFromSyncChunked();
-        if (syncData) {
-          syncData.tasks = syncData.tasks.map((t) => ({
+        if (localBackup && localBackup.tasks && localBackup.tasks.length > 0) {
+          console.warn("[TaskMaster] \u4E91\u7AEF\u4E3A\u7A7A\uFF0C\u4ECE\u672C\u5730\u5907\u4EFD\u6062\u590D");
+          localBackup.tasks = localBackup.tasks.map((t) => ({
             ...t,
             updatedAt: t.updatedAt || t.createdAt || Date.now()
           }));
-          await saveToLocal(syncData);
-          return syncData;
+          return localBackup;
         }
-        const oldSyncData = await loadFromSyncSimple();
-        if (oldSyncData) {
-          oldSyncData.tasks = oldSyncData.tasks.map((t) => ({
-            ...t,
-            updatedAt: t.updatedAt || t.createdAt || Date.now()
-          }));
-          await saveToLocal(oldSyncData);
-          await saveToSyncChunked(oldSyncData);
-          return oldSyncData;
-        }
-        const localData = await loadFromLocal();
-        if (localData) {
-          console.warn("[TaskMaster] sync\u4E3A\u7A7A\uFF0C\u4ECElocal\u6062\u590D\u6570\u636E");
-          localData.tasks = localData.tasks.map((t) => ({
-            ...t,
-            updatedAt: t.updatedAt || t.createdAt || Date.now()
-          }));
-          await saveToSyncChunked(localData);
-          return localData;
-        }
-        console.warn("[TaskMaster] local\u548Csync\u90FD\u4E3A\u7A7A\uFF0C\u8FD4\u56DE\u9ED8\u8BA4\u6570\u636E");
+        console.warn("[TaskMaster] \u4E91\u7AEF\u548C\u672C\u5730\u90FD\u4E3A\u7A7A\uFF0C\u8FD4\u56DE\u9ED8\u8BA4\u6570\u636E");
         return getDefaultData();
       };
-      saveData = async (data) => {
-        await saveToLocal(data);
-        saveToSyncChunked(data).catch((e) => console.warn("[TaskMaster] chrome.storage.sync write failed:", e));
-        syncToCloud(data).catch((e) => console.warn("[TaskMaster] cloud sync write failed:", e));
+      fixRecurringTasks = (tasks) => tasks.map((t) => {
+        if (t.repeatType && t.repeatType !== "none") {
+          t.completed = false;
+          if (!Array.isArray(t.completedDates))
+            t.completedDates = [];
+          if (t.repeatType === "weekly" && (!Array.isArray(t.repeatDays) || t.repeatDays.length === 0)) {
+            if (t.repeatStartDate || t.dueDate) {
+              const anchor = new Date(t.repeatStartDate || t.dueDate);
+              t.repeatDays = [anchor.getDay()];
+            }
+          }
+          if (t.completedDates.length === 0 && t.repeatStartDate && t.dueDate && t.dueDate > t.repeatStartDate) {
+            const start = new Date(t.repeatStartDate);
+            const current = new Date(t.dueDate);
+            const completed = [];
+            const check = new Date(start);
+            while (check < current) {
+              const ds = `${check.getFullYear()}-${String(check.getMonth() + 1).padStart(2, "0")}-${String(check.getDate()).padStart(2, "0")}`;
+              if (isTaskMatchRepeat(t, check)) {
+                completed.push(ds);
+              }
+              check.setDate(check.getDate() + 1);
+            }
+            t.completedDates = completed;
+          }
+        }
+        return t;
+      });
+      isTaskMatchRepeat = (t, date) => {
+        const anchor = new Date(t.repeatStartDate || t.dueDate);
+        if (date < anchor)
+          return false;
+        switch (t.repeatType) {
+          case "daily":
+            return true;
+          case "weekly":
+            return (t.repeatDays || []).includes(date.getDay());
+          case "monthly":
+            return date.getDate() === anchor.getDate();
+          case "workdays":
+            return date.getDay() >= 1 && date.getDay() <= 5;
+          case "custom": {
+            const diff = Math.floor((date.getTime() - anchor.getTime()) / 864e5);
+            return diff % (t.repeatInterval || 1) === 0;
+          }
+          default:
+            return false;
+        }
       };
-      mergeRemoteData = async (localState) => {
-        const remoteData = await loadFromSyncChunked();
-        if (!remoteData)
-          return localState;
-        const mergedTasks = mergeTasks(localState.tasks, remoteData.tasks);
-        const mergedCategories = mergeCategories(localState.categories, remoteData.categories);
-        const merged = {
-          tasks: mergedTasks,
-          categories: mergedCategories,
-          defaultCategory: remoteData.defaultCategory || localState.defaultCategory,
-          hideCompleted: remoteData.hideCompleted ?? localState.hideCompleted,
-          hideOverdue: remoteData.hideOverdue ?? localState.hideOverdue,
-          showNoTimeLimitOnly: remoteData.showNoTimeLimitOnly ?? localState.showNoTimeLimitOnly,
-          darkMode: remoteData.darkMode ?? localState.darkMode
-        };
-        await saveData(merged);
-        return merged;
+      saveData = async (data) => {
+        data.tasks = fixRecurringTasks(data.tasks);
+        await saveToLocal(data);
+        cloudSyncWrite(data).catch((e) => console.warn("[TaskMaster] cloud sync write failed:", e));
+      };
+      cloudSyncWrite = async (data) => {
+        const result = await syncToCloud(data);
+        if (result.success)
+          return;
+        if (result.conflict) {
+          console.warn("[TaskMaster] cloud sync conflict (stale base), refreshing base from cloud");
+          await syncFromCloud().catch(() => {
+          });
+          return;
+        }
+        console.warn("[TaskMaster] cloud sync failed:", result.error);
       };
       BACKUP_PREFIX = "tm_auto_backup_";
       MAX_BACKUPS = 3;
@@ -568,23 +519,6 @@ var TaskManager = (() => {
   });
 
   // shared/sync.ts
-  function showSyncToast() {
-    const existing = document.querySelector(".sync-toast");
-    existing?.remove();
-    const toast = document.createElement("div");
-    toast.className = "sync-toast fixed bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm z-50 bg-blue-500 transition-opacity duration-500";
-    toast.innerHTML = `
-    <svg class="w-4 h-4 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-    </svg>
-    \u5DF2\u540C\u6B65\u6765\u81EA\u5176\u4ED6\u8BBE\u5907\u7684\u66F4\u65B0
-  `;
-    document.body.appendChild(toast);
-    setTimeout(() => {
-      toast.style.opacity = "0";
-      setTimeout(() => toast.remove(), 500);
-    }, 3e3);
-  }
   function showToast(container, message, type = "success") {
     const existing = container.querySelector(".toast-message");
     existing?.remove();
@@ -596,14 +530,11 @@ var TaskManager = (() => {
       toast.remove();
     }, 3e3);
   }
-  var syncStatus, statusChangeCallback, localSaveTime, statusTimeoutId, reRenderFn, getSyncStatus, setSyncStatus, onSyncStatusChange, markLocalSave, markSaveComplete, initSyncMonitor;
+  var syncStatus, statusChangeCallback, statusTimeoutId, reRenderFn, getSyncStatus, setSyncStatus, onSyncStatusChange, markLocalSave, markSaveComplete, initSyncMonitor;
   var init_sync = __esm({
     "shared/sync.ts"() {
-      init_task();
-      init_storage();
       syncStatus = "idle";
       statusChangeCallback = null;
-      localSaveTime = 0;
       statusTimeoutId = null;
       reRenderFn = null;
       getSyncStatus = () => syncStatus;
@@ -615,7 +546,7 @@ var TaskManager = (() => {
         statusChangeCallback = cb;
       };
       markLocalSave = () => {
-        localSaveTime = Date.now();
+        setSyncStatus("saving");
       };
       markSaveComplete = () => {
         setSyncStatus("synced");
@@ -630,47 +561,6 @@ var TaskManager = (() => {
       };
       initSyncMonitor = (reRender2) => {
         reRenderFn = reRender2;
-        chrome.storage.onChanged.addListener((changes, areaName) => {
-          if (areaName !== "sync")
-            return;
-          const now = Date.now();
-          if (localSaveTime > 0 && now - localSaveTime < 2e3) {
-            return;
-          }
-          const hasMetaChange = !!changes["tm_meta"];
-          const hasChunkChange = Object.keys(changes).some((k) => k.startsWith("tm_tasks_"));
-          if (!hasMetaChange && !hasChunkChange)
-            return;
-          const metaChange = changes["tm_meta"];
-          if (metaChange && metaChange.newValue === void 0) {
-            const current = getState();
-            if (current.tasks.length > 0 || current.categories.length > 0) {
-              console.warn("[TaskMaster] \u68C0\u6D4B\u5230sync\u88AB\u6E05\u7A7A\uFF0C\u4ECE\u5185\u5B58\u56DE\u5199\u6570\u636E");
-              markLocalSave();
-              persistState().catch(() => {
-              });
-            }
-            return;
-          }
-          setSyncStatus("remote-updated");
-          const localState = getState();
-          mergeRemoteData(localState).then(() => {
-            loadState().then(() => {
-              reRender2();
-              showSyncToast();
-              if (statusTimeoutId)
-                clearTimeout(statusTimeoutId);
-              statusTimeoutId = setTimeout(() => {
-                if (syncStatus === "remote-updated") {
-                  setSyncStatus("idle");
-                  reRender2();
-                }
-              }, 4e3);
-            });
-          }).catch(() => {
-            setSyncStatus("error");
-          });
-        });
       };
     }
   });
@@ -706,7 +596,7 @@ var TaskManager = (() => {
     updateCategory: () => updateCategory,
     updateTask: () => updateTask
   });
-  var escapeHtml, formatDate, parseDate, formatHours, getDateLabel, getTodayStr, state, getState, setState, resetEditingTask, getRemainingTime, isOverdue, isTaskDueOnDate, getPriorityColor, getCatColor, getCatName, loadState, persistState, getFilteredTasks, addTask, updateTask, deleteTask, toggleTask, moveTaskToDate, getNextUncompletedDate, addCategory, updateCategory, deleteCategory, getStats;
+  var escapeHtml, formatDate, parseDate, formatHours, getDateLabel, getTodayStr, state, getState, setState, resetEditingTask, getRemainingTime, isOverdue, isTaskDueOnDate, getPriorityColor, getCatColor, getCatName, loadState, persistState, getFilteredTasks, addTask, updateTask, deleteTask, toggleThrottleMap, toggleTask, moveTaskToDate, getNextUncompletedDate, addCategory, updateCategory, deleteCategory, getStats;
   var init_task = __esm({
     "shared/task.ts"() {
       init_storage();
@@ -906,11 +796,16 @@ var TaskManager = (() => {
       deleteTask = (id) => {
         state.tasks = state.tasks.filter((t) => t.id !== id);
       };
+      toggleThrottleMap = /* @__PURE__ */ new Map();
       toggleTask = (id) => {
         const task = state.tasks.find((t) => t.id === id);
         if (!task)
           return;
         if (!task.completed && task.repeatType && task.repeatType !== "none") {
+          const last = toggleThrottleMap.get(id) || 0;
+          if (Date.now() - last < 500)
+            return;
+          toggleThrottleMap.set(id, Date.now());
           const completedDate = task.dueDate;
           if (!task.completedDates)
             task.completedDates = [];
@@ -1315,6 +1210,54 @@ var TaskManager = (() => {
       }
       current.setDate(current.getDate() + 1);
     }
+    const todayStr = formatDate(/* @__PURE__ */ new Date());
+    const weekSummaries = weeks.map((week) => {
+      const weekDays = week.filter((d) => {
+        const dd = parseDate(d);
+        return dd.getMonth() === month;
+      });
+      const weekPending = weekDays.reduce((s, d) => {
+        return s + getState().tasks.filter((t) => !t.noTimeLimit && !t.completed && isTaskDueOnDate(t, d)).reduce((a, t) => a + t.duration, 0);
+      }, 0);
+      const weekDone = weekDays.reduce((s, d) => {
+        return s + getState().tasks.filter((t) => !t.noTimeLimit && t.completed && t.repeatType === "none" && isTaskDueOnDate(t, d)).reduce((a, t) => a + t.duration, 0);
+      }, 0);
+      return { pending: weekPending, done: weekDone };
+    });
+    const monthTasks = getState().tasks.filter((t) => !t.noTimeLimit);
+    const monthPending = monthTasks.filter((t) => !t.completed).reduce((s, t) => s + t.duration, 0);
+    const monthDone = monthTasks.filter((t) => t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
+    const renderWeekSummary = (week, ws) => {
+      const hasToday = week.some((dd) => dd === todayStr);
+      const bgClass = hasToday ? "bg-blue-50/30 dark:bg-blue-900/10" : "";
+      const pendingHtml = ws.pending > 0 ? `<div class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-orange-500"></span><span class="text-[11px] font-semibold text-orange-600 dark:text-orange-400">${formatHours(ws.pending)}</span></div>` : "";
+      const doneHtml = ws.done > 0 ? `<div class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-green-500"></span><span class="text-[11px] font-semibold text-green-600 dark:text-green-400">${formatHours(ws.done)}</span></div>` : "";
+      const totalHtml = ws.pending > 0 || ws.done > 0 ? `<div class="text-[10px] text-gray-400 border-t border-gray-200 dark:border-gray-700 pt-0.5 mt-0.5">\u5408\u8BA1 <span class="font-semibold text-gray-500 dark:text-gray-300">${formatHours(ws.pending + ws.done)}</span></div>` : `<span class="text-[10px] text-gray-300 dark:text-gray-600">\u2014</span>`;
+      return `<div class="flex flex-col items-center justify-center gap-1 py-2 px-1 border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 ${bgClass}">${pendingHtml}${doneHtml}${totalHtml}</div>`;
+    };
+    const gridCells = weeks.map((week, wi) => {
+      const ws = weekSummaries[wi];
+      const dayCells = week.map((d) => {
+        const dayDate = parseDate(d);
+        const isCurrentMonth = dayDate.getMonth() === month;
+        const isToday = d === todayStr;
+        const dayTasks = getState().tasks.filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, d));
+        const pendingMin = dayTasks.filter((t) => !t.completed).reduce((s, t) => s + t.duration, 0);
+        const completedMin = dayTasks.filter((t) => t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
+        const miniPending = pendingMin > 0 ? `<span class="text-[9px] text-orange-500 bg-orange-50 dark:bg-orange-900/20 px-1 rounded leading-tight font-medium">${formatHours(pendingMin)}</span>` : "";
+        const miniDone = completedMin > 0 ? `<span class="text-[9px] text-green-500 bg-green-50 dark:bg-green-900/20 px-1 rounded leading-tight font-medium">\u2713${formatHours(completedMin)}</span>` : "";
+        const taskCards = dayTasks.slice(0, 2).map((t) => {
+          const isRecurringDone = t.repeatType && t.repeatType !== "none" && (t.completedDates || []).includes(d);
+          const done = t.completed || isRecurringDone;
+          return `<div class="month-task-item text-xs p-1 rounded mb-1 truncate ${done ? "line-through opacity-40 bg-gray-100 dark:bg-gray-700" : "bg-blue-100/50 dark:bg-blue-900/30"}" draggable="true" data-task-id="${t.id}" title="\u53CC\u51FB\u7F16\u8F91">${escapeHtml(t.title)}</div>`;
+        }).join("");
+        const moreHtml = dayTasks.length > 2 ? `<div class="text-xs text-gray-400">+${dayTasks.length - 2}</div>` : "";
+        const cellClasses = `min-h-[100px] p-2 border-b border-r dark:border-gray-700 ${isCurrentMonth ? "" : "bg-gray-50 dark:bg-gray-900/50"} ${isToday ? "bg-blue-50/50 dark:bg-blue-900/20" : ""} hover:bg-gray-100 dark:hover:bg-gray-700/30 transition cursor-pointer drop-zone`;
+        const dayNumClass = `text-sm ${isCurrentMonth ? "" : "text-gray-300 dark:text-gray-600"} ${isToday ? "font-bold text-blue-500" : ""}`;
+        return `<div class="${cellClasses}" data-date="${d}"><div class="flex items-center gap-1 mb-1"><span class="${dayNumClass}">${dayDate.getDate()}</span>${miniPending}${miniDone}</div>${taskCards}${moreHtml}</div>`;
+      }).join("");
+      return dayCells + renderWeekSummary(week, ws);
+    }).join("");
     return `
     <div class="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
       <div class="flex items-center justify-between mb-4 pb-2 border-b dark:border-gray-700">
@@ -1326,25 +1269,16 @@ var TaskManager = (() => {
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
         </button>
       </div>
-      <div class="grid grid-cols-7" style="border:1px solid #e5e7eb;border-bottom:none;border-right:none">
+      <div class="grid" style="grid-template-columns:repeat(7,1fr) 72px;border:1px solid #e5e7eb;border-bottom:none;border-right:none">
         ${weekdays.map((d) => `<div class="text-center py-2 font-medium text-sm text-gray-500 border-b border-r dark:border-gray-700">${d}</div>`).join("")}
-        ${weeks.map((week) => week.map((d) => {
-      const dayDate = parseDate(d);
-      const isCurrentMonth = dayDate.getMonth() === month;
-      const isToday = d === formatDate(/* @__PURE__ */ new Date());
-      const dayTasks = getState().tasks.filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, d));
-      return `
-            <div class="min-h-[100px] p-2 border-b border-r dark:border-gray-700 ${isCurrentMonth ? "" : "bg-gray-50 dark:bg-gray-900/50"} ${isToday ? "bg-blue-50/50 dark:bg-blue-900/20" : ""} hover:bg-gray-100 dark:hover:bg-gray-700/30 transition cursor-pointer drop-zone" data-date="${d}">
-              <div class="text-sm mb-1 ${isCurrentMonth ? "" : "text-gray-300 dark:text-gray-600"} ${isToday ? "font-bold text-blue-500" : ""}">${dayDate.getDate()}</div>
-              ${dayTasks.slice(0, 2).map((t) => {
-        const isRecurringDone = t.repeatType && t.repeatType !== "none" && (t.completedDates || []).includes(d);
-        const done = t.completed || isRecurringDone;
-        return `<div class="month-task-item text-xs p-1 rounded mb-1 truncate ${done ? "line-through opacity-40 bg-gray-100 dark:bg-gray-700" : "bg-blue-100/50 dark:bg-blue-900/30"}" draggable="true" data-task-id="${t.id}" title="\u53CC\u51FB\u7F16\u8F91">${escapeHtml(t.title)}</div>`;
-      }).join("")}
-              ${dayTasks.length > 2 ? `<div class="text-xs text-gray-400">+${dayTasks.length - 2}</div>` : ""}
-            </div>
-          `;
-    }).join("")).join("")}
+        <div class="text-center py-2 text-[11px] font-medium text-gray-400 border-b border-r dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30" style="letter-spacing:0.5px">\u5468\u7EDF\u8BA1</div>
+        ${gridCells}
+      </div>
+      <div class="grid" style="grid-template-columns:repeat(7,1fr) 72px;border:1px solid #e5e7eb">
+        <div class="col-span-7 px-3 py-2 text-xs text-gray-500 bg-gray-50 dark:bg-gray-900/30 border-r dark:border-gray-700 flex items-center gap-4">
+          \u672C\u6708\u5408\u8BA1\uFF1A<span class="font-semibold text-orange-600 dark:text-orange-400">${formatHours(monthPending)} \u5F85\u529E</span><span class="text-gray-300 dark:text-gray-600">|</span><span class="font-semibold text-green-600 dark:text-green-400">${formatHours(monthDone)} \u5DF2\u5B8C\u6210</span><span class="text-gray-300 dark:text-gray-600">|</span><span class="font-semibold text-gray-600 dark:text-gray-300">${formatHours(monthPending + monthDone)} \u603B\u8BA1</span>
+        </div>
+        <div class="flex items-center justify-center text-xs font-semibold text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-900/30">${formatHours(monthPending + monthDone)}</div>
       </div>
     </div>
   `;
@@ -1613,8 +1547,9 @@ var TaskManager = (() => {
               <svg style="width:18px;height:18px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
           </div>
-          <p style="font-size:12px;color:#9ca3af;margin-top:4px;">${tasks.length} \u4E2A\u4EFB\u52A1 \xB7 ${categories.length} \u4E2A\u5206\u7C7B \xB7 \u901A\u8FC7 Chrome Sync \u540C\u6B65</p>
+          <p style="font-size:12px;color:#9ca3af;margin-top:4px;">${tasks.length} \u4E2A\u4EFB\u52A1 \xB7 ${categories.length} \u4E2A\u5206\u7C7B \xB7 \u4E91\u7AEF\u540C\u6B65</p>
         </div>
+        <div id="syncFeedback" style="margin:0 24px 0;padding:8px 12px;border-radius:8px;font-size:12px;display:none;"></div>
         <div style="padding:0 24px 20px;">
           <div class="flex gap-3">
             <button id="forceUploadBtn" class="sync-card card-upload">
@@ -1699,14 +1634,21 @@ var TaskManager = (() => {
   `;
   };
   var renderApp = (container) => {
-    const { darkMode } = getState();
+    const { darkMode, currentView } = getState();
     if (darkMode) {
       document.documentElement.classList.add("dark");
     } else {
       document.documentElement.classList.remove("dark");
     }
+    const viewMaxWidth = {
+      list: "max-w-4xl",
+      day: "max-w-4xl",
+      week: "max-w-6xl",
+      month: "max-w-7xl"
+    };
+    const maxWidth = viewMaxWidth[currentView] || "max-w-4xl";
     container.innerHTML = `
-    <div class="max-w-4xl mx-auto p-4 min-h-screen">
+    <div class="${maxWidth} mx-auto p-4 min-h-screen transition-all duration-300">
       ${renderStats()}
       ${renderHeader()}
       ${renderFilters()}
@@ -1726,6 +1668,18 @@ var TaskManager = (() => {
   init_sync();
   var draggedTaskId = null;
   var currentContainer = null;
+  function showSyncFeedback(container, message, type = "success") {
+    const el = container.querySelector("#syncFeedback");
+    if (!el)
+      return;
+    const colors = {
+      success: "background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;",
+      error: "background:#fef2f2;color:#dc2626;border:1px solid #fecaca;",
+      info: "background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;"
+    };
+    el.style.cssText = `margin:0 24px 0;padding:8px 12px;border-radius:8px;font-size:12px;display:block;${colors[type]}`;
+    el.textContent = message;
+  }
   function syncToast(message, type = "success") {
     document.querySelectorAll(".sync-action-toast").forEach((el) => el.remove());
     const toast = document.createElement("div");
@@ -2094,7 +2048,12 @@ var TaskManager = (() => {
         }
       });
       container.querySelector("#forceUploadBtn")?.addEventListener("click", async () => {
+        const btn = container.querySelector("#forceUploadBtn");
+        const origHTML = btn?.innerHTML;
         try {
+          if (btn)
+            btn.innerHTML = '<div class="card-title" style="color:#6b7280;">\u4E0A\u4F20\u4E2D...</div>';
+          showSyncFeedback(container, "\u6B63\u5728\u4E0A\u4F20\u6570\u636E\u5230\u4E91\u7AEF...", "info");
           const { syncToCloud: syncToCloud2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
           const { getState: getState2 } = await Promise.resolve().then(() => (init_task(), task_exports));
           const state2 = getState2();
@@ -2106,19 +2065,27 @@ var TaskManager = (() => {
             hideOverdue: state2.hideOverdue,
             showNoTimeLimitOnly: state2.showNoTimeLimitOnly,
             darkMode: state2.darkMode
-          });
+          }, { force: true });
           if (result.success) {
             await persistState();
-            showToast(container, "\u5DF2\u4E0A\u4F20\u5230\u4E91\u7AEF", "success");
+            showSyncFeedback(container, `\u4E0A\u4F20\u6210\u529F \u2014 ${state2.tasks.length} \u4E2A\u4EFB\u52A1\u5DF2\u540C\u6B65\u5230\u4E91\u7AEF`, "success");
           } else {
-            showToast(container, "\u4E0A\u4F20\u5931\u8D25: " + (result.error || "\u672A\u77E5\u9519\u8BEF"), "error");
+            showSyncFeedback(container, "\u4E0A\u4F20\u5931\u8D25: " + (result.error || "\u672A\u77E5\u9519\u8BEF"), "error");
           }
-        } catch {
-          showToast(container, "\u4E0A\u4F20\u5931\u8D25", "error");
+        } catch (e) {
+          showSyncFeedback(container, "\u4E0A\u4F20\u5931\u8D25: " + (e?.message || "\u7F51\u7EDC\u9519\u8BEF"), "error");
+        } finally {
+          if (btn)
+            btn.innerHTML = origHTML;
         }
       });
       container.querySelector("#forceDownloadBtn")?.addEventListener("click", async () => {
+        const btn = container.querySelector("#forceDownloadBtn");
+        const origHTML = btn?.innerHTML;
         try {
+          if (btn)
+            btn.innerHTML = '<div class="card-title" style="color:#6b7280;">\u62C9\u53D6\u4E2D...</div>';
+          showSyncFeedback(container, "\u6B63\u5728\u4ECE\u4E91\u7AEF\u62C9\u53D6\u6570\u636E...", "info");
           const { syncFromCloud: syncFromCloud2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
           const result = await syncFromCloud2();
           if (result.data && result.data.tasks) {
@@ -2126,12 +2093,15 @@ var TaskManager = (() => {
             await saveData2(result.data);
             await loadState();
             reRender();
-            showToast(container, `\u5DF2\u4ECE\u4E91\u7AEF\u62C9\u53D6 ${result.data.tasks.length} \u4E2A\u4EFB\u52A1`, "success");
+            showSyncFeedback(container, `\u62C9\u53D6\u6210\u529F \u2014 \u5DF2\u6062\u590D ${result.data.tasks.length} \u4E2A\u4EFB\u52A1`, "success");
           } else {
-            showToast(container, "\u4E91\u7AEF\u6682\u65E0\u6570\u636E", "error");
+            showSyncFeedback(container, "\u4E91\u7AEF\u6682\u65E0\u6570\u636E", "error");
           }
-        } catch {
-          showToast(container, "\u62C9\u53D6\u5931\u8D25", "error");
+        } catch (e) {
+          showSyncFeedback(container, "\u62C9\u53D6\u5931\u8D25: " + (e?.message || "\u7F51\u7EDC\u9519\u8BEF"), "error");
+        } finally {
+          if (btn)
+            btn.innerHTML = origHTML;
         }
       });
       container.querySelector("#exportFileBtn")?.addEventListener("click", async () => {

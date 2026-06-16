@@ -6,6 +6,34 @@ This project was iteratively developed using AI coding assistants (Coze / Claude
 
 ---
 
+## [3.7.0] - 2026-06-16
+
+### Changed (Major)
+
+- **Removed chrome.storage.sync channel** — unreachable in China (always empty, silent write failures misled users)
+  - Removed chunked sync read/write and onChanged listener
+  - `loadData` simplified to: Cloudflare → local backup → default
+  - Sync unified to single Cloudflare backend; cross-device via pull-on-open
+
+---
+
+## [3.6.0] - 2026-06-16
+
+### Added
+
+- **Cloud data safety: optimistic lock + empty-overwrite guard** — prevents reinstall/exception from wiping cloud with empty data
+  - Backend `/api/fullsync`: 409 on empty overwrite; 409 conflict on stale `baseUpdatedAt`
+  - Frontend tracks cloud base version, auto-refreshes on conflict
+  - `loadData` merges cloud with local backup to preserve unsynced edits
+  - Force-upload bypasses protection via `force:true`
+
+### Improved
+
+- background.ts: API token moved from URL query to `Authorization` header
+- task.ts: throttle recurring task double-toggle (500ms)
+
+---
+
 ## [1.0.0] - 2026-04-18
 
 ### Added

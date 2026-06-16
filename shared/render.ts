@@ -303,6 +303,62 @@ export const renderMonthView = (): string => {
     if (currentWeek.length === 7) { weeks.push(currentWeek); currentWeek = [] }
     current.setDate(current.getDate() + 1)
   }
+  const todayStr = formatDate(new Date())
+
+  // 每周统计
+  const weekSummaries = weeks.map(week => {
+    const weekDays = week.filter(d => { const dd = parseDate(d); return dd.getMonth() === month })
+    const weekPending = weekDays.reduce((s, d) => {
+      return s + getState().tasks.filter(t => !t.noTimeLimit && !t.completed && isTaskDueOnDate(t, d)).reduce((a, t) => a + t.duration, 0)
+    }, 0)
+    const weekDone = weekDays.reduce((s, d) => {
+      return s + getState().tasks.filter(t => !t.noTimeLimit && t.completed && t.repeatType === 'none' && isTaskDueOnDate(t, d)).reduce((a, t) => a + t.duration, 0)
+    }, 0)
+    return { pending: weekPending, done: weekDone }
+  })
+
+  // 月汇总
+  const monthTasks = getState().tasks.filter(t => !t.noTimeLimit)
+  const monthPending = monthTasks.filter(t => !t.completed).reduce((s, t) => s + t.duration, 0)
+  const monthDone = monthTasks.filter(t => t.completed && t.repeatType === 'none').reduce((s, t) => s + t.duration, 0)
+
+  const renderWeekSummary = (week: string[], ws: { pending: number; done: number }): string => {
+    const hasToday = week.some(dd => dd === todayStr)
+    const bgClass = hasToday ? 'bg-blue-50/30 dark:bg-blue-900/10' : ''
+    const pendingHtml = ws.pending > 0
+      ? `<div class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-orange-500"></span><span class="text-[11px] font-semibold text-orange-600 dark:text-orange-400">${formatHours(ws.pending)}</span></div>` : ''
+    const doneHtml = ws.done > 0
+      ? `<div class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-green-500"></span><span class="text-[11px] font-semibold text-green-600 dark:text-green-400">${formatHours(ws.done)}</span></div>` : ''
+    const totalHtml = (ws.pending > 0 || ws.done > 0)
+      ? `<div class="text-[10px] text-gray-400 border-t border-gray-200 dark:border-gray-700 pt-0.5 mt-0.5">合计 <span class="font-semibold text-gray-500 dark:text-gray-300">${formatHours(ws.pending + ws.done)}</span></div>`
+      : `<span class="text-[10px] text-gray-300 dark:text-gray-600">—</span>`
+    return `<div class="flex flex-col items-center justify-center gap-1 py-2 px-1 border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 ${bgClass}">${pendingHtml}${doneHtml}${totalHtml}</div>`
+  }
+
+  const gridCells = weeks.map((week, wi) => {
+    const ws = weekSummaries[wi]
+    const dayCells = week.map(d => {
+      const dayDate = parseDate(d)
+      const isCurrentMonth = dayDate.getMonth() === month
+      const isToday = d === todayStr
+      const dayTasks = getState().tasks.filter(t => !t.noTimeLimit && isTaskDueOnDate(t, d))
+      const pendingMin = dayTasks.filter(t => !t.completed).reduce((s, t) => s + t.duration, 0)
+      const completedMin = dayTasks.filter(t => t.completed && t.repeatType === 'none').reduce((s, t) => s + t.duration, 0)
+      const miniPending = pendingMin > 0 ? `<span class="text-[9px] text-orange-500 bg-orange-50 dark:bg-orange-900/20 px-1 rounded leading-tight font-medium">${formatHours(pendingMin)}</span>` : ''
+      const miniDone = completedMin > 0 ? `<span class="text-[9px] text-green-500 bg-green-50 dark:bg-green-900/20 px-1 rounded leading-tight font-medium">✓${formatHours(completedMin)}</span>` : ''
+      const taskCards = dayTasks.slice(0, 2).map(t => {
+        const isRecurringDone = t.repeatType && t.repeatType !== 'none' && (t.completedDates || []).includes(d)
+        const done = t.completed || isRecurringDone
+        return `<div class="month-task-item text-xs p-1 rounded mb-1 truncate ${done ? 'line-through opacity-40 bg-gray-100 dark:bg-gray-700' : 'bg-blue-100/50 dark:bg-blue-900/30'}" draggable="true" data-task-id="${t.id}" title="双击编辑">${escapeHtml(t.title)}</div>`
+      }).join('')
+      const moreHtml = dayTasks.length > 2 ? `<div class="text-xs text-gray-400">+${dayTasks.length - 2}</div>` : ''
+      const cellClasses = `min-h-[100px] p-2 border-b border-r dark:border-gray-700 ${isCurrentMonth ? '' : 'bg-gray-50 dark:bg-gray-900/50'} ${isToday ? 'bg-blue-50/50 dark:bg-blue-900/20' : ''} hover:bg-gray-100 dark:hover:bg-gray-700/30 transition cursor-pointer drop-zone`
+      const dayNumClass = `text-sm ${isCurrentMonth ? '' : 'text-gray-300 dark:text-gray-600'} ${isToday ? 'font-bold text-blue-500' : ''}`
+      return `<div class="${cellClasses}" data-date="${d}"><div class="flex items-center gap-1 mb-1"><span class="${dayNumClass}">${dayDate.getDate()}</span>${miniPending}${miniDone}</div>${taskCards}${moreHtml}</div>`
+    }).join('')
+    return dayCells + renderWeekSummary(week, ws)
+  }).join('')
+
   return `
     <div class="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
       <div class="flex items-center justify-between mb-4 pb-2 border-b dark:border-gray-700">
@@ -314,25 +370,16 @@ export const renderMonthView = (): string => {
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
         </button>
       </div>
-      <div class="grid grid-cols-7" style="border:1px solid #e5e7eb;border-bottom:none;border-right:none">
+      <div class="grid" style="grid-template-columns:repeat(7,1fr) 72px;border:1px solid #e5e7eb;border-bottom:none;border-right:none">
         ${weekdays.map(d => `<div class="text-center py-2 font-medium text-sm text-gray-500 border-b border-r dark:border-gray-700">${d}</div>`).join('')}
-        ${weeks.map(week => week.map(d => {
-          const dayDate = parseDate(d)
-          const isCurrentMonth = dayDate.getMonth() === month
-          const isToday = d === formatDate(new Date())
-          const dayTasks = getState().tasks.filter(t => !t.noTimeLimit && isTaskDueOnDate(t, d))
-          return `
-            <div class="min-h-[100px] p-2 border-b border-r dark:border-gray-700 ${isCurrentMonth ? '' : 'bg-gray-50 dark:bg-gray-900/50'} ${isToday ? 'bg-blue-50/50 dark:bg-blue-900/20' : ''} hover:bg-gray-100 dark:hover:bg-gray-700/30 transition cursor-pointer drop-zone" data-date="${d}">
-              <div class="text-sm mb-1 ${isCurrentMonth ? '' : 'text-gray-300 dark:text-gray-600'} ${isToday ? 'font-bold text-blue-500' : ''}">${dayDate.getDate()}</div>
-              ${dayTasks.slice(0, 2).map(t => {
-                const isRecurringDone = t.repeatType && t.repeatType !== 'none' && (t.completedDates || []).includes(d)
-                const done = t.completed || isRecurringDone
-                return `<div class="month-task-item text-xs p-1 rounded mb-1 truncate ${done ? 'line-through opacity-40 bg-gray-100 dark:bg-gray-700' : 'bg-blue-100/50 dark:bg-blue-900/30'}" draggable="true" data-task-id="${t.id}" title="双击编辑">${escapeHtml(t.title)}</div>`
-              }).join('')}
-              ${dayTasks.length > 2 ? `<div class="text-xs text-gray-400">+${dayTasks.length - 2}</div>` : ''}
-            </div>
-          `
-        }).join('')).join('')}
+        <div class="text-center py-2 text-[11px] font-medium text-gray-400 border-b border-r dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30" style="letter-spacing:0.5px">周统计</div>
+        ${gridCells}
+      </div>
+      <div class="grid" style="grid-template-columns:repeat(7,1fr) 72px;border:1px solid #e5e7eb">
+        <div class="col-span-7 px-3 py-2 text-xs text-gray-500 bg-gray-50 dark:bg-gray-900/30 border-r dark:border-gray-700 flex items-center gap-4">
+          本月合计：<span class="font-semibold text-orange-600 dark:text-orange-400">${formatHours(monthPending)} 待办</span><span class="text-gray-300 dark:text-gray-600">|</span><span class="font-semibold text-green-600 dark:text-green-400">${formatHours(monthDone)} 已完成</span><span class="text-gray-300 dark:text-gray-600">|</span><span class="font-semibold text-gray-600 dark:text-gray-300">${formatHours(monthPending + monthDone)} 总计</span>
+        </div>
+        <div class="flex items-center justify-center text-xs font-semibold text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-900/30">${formatHours(monthPending + monthDone)}</div>
       </div>
     </div>
   `
@@ -691,14 +738,21 @@ export const renderMobileSyncPanel = (): string => {
 }
 
 export const renderApp = (container: HTMLElement): void => {
-  const { darkMode } = getState()
+  const { darkMode, currentView } = getState()
   if (darkMode) {
     document.documentElement.classList.add('dark')
   } else {
     document.documentElement.classList.remove('dark')
   }
+  const viewMaxWidth: Record<string, string> = {
+    list: 'max-w-4xl',
+    day: 'max-w-4xl',
+    week: 'max-w-6xl',
+    month: 'max-w-7xl'
+  }
+  const maxWidth = viewMaxWidth[currentView] || 'max-w-4xl'
   container.innerHTML = `
-    <div class="max-w-4xl mx-auto p-4 min-h-screen">
+    <div class="${maxWidth} mx-auto p-4 min-h-screen transition-all duration-300">
       ${renderStats()}
       ${renderHeader()}
       ${renderFilters()}
