@@ -8,9 +8,15 @@
 - Git 仓库：同上
 - 源码：`shared/*.ts`（TypeScript）
 - 构建产物：`popup/popup.js`, `newtab/newtab.js`, `background.js`（根目录下）
-- 后端：`taskmaster-backend/`（独立目录，Cloudflare Worker）
+- 后端 + 手机端页面：`backend/`（项目内目录，Cloudflare Worker `taskmaster-api`）
+  - `backend/index.js` 既是 API，**手机端添加页的 HTML 也内嵌在其中**（`MOBILE_HTML` 常量）。手机端改 UI = 改这个文件，与 `shared/*.ts` 无关。
+  - 部署命令（**必须带 --cwd 和 --no-autoconfig**，否则 wrangler 在错误目录跑 autoconfig、缓存写到不可写路径而失败）：
+    ```bash
+    npx wrangler deploy --cwd "C:\chromeextence_my\task-manager-chrome\backend" --no-autoconfig
+    ```
+  - Worker URL：https://taskmaster-api.yx9391.workers.dev ；D1：taskmaster-db
 
-## 构建流程
+## 构建流程（仅限扩展端）
 
 ```bash
 npm run build
