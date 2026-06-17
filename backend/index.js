@@ -642,6 +642,10 @@ const MOBILE_HTML = `<!DOCTYPE html>
     <input type="date" id="dueDate">
   </div>
   <div class="input-group">
+    <label>预计时长 (小时)</label>
+    <input type="number" id="duration" value="1" min="0.1" step="0.1" inputmode="decimal">
+  </div>
+  <div class="input-group">
     <label>备注</label>
     <textarea id="description" placeholder="可选..." rows="2"></textarea>
   </div>
@@ -726,7 +730,7 @@ const MOBILE_HTML = `<!DOCTYPE html>
       category: document.getElementById('category').value,
       dueDate: noDate ? '' : document.getElementById('dueDate').value,
       noTimeLimit: noDate,
-      duration: 60,
+      duration: Math.round((parseFloat(document.getElementById('duration').value) || 0) * 60),
       source: 'web'
     };
 
