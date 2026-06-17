@@ -415,7 +415,7 @@ export const renderModal = (): string => {
 
   return `
     <div id="taskModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
-      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[90%] max-w-lg max-h-[90vh] overflow-y-auto">
+      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[90%] max-w-lg overflow-y-auto" style="max-height:90vh;max-height:90svh;">
         <div class="flex items-center justify-between p-4 border-b dark:border-gray-700">
           <h2 class="text-lg font-semibold">${isEditing ? '编辑任务' : '添加任务'}</h2>
           <button id="closeModal" class="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition">
@@ -707,7 +707,7 @@ export const renderMobileSyncPanel = (): string => {
   return `
     <div id="mobileSyncModal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
       <div class="fixed inset-0 bg-black/50" id="mobileSyncOverlay"></div>
-      <div class="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md mx-8 p-10 max-h-[90vh] overflow-y-auto">
+      <div class="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md mx-8 p-10 max-h-[90%] overflow-y-auto">
         <div class="flex items-center justify-between mb-8">
           <h3 class="text-xl font-semibold text-gray-900 dark:text-white">手机同步设置</h3>
           <button id="mobileSyncClose" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">

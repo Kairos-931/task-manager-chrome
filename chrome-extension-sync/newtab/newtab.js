@@ -129,11 +129,11 @@ var TaskManager = (() => {
         return result;
       };
       mergeCategories = (local, remote) => {
-        const map = new Map(local.map((c) => [c.id, c]));
-        const result = [...local];
-        for (const rc of remote) {
-          if (!map.has(rc.id)) {
-            result.push(rc);
+        const result = [...remote];
+        const remoteNames = new Set(remote.map((c) => c.name));
+        for (const lc of local) {
+          if (!remoteNames.has(lc.name)) {
+            result.push(lc);
           }
         }
         return result;
@@ -1315,7 +1315,7 @@ var TaskManager = (() => {
     const weekdays = ["\u5468\u65E5", "\u5468\u4E00", "\u5468\u4E8C", "\u5468\u4E09", "\u5468\u56DB", "\u5468\u4E94", "\u5468\u516D"];
     return `
     <div id="taskModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
-      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[90%] max-w-lg max-h-[90vh] overflow-y-auto">
+      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[90%] max-w-lg overflow-y-auto" style="max-height:90vh;max-height:90svh;">
         <div class="flex items-center justify-between p-4 border-b dark:border-gray-700">
           <h2 class="text-lg font-semibold">${isEditing ? "\u7F16\u8F91\u4EFB\u52A1" : "\u6DFB\u52A0\u4EFB\u52A1"}</h2>
           <button id="closeModal" class="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition">
@@ -1604,7 +1604,7 @@ var TaskManager = (() => {
     return `
     <div id="mobileSyncModal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
       <div class="fixed inset-0 bg-black/50" id="mobileSyncOverlay"></div>
-      <div class="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md mx-8 p-10 max-h-[90vh] overflow-y-auto">
+      <div class="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md mx-8 p-10 max-h-[90%] overflow-y-auto">
         <div class="flex items-center justify-between mb-8">
           <h3 class="text-xl font-semibold text-gray-900 dark:text-white">\u624B\u673A\u540C\u6B65\u8BBE\u7F6E</h3>
           <button id="mobileSyncClose" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">

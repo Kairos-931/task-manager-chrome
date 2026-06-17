@@ -104,11 +104,13 @@ const mergeTasks = (local: Task[], remote: Task[]): Task[] => {
 }
 
 const mergeCategories = (local: Category[], remote: Category[]): Category[] => {
-  const map = new Map(local.map(c => [c.id, c] as [string, Category]))
-  const result: Category[] = [...local]
-  for (const rc of remote) {
-    if (!map.has(rc.id)) {
-      result.push(rc)
+  // 云端为主，本地仅补充云端没有（按 name）的分类。
+  // 避免默认分类（随机 id）与云端同名分类按 id 并集导致重复。
+  const result: Category[] = [...remote]
+  const remoteNames = new Set(remote.map(c => c.name))
+  for (const lc of local) {
+    if (!remoteNames.has(lc.name)) {
+      result.push(lc)
     }
   }
   return result

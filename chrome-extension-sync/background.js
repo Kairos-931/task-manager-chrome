@@ -83,11 +83,11 @@ var Background = (() => {
     return result;
   };
   var mergeCategories = (local, remote) => {
-    const map = new Map(local.map((c) => [c.id, c]));
-    const result = [...local];
-    for (const rc of remote) {
-      if (!map.has(rc.id)) {
-        result.push(rc);
+    const result = [...remote];
+    const remoteNames = new Set(remote.map((c) => c.name));
+    for (const lc of local) {
+      if (!remoteNames.has(lc.name)) {
+        result.push(lc);
       }
     }
     return result;
