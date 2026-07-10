@@ -37,6 +37,8 @@ interface StorageData {
   hideOverdue: boolean
   showNoTimeLimitOnly: boolean
   darkMode?: boolean
+  weeklyGoalMinutes?: number       // 每周目标时长（分钟），默认 600（10h）
+  weeklyGoalAnchor?: string        // 锚点日期 YYYY-MM-DD
 }
 
 interface AppState extends StorageData {

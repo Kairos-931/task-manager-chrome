@@ -130,10 +130,20 @@ export const getCatName = (id: string): string => {
 // ==================== 数据操作 ====================
 export const loadState = async (): Promise<void> => {
   const data = await loadData()
+  // 按 name 去重：同名保留第一次出现的 id 和最后一次出现的 color
+  const catMap = new Map<string, { id: string; name: string; color: string }>()
+  const cats = data.categories || defaultCategories
+  for (const c of cats) {
+    if (catMap.has(c.name)) {
+      catMap.get(c.name)!.color = c.color // 后写入的覆盖颜色
+    } else {
+      catMap.set(c.name, { ...c })
+    }
+  }
   state = {
     ...state,
     ...data,
-    categories: data.categories || defaultCategories,
+    categories: [...catMap.values()],
     editingTask: null,
     draggedTaskId: null
   }
@@ -149,7 +159,9 @@ export const persistState = async (): Promise<void> => {
       hideCompleted: state.hideCompleted,
       hideOverdue: state.hideOverdue,
       showNoTimeLimitOnly: state.showNoTimeLimitOnly,
-      darkMode: state.darkMode
+      darkMode: state.darkMode,
+      weeklyGoalMinutes: state.weeklyGoalMinutes,
+      weeklyGoalAnchor: state.weeklyGoalAnchor
     })
     markSaveComplete()
   } catch {
@@ -298,7 +310,10 @@ const getNextDueDate = (task: Task): string => {
 }
 
 export const addCategory = (name: string, color: string): void => {
-  state.categories.push({ id: generateId(), name, color })
+  const trimmed = name.trim()
+  if (!trimmed) return
+  if (state.categories.some(c => c.name === trimmed)) return
+  state.categories.push({ id: generateId(), name: trimmed, color })
 }
 
 export const updateCategory = (id: string, name: string, color: string): void => {
@@ -313,6 +328,79 @@ export const deleteCategory = (id: string): void => {
   if (state.categories.length > 1) {
     state.categories = state.categories.filter(c => c.id !== id)
     if (state.filterCategory === id) state.filterCategory = 'all'
+  }
+}
+
+export interface WeeklyGoalStats {
+  anchorDate: string
+  weeksElapsed: number
+  weeklyGoalMinutes: number
+  expectedMinutes: number
+  actualMinutes: number
+  completedCount: number
+  paceMinutesPerWeek: number
+  gapMinutes: number
+  gapWeeks: number
+  progressPercent: number
+  behindExpected: boolean
+}
+
+export const getWeeklyGoalStats = (): WeeklyGoalStats | null => {
+  const { weeklyGoalMinutes = 600, weeklyGoalAnchor } = state
+
+  // 锚点：优先用设置值，没有则取最早完成日期
+  let anchor = weeklyGoalAnchor
+  if (!anchor) {
+    let earliest = Infinity
+    for (const t of state.tasks) {
+      if (t.completed && (!t.repeatType || t.repeatType === 'none')) {
+        const date = t.completedAt || parseDate(t.dueDate).getTime()
+        if (date < earliest) earliest = date
+      }
+      if (t.repeatType && t.repeatType !== 'none' && t.completedDates?.length > 0) {
+        const firstDate = parseDate(t.completedDates[0]).getTime()
+        if (firstDate < earliest) earliest = firstDate
+      }
+    }
+    if (earliest === Infinity) return null
+    anchor = formatDate(new Date(earliest))
+  }
+
+  const anchorMs = parseDate(anchor).getTime()
+  const nowMs = Date.now()
+  const weeksElapsed = Math.max(0.1, (nowMs - anchorMs) / (7 * 86400000))
+
+  // 统计已完成任务时长
+  let totalMinutes = 0
+  let completedCount = 0
+  for (const t of state.tasks) {
+    if (t.completed && (!t.repeatType || t.repeatType === 'none')) {
+      totalMinutes += t.duration
+      completedCount++
+    }
+    if (t.repeatType && t.repeatType !== 'none' && t.completedDates?.length > 0) {
+      totalMinutes += t.duration * t.completedDates.length
+      completedCount += t.completedDates.length
+    }
+  }
+
+  const expectedMinutes = Math.round(weeklyGoalMinutes * weeksElapsed)
+  const pace = Math.round((totalMinutes / weeksElapsed) * 10) / 10
+  const gap = totalMinutes - expectedMinutes
+  const progress = expectedMinutes > 0 ? Math.min(100, Math.round((totalMinutes / expectedMinutes) * 100)) : 0
+
+  return {
+    anchorDate: anchor,
+    weeksElapsed: Math.round(weeksElapsed * 10) / 10,
+    weeklyGoalMinutes,
+    expectedMinutes,
+    actualMinutes: totalMinutes,
+    completedCount,
+    paceMinutesPerWeek: pace,
+    gapMinutes: gap,
+    gapWeeks: Math.round((Math.abs(gap) / weeklyGoalMinutes) * 10) / 10,
+    progressPercent: progress,
+    behindExpected: gap < 0
   }
 }
 

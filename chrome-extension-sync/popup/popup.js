@@ -42,7 +42,7 @@ var TaskManager = (() => {
     syncToCloud: () => syncToCloud,
     validateImportData: () => validateImportData
   });
-  var STORAGE_KEY, LOCAL_BACKUP_KEY, generateId, defaultCategories, getDefaultData, loadFromLocal, saveToLocal, mergeTasks, mergeCategories, mergeStorageData, CLOUD_SYNC_SETTINGS_KEY, getCloudSettings, CLOUD_BASE_AT_KEY, getCloudBaseAt, setCloudBaseAt, syncToCloud, syncFromCloud, isCloudConfigured, loadData, fixRecurringTasks, isTaskMatchRepeat, saveData, cloudSyncWrite, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
+  var STORAGE_KEY, LOCAL_BACKUP_KEY, generateId, defaultCategories, getDefaultData, loadFromLocal, saveToLocal, dedupeCategories, CLOUD_SYNC_SETTINGS_KEY, getCloudSettings, CLOUD_BASE_AT_KEY, getCloudBaseAt, setCloudBaseAt, syncToCloud, syncFromCloud, isCloudConfigured, loadData, fixRecurringTasks, isTaskMatchRepeat, saveData, cloudSyncWrite, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
   var init_storage = __esm({
     "shared/storage.ts"() {
       STORAGE_KEY = "tm_data";
@@ -93,60 +93,18 @@ var TaskManager = (() => {
           });
         });
       };
-      mergeTasks = (local, remote) => {
-        const localMap = new Map(local.map((t) => [t.id, t]));
-        const result = [];
-        for (const task of local) {
-          result.push(task);
-        }
-        for (const remoteTask of remote) {
-          const localTask = localMap.get(remoteTask.id);
-          if (!localTask) {
-            result.push(remoteTask);
+      dedupeCategories = (cats) => {
+        const map = /* @__PURE__ */ new Map();
+        for (const c of cats) {
+          if (map.has(c.name)) {
+            const existing = map.get(c.name);
+            map.set(c.name, { ...existing, color: c.color });
           } else {
-            const localTime = localTask.updatedAt || localTask.createdAt || 0;
-            const remoteTime = remoteTask.updatedAt || remoteTask.createdAt || 0;
-            if (remoteTime > localTime) {
-              const idx = result.findIndex((t) => t.id === remoteTask.id);
-              if (idx !== -1) {
-                const merged = { ...remoteTask };
-                if (localTask.repeatType && localTask.repeatType !== "none") {
-                  if (Array.isArray(localTask.completedDates) && localTask.completedDates.length > 0) {
-                    merged.completedDates = localTask.completedDates;
-                  }
-                  if (Array.isArray(localTask.repeatDays) && localTask.repeatDays.length > 0 && (!merged.repeatDays || merged.repeatDays.length === 0)) {
-                    merged.repeatDays = localTask.repeatDays;
-                  }
-                  if (localTask.repeatStartDate && !merged.repeatStartDate) {
-                    merged.repeatStartDate = localTask.repeatStartDate;
-                  }
-                }
-                result[idx] = merged;
-              }
-            }
+            map.set(c.name, { ...c });
           }
         }
-        return result;
+        return [...map.values()];
       };
-      mergeCategories = (local, remote) => {
-        const result = [...remote];
-        const remoteNames = new Set(remote.map((c) => c.name));
-        for (const lc of local) {
-          if (!remoteNames.has(lc.name)) {
-            result.push(lc);
-          }
-        }
-        return result;
-      };
-      mergeStorageData = (local, remote) => ({
-        tasks: mergeTasks(local.tasks, remote.tasks),
-        categories: mergeCategories(local.categories, remote.categories),
-        defaultCategory: remote.defaultCategory || local.defaultCategory,
-        hideCompleted: remote.hideCompleted ?? local.hideCompleted,
-        hideOverdue: remote.hideOverdue ?? local.hideOverdue,
-        showNoTimeLimitOnly: remote.showNoTimeLimitOnly ?? local.showNoTimeLimitOnly,
-        darkMode: remote.darkMode ?? local.darkMode
-      });
       CLOUD_SYNC_SETTINGS_KEY = "tm_sync_settings";
       getCloudSettings = async () => {
         return new Promise((resolve) => {
@@ -238,29 +196,24 @@ var TaskManager = (() => {
       };
       loadData = async () => {
         const localBackup = await loadFromLocal();
-        const cloudResult = await syncFromCloud();
-        if (cloudResult.data && cloudResult.data.tasks && cloudResult.data.tasks.length > 0) {
-          let data = cloudResult.data;
-          if (localBackup && localBackup.tasks && localBackup.tasks.length > 0) {
-            data = mergeStorageData(localBackup, cloudResult.data);
-          }
-          data.tasks = data.tasks.map((t) => ({
-            ...t,
-            updatedAt: t.updatedAt || t.createdAt || Date.now()
-          }));
-          await saveToLocal(data);
-          console.log("[TaskMaster] loadData: cloud", cloudResult.data.tasks.length, "+ local", localBackup?.tasks?.length || 0, "\u2192 merged", data.tasks.length);
-          return data;
-        }
         if (localBackup && localBackup.tasks && localBackup.tasks.length > 0) {
-          console.warn("[TaskMaster] \u4E91\u7AEF\u4E3A\u7A7A\uFF0C\u4ECE\u672C\u5730\u5907\u4EFD\u6062\u590D");
           localBackup.tasks = localBackup.tasks.map((t) => ({
             ...t,
             updatedAt: t.updatedAt || t.createdAt || Date.now()
           }));
           return localBackup;
         }
-        console.warn("[TaskMaster] \u4E91\u7AEF\u548C\u672C\u5730\u90FD\u4E3A\u7A7A\uFF0C\u8FD4\u56DE\u9ED8\u8BA4\u6570\u636E");
+        const cloudResult = await syncFromCloud();
+        if (cloudResult.data && cloudResult.data.tasks && cloudResult.data.tasks.length > 0) {
+          cloudResult.data.tasks = cloudResult.data.tasks.map((t) => ({
+            ...t,
+            updatedAt: t.updatedAt || t.createdAt || Date.now()
+          }));
+          await saveToLocal(cloudResult.data);
+          console.log("[TaskMaster] loadData: \u672C\u5730\u4E3A\u7A7A\uFF0C\u4ECE\u4E91\u7AEF\u6062\u590D", cloudResult.data.tasks.length, "\u6761");
+          return cloudResult.data;
+        }
+        console.warn("[TaskMaster] \u672C\u5730\u548C\u4E91\u7AEF\u90FD\u4E3A\u7A7A\uFF0C\u8FD4\u56DE\u9ED8\u8BA4\u6570\u636E");
         return getDefaultData();
       };
       fixRecurringTasks = (tasks) => tasks.map((t) => {
@@ -314,6 +267,7 @@ var TaskManager = (() => {
       };
       saveData = async (data) => {
         data.tasks = fixRecurringTasks(data.tasks);
+        data.categories = dedupeCategories(data.categories);
         await saveToLocal(data);
         cloudSyncWrite(data).catch((e) => console.warn("[TaskMaster] cloud sync write failed:", e));
       };
@@ -725,10 +679,19 @@ var TaskManager = (() => {
       };
       loadState = async () => {
         const data = await loadData();
+        const catMap = /* @__PURE__ */ new Map();
+        const cats = data.categories || defaultCategories;
+        for (const c of cats) {
+          if (catMap.has(c.name)) {
+            catMap.get(c.name).color = c.color;
+          } else {
+            catMap.set(c.name, { ...c });
+          }
+        }
         state = {
           ...state,
           ...data,
-          categories: data.categories || defaultCategories,
+          categories: [...catMap.values()],
           editingTask: null,
           draggedTaskId: null
         };
@@ -847,7 +810,12 @@ var TaskManager = (() => {
         return formatDate(start);
       };
       addCategory = (name, color) => {
-        state.categories.push({ id: generateId(), name, color });
+        const trimmed = name.trim();
+        if (!trimmed)
+          return;
+        if (state.categories.some((c) => c.name === trimmed))
+          return;
+        state.categories.push({ id: generateId(), name: trimmed, color });
       };
       updateCategory = (id, name, color) => {
         const cat = state.categories.find((c) => c.id === id);

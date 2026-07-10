@@ -56,79 +56,20 @@ const saveToLocal = (data: StorageData): Promise<void> => {
   })
 }
 
-// ==================== 合并逻辑 ====================
-
-const mergeTasks = (local: Task[], remote: Task[]): Task[] => {
-  const localMap = new Map(local.map(t => [t.id, t] as [string, Task]))
-  const result: Task[] = []
-
-  // 保留所有本地任务
-  for (const task of local) {
-    result.push(task)
-  }
-
-  // 合并远端任务
-  for (const remoteTask of remote) {
-    const localTask = localMap.get(remoteTask.id)
-    if (!localTask) {
-      // 远端独有的任务，加入
-      result.push(remoteTask)
+// 按 name 去重
+const dedupeCategories = (cats: Category[]): Category[] => {
+  const map = new Map<string, Category>()
+  for (const c of cats) {
+    if (map.has(c.name)) {
+      // 保留已有 id（任务引用的），后写入的覆盖颜色
+      const existing = map.get(c.name)!
+      map.set(c.name, { ...existing, color: c.color })
     } else {
-      // 两边都有，按 updatedAt 取新的（兼容旧数据没有 updatedAt 的情况）
-      const localTime = localTask.updatedAt || localTask.createdAt || 0
-      const remoteTime = remoteTask.updatedAt || remoteTask.createdAt || 0
-      if (remoteTime > localTime) {
-        // 远端更新，替换 — 循环任务保留本地的 completedDates / repeatDays 防丢失
-        const idx = result.findIndex(t => t.id === remoteTask.id)
-        if (idx !== -1) {
-          const merged: any = { ...remoteTask }
-          if (localTask.repeatType && localTask.repeatType !== 'none') {
-            if (Array.isArray(localTask.completedDates) && localTask.completedDates.length > 0) {
-              merged.completedDates = localTask.completedDates
-            }
-            if (Array.isArray(localTask.repeatDays) && localTask.repeatDays.length > 0 && (!merged.repeatDays || merged.repeatDays.length === 0)) {
-              merged.repeatDays = localTask.repeatDays
-            }
-            if (localTask.repeatStartDate && !merged.repeatStartDate) {
-              merged.repeatStartDate = localTask.repeatStartDate
-            }
-          }
-          result[idx] = merged
-        }
-      }
-      // 否则保留本地版本
+      map.set(c.name, { ...c })
     }
   }
-
-  return result
+  return [...map.values()]
 }
-
-const mergeCategories = (local: Category[], remote: Category[]): Category[] => {
-  // 云端为主，本地仅补充云端没有（按 name）的分类。
-  // 避免默认分类（随机 id）与云端同名分类按 id 并集导致重复。
-  const result: Category[] = [...remote]
-  const remoteNames = new Set(remote.map(c => c.name))
-  for (const lc of local) {
-    if (!remoteNames.has(lc.name)) {
-      result.push(lc)
-    }
-  }
-  return result
-}
-
-// Merge two full snapshots: union of tasks (newest updatedAt wins), union of categories,
-// scalar settings prefer remote. Keeps unsynced local edits when pulling cloud.
-const mergeStorageData = (local: StorageData, remote: StorageData): StorageData => ({
-  tasks: mergeTasks(local.tasks, remote.tasks),
-  categories: mergeCategories(local.categories, remote.categories),
-  defaultCategory: remote.defaultCategory || local.defaultCategory,
-  hideCompleted: remote.hideCompleted ?? local.hideCompleted,
-  hideOverdue: remote.hideOverdue ?? local.hideOverdue,
-  showNoTimeLimitOnly: remote.showNoTimeLimitOnly ?? local.showNoTimeLimitOnly,
-  darkMode: remote.darkMode ?? local.darkMode
-})
-
-// ==================== Cloudflare 全量同步 ====================
 
 const CLOUD_SYNC_SETTINGS_KEY = 'tm_sync_settings'
 
@@ -235,28 +176,13 @@ export const isCloudConfigured = async (): Promise<boolean> => {
 // ==================== 公开 API ====================
 
 export const loadData = async (): Promise<StorageData> => {
-  // 本地备份可能含未上云的改动，先读出，与云端合并，避免被云端覆盖
   const localBackup = await loadFromLocal()
 
-  // 1. Try Cloudflare full sync (if configured)
-  const cloudResult = await syncFromCloud()
-  if (cloudResult.data && cloudResult.data.tasks && cloudResult.data.tasks.length > 0) {
-    let data = cloudResult.data
-    if (localBackup && localBackup.tasks && localBackup.tasks.length > 0) {
-      data = mergeStorageData(localBackup, cloudResult.data)
-    }
-    data.tasks = data.tasks.map(t => ({
-      ...t,
-      updatedAt: t.updatedAt || t.createdAt || Date.now()
-    }))
-    await saveToLocal(data)
-    console.log('[TaskMaster] loadData: cloud', cloudResult.data.tasks.length, '+ local', localBackup?.tasks?.length || 0, '→ merged', data.tasks.length)
-    return data
-  }
-
-  // 2. 云端不可用 → 从本地备份恢复（开头已读到 localBackup）
+  // 本地有数据 → 以本地为权威，不与云端 merge。
+  // cloudSyncWrite 是异步推送，关闭插件时可能未完成 → 云端落后于本地。此时若 merge
+  // 云端旧快照，会把本地已删除的任务"恢复"回来，也会用旧状态覆盖本地最新的完成/修改。
+  // 本地为准可彻底杜绝这类回写覆盖。跨设备拉取改由「从云端拉取」按钮手动触发。
   if (localBackup && localBackup.tasks && localBackup.tasks.length > 0) {
-    console.warn('[TaskMaster] 云端为空，从本地备份恢复')
     localBackup.tasks = localBackup.tasks.map(t => ({
       ...t,
       updatedAt: t.updatedAt || t.createdAt || Date.now()
@@ -264,8 +190,20 @@ export const loadData = async (): Promise<StorageData> => {
     return localBackup
   }
 
-  // 3. 全新安装
-  console.warn('[TaskMaster] 云端和本地都为空，返回默认数据')
+  // 本地为空（重装/新设备）→ 从云端恢复
+  const cloudResult = await syncFromCloud()
+  if (cloudResult.data && cloudResult.data.tasks && cloudResult.data.tasks.length > 0) {
+    cloudResult.data.tasks = cloudResult.data.tasks.map(t => ({
+      ...t,
+      updatedAt: t.updatedAt || t.createdAt || Date.now()
+    }))
+    await saveToLocal(cloudResult.data)
+    console.log('[TaskMaster] loadData: 本地为空，从云端恢复', cloudResult.data.tasks.length, '条')
+    return cloudResult.data
+  }
+
+  // 全新安装
+  console.warn('[TaskMaster] 本地和云端都为空，返回默认数据')
   return getDefaultData()
 }
 
@@ -318,6 +256,7 @@ const isTaskMatchRepeat = (t: any, date: Date): boolean => {
 
 export const saveData = async (data: StorageData): Promise<void> => {
   data.tasks = fixRecurringTasks(data.tasks)
+  data.categories = dedupeCategories(data.categories)
   await saveToLocal(data)
   // Write to Cloudflare. On version conflict, pull latest to refresh the base;
   // the local edit survives via loadData merge and goes up on the next save.

@@ -1,5 +1,5 @@
 import type { Priority, Task } from './types'
-import { getState, setState, resetEditingTask, formatDate, parseDate, persistState, moveTaskToDate, loadState } from './task'
+import { getState, setState, resetEditingTask, formatDate, parseDate, persistState, moveTaskToDate, loadState, getWeeklyGoalStats } from './task'
 import { toggleTask as toggleTaskAction, deleteTask as deleteTaskAction, addTask, updateTask, addCategory, updateCategory, deleteCategory as deleteCategoryAction } from './task'
 import { renderApp } from './render'
 import { downloadExportFile, importDataFromFile } from './storage'
@@ -309,6 +309,36 @@ export const attachEventListeners = (container: HTMLElement): void => {
       dueDateField.style.opacity = (e.target as HTMLInputElement).checked ? '0.5' : '1'
       dueDateField.style.pointerEvents = (e.target as HTMLInputElement).checked ? 'none' : 'auto'
     }
+  })
+
+  // 快捷日期选择
+  const refreshQuickDates = () => {
+    const dateInput = container.querySelector('input[name="dueDate"]') as HTMLInputElement
+    if (!dateInput) return
+    const val = dateInput.value
+    container.querySelectorAll('.quick-date-btn').forEach(btn => {
+      const date = (btn as HTMLElement).dataset.date
+      btn.classList.toggle('selected', date === val)
+    })
+  }
+
+  container.querySelectorAll('.quick-date-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const date = (btn as HTMLElement).dataset.date
+      if (!date) return
+      const dateInput = container.querySelector('input[name="dueDate"]') as HTMLInputElement
+      if (dateInput) {
+        dateInput.value = date
+        refreshQuickDates()
+      }
+    })
+  })
+
+  // 手动改日期输入框 → 同步快捷按钮高亮
+  container.querySelector('input[name="dueDate"]')?.addEventListener('change', refreshQuickDates)
+  // 任务弹窗打开时同步一次
+  container.querySelector('#addTaskBtn')?.addEventListener('click', () => {
+    setTimeout(refreshQuickDates, 0)
   })
 
   // 重复类型切换
@@ -684,8 +714,71 @@ export const attachEventListeners = (container: HTMLElement): void => {
     })
   }
 
+  // 每周目标卡片 + 设置
+  setupWeeklyGoalEvents(container)
+
   // 拖拽功能 + 双击编辑
   setupDragAndDrop(container)
+}
+
+function setupWeeklyGoalEvents(container: HTMLElement): void {
+  const toggleBtn = container.querySelector('#statsToggleBtn')
+  const wrapper = container.querySelector('#weeklyGoalWrapper') as HTMLElement
+  const card = container.querySelector('#weeklyGoalCard') as HTMLElement
+  const chevron = container.querySelector('#statsChevron')
+
+  // 统计条右侧箭头展开/收起周目标卡片
+  toggleBtn?.addEventListener('click', () => {
+    if (!wrapper) return
+    const isOpen = wrapper.style.display !== 'none'
+    wrapper.style.display = isOpen ? 'none' : 'block'
+    chevron?.classList.toggle('open')
+    if (card && isOpen && card.classList.contains('expanded')) {
+      card.classList.remove('expanded')
+    }
+  })
+
+  // 卡片内点击：调整锚点（阻止冒泡）、展开详情
+  card?.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement
+    if (target.id === 'adjustGoalAnchorBtn' || target.closest('#adjustGoalAnchorBtn')) {
+      const modal = container.querySelector('#goalSettingsModal') as HTMLElement
+      if (modal) modal.classList.remove('hidden')
+      return
+    }
+    card.classList.toggle('expanded')
+  })
+
+  // 设置弹窗关闭
+  const closeBtn = container.querySelector('#closeGoalSettingsBtn')
+  closeBtn?.addEventListener('click', () => {
+    const modal = container.querySelector('#goalSettingsModal') as HTMLElement
+    if (modal) modal.classList.add('hidden')
+  })
+
+  // 保存设置
+  const saveBtn = container.querySelector('#saveGoalSettingsBtn')
+  saveBtn?.addEventListener('click', async () => {
+    const hoursInput = container.querySelector('#goalWeeklyHours') as HTMLInputElement
+    const anchorInput = container.querySelector('#goalAnchorDate') as HTMLInputElement
+    setState({
+      weeklyGoalMinutes: Math.round(parseFloat(hoursInput?.value || '10') * 60),
+      weeklyGoalAnchor: anchorInput?.value || undefined
+    })
+    await persistState()
+    reRender()
+
+    const modal = container.querySelector('#goalSettingsModal') as HTMLElement
+    if (modal) modal.classList.add('hidden')
+  })
+
+  // 点击遮罩关闭
+  const overlay = container.querySelector('#goalSettingsModal')
+  overlay?.addEventListener('click', (e) => {
+    if (e.target === overlay) {
+      overlay.classList.add('hidden')
+    }
+  })
 }
 
 function setupDragAndDrop(container: HTMLElement): void {

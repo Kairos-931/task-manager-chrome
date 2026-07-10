@@ -1,8 +1,8 @@
 // shared/entry.ts - Main entry point with auto-init
 // esbuild will bundle these imports into a single IIFE
 
-import { loadState, persistState, getState, setState, resetEditingTask, getFilteredTasks, getStats, addTask, updateTask, deleteTask, toggleTask, moveTaskToDate, addCategory, deleteCategory, formatDate, parseDate, formatHours, getDateLabel, getRemainingTime, isOverdue, isTaskDueOnDate, getPriorityColor, getCatColor, getCatName, escapeHtml } from './task'
-import { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, renderListView, renderDayView, renderWeekView, renderMonthView, renderTaskList, renderModal, renderCategoryModal, renderSyncModal, renderMobileSyncPanel } from './render'
+import { loadState, persistState, getState, setState, resetEditingTask, getFilteredTasks, getStats, getWeeklyGoalStats, addTask, updateTask, deleteTask, toggleTask, moveTaskToDate, addCategory, deleteCategory, formatDate, parseDate, formatHours, getDateLabel, getRemainingTime, isOverdue, isTaskDueOnDate, getPriorityColor, getCatColor, getCatName, escapeHtml } from './task'
+import { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, renderListView, renderDayView, renderWeekView, renderMonthView, renderTaskList, renderModal, renderCategoryModal, renderGoalSettingsModal, renderSyncModal, renderMobileSyncPanel } from './render'
 import { attachEventListeners } from './events'
 import { initSyncMonitor, onSyncStatusChange } from './sync'
 
@@ -22,8 +22,8 @@ function syncActionToast(message: string, type: 'success' | 'error' = 'success')
 }
 
 // Export for external use
-export { loadState, persistState, getState, setState, resetEditingTask, getFilteredTasks, getStats, addTask, updateTask, deleteTask, toggleTask, moveTaskToDate, addCategory, deleteCategory, formatDate, parseDate, formatHours, getDateLabel, getRemainingTime, isOverdue, isTaskDueOnDate, getPriorityColor, getCatColor, getCatName, escapeHtml }
-export { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, renderListView, renderDayView, renderWeekView, renderMonthView, renderTaskList, renderModal, renderCategoryModal, renderSyncModal, renderMobileSyncPanel }
+export { loadState, persistState, getState, setState, resetEditingTask, getFilteredTasks, getStats, getWeeklyGoalStats, addTask, updateTask, deleteTask, toggleTask, moveTaskToDate, addCategory, deleteCategory, formatDate, parseDate, formatHours, getDateLabel, getRemainingTime, isOverdue, isTaskDueOnDate, getPriorityColor, getCatColor, getCatName, escapeHtml }
+export { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, renderListView, renderDayView, renderWeekView, renderMonthView, renderTaskList, renderModal, renderCategoryModal, renderGoalSettingsModal, renderSyncModal, renderMobileSyncPanel, renderWeeklyGoalCard }
 export { attachEventListeners }
 
 // Auto-initialize when DOM is ready

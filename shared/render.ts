@@ -2,7 +2,7 @@ import type { Task, Priority } from './types'
 import {
   getState, setState, resetEditingTask,
   formatDate, parseDate, formatHours, getDateLabel, getRemainingTime, isOverdue, isTaskDueOnDate,
-  getPriorityColor, getCatColor, getCatName, getFilteredTasks, getStats,
+  getPriorityColor, getCatColor, getCatName, getFilteredTasks, getStats, getWeeklyGoalStats,
   toggleTask as toggleTaskAction, deleteTask as deleteTaskAction, moveTaskToDate,
   escapeHtml
 } from './task'
@@ -33,14 +33,138 @@ const renderSyncIndicator = (): string => {
 }
 
 // ==================== 渲染函数 ====================
+export const renderWeeklyGoalCard = (): string => {
+  const stats = getWeeklyGoalStats()
+  if (!stats) return ''
+
+  const formatWeeks = (w: number) => {
+    if (w < 1) return '<1 周'
+    return `${Math.floor(w)} 周` + (w % 1 >= 0.5 ? '半' : '')
+  }
+  const formatH = (m: number) => (m / 60).toFixed(1) + 'h'
+
+  const gapClass = stats.behindExpected ? 'gap-negative' : 'gap-positive'
+  const gapSign = stats.behindExpected ? '' : '+'
+  const expectedPos = Math.min(100, stats.progressPercent)
+
+  return `
+    <div class="goal-card" id="weeklyGoalCard" style="display:none;">
+      <div class="goal-card-header">
+        <div class="goal-card-label">
+          <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          <span>每周节奏</span>
+        </div>
+        <span class="goal-card-target">目标 ${formatH(stats.weeklyGoalMinutes)} / 周</span>
+      </div>
+      <div class="goal-card-anchor"><strong>锚点：</strong>${stats.anchorDate} 第 1 周</div>
+      <div class="goal-card-row">
+        <div class="goal-card-stat">
+          <div class="stat-label">期望工时</div>
+          <div class="stat-value">${formatH(stats.expectedMinutes)}<span class="unit">h</span></div>
+          <div class="stat-sub stat-neutral">历时 ${formatWeeks(stats.weeksElapsed)}</div>
+        </div>
+        <div class="goal-card-stat">
+          <div class="stat-label">实际完成</div>
+          <div class="stat-value">${formatH(stats.actualMinutes)}<span class="unit">h</span></div>
+          <div class="stat-sub stat-green">${stats.completedCount} 个任务</div>
+        </div>
+        <div class="goal-card-stat">
+          <div class="stat-label">差距</div>
+          <div class="stat-value ${gapClass}">${gapSign}${formatH(Math.abs(stats.gapMinutes))}<span class="unit">h</span></div>
+          <div class="stat-sub ${gapClass}">${stats.behindExpected ? `落后约 ${stats.gapWeeks} 周` : `领先约 ${stats.gapWeeks} 周`}</div>
+        </div>
+      </div>
+      <div class="goal-card-bar-wrap">
+        <div class="goal-bar-labels">
+          <span>完成进度</span>
+          <span class="pace">实际节奏 ${formatH(stats.paceMinutesPerWeek)}/周 · 目标 ${formatH(stats.weeklyGoalMinutes)}/周</span>
+        </div>
+        <div class="goal-bar-bg">
+          <div class="goal-bar-fill" style="width:${Math.min(100, stats.progressPercent)}%;"></div>
+          <div class="goal-bar-line" style="left:${expectedPos}%;"></div>
+        </div>
+        <div class="goal-bar-label">
+          <span>当前 ${formatH(stats.actualMinutes)}</span>
+          <span>期望 ${formatH(stats.expectedMinutes)}</span>
+          <span>${stats.progressPercent}%</span>
+        </div>
+      </div>
+      <div class="goal-card-detail">
+        <div class="detail-grid">
+          <div class="detail-item">
+            <div class="label">周目标</div>
+            <div class="value">${formatH(stats.weeklyGoalMinutes)}</div>
+            <div class="desc">每 7 天期望完成量</div>
+          </div>
+          <div class="detail-item">
+            <div class="label">实际节奏</div>
+            <div class="value">${formatH(stats.paceMinutesPerWeek)} / 周</div>
+            <div class="desc">总工时 ÷ 总周数</div>
+          </div>
+          <div class="detail-item">
+            <div class="label">完成总工时</div>
+            <div class="value">${formatH(stats.actualMinutes)}</div>
+            <div class="desc">${stats.completedCount} 个已完成任务合计</div>
+          </div>
+          <div class="detail-item">
+            <div class="label">任务平均时长</div>
+            <div class="value">${formatH(stats.completedCount > 0 ? stats.actualMinutes / stats.completedCount : 0)}</div>
+            <div class="desc">总工时 ÷ 任务数</div>
+          </div>
+        </div>
+        <button id="adjustGoalAnchorBtn" class="goal-adjust-btn">调整起始锚点</button>
+      </div>
+    </div>
+  `
+}
+
+export const renderGoalSettingsModal = (): string => {
+  const { weeklyGoalMinutes = 600, weeklyGoalAnchor } = getState()
+  const anchorDate = weeklyGoalAnchor || formatDate(new Date())
+  return `
+    <div id="goalSettingsModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[90%] max-w-sm p-6">
+        <h3 class="text-lg font-semibold mb-4">每周目标设置</h3>
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium mb-1">每周目标时长（小时）</label>
+            <input type="number" id="goalWeeklyHours" value="${(weeklyGoalMinutes / 60).toFixed(1)}" min="0.5" step="0.5" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">起始锚点日期</label>
+            <input type="date" id="goalAnchorDate" value="${anchorDate}" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
+          </div>
+          <p class="text-xs text-gray-400">锚点用于计算已过周数。修改后重新计算期望值。</p>
+        </div>
+        <div class="flex gap-3 mt-6">
+          <button id="closeGoalSettingsBtn" class="flex-1 px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition text-sm">取消</button>
+          <button id="saveGoalSettingsBtn" class="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm">保存</button>
+        </div>
+      </div>
+    </div>
+  `
+}
+
 export const renderStats = (): string => {
   const stats = getStats()
   return `
-    <div class="flex gap-6 p-3 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 mb-4 text-sm">
-      <div><span class="text-gray-500">待完成：</span><span class="font-medium text-orange-500">${formatHours(stats.pending)}</span></div>
-      <div><span class="text-gray-500">已完成：</span><span class="font-medium text-green-500">${formatHours(stats.done)}</span></div>
-      <div><span class="text-gray-500">今日：</span><span class="font-medium">${stats.todayDone}/${stats.todayTotal}</span></div>
-      ${stats.overdueCount > 0 ? `<div class="text-red-500">${stats.overdueCount}项已过期</div>` : ''}
+    <div id="statsRow" class="stats-row">
+      <div class="stats-row-bar">
+        <div class="stats-row-items">
+          <span class="text-gray-500">待完成：</span><span class="font-medium text-orange-500">${formatHours(stats.pending)}</span>
+          <span class="text-gray-300 dark:text-gray-600">|</span>
+          <span class="text-gray-500">已完成：</span><span class="font-medium text-green-500">${formatHours(stats.done)}</span>
+          <span class="text-gray-300 dark:text-gray-600">|</span>
+          <span class="text-gray-500">今日：</span><span class="font-medium">${stats.todayDone}/${stats.todayTotal}</span>
+          ${stats.overdueCount > 0 ? `<span class="text-red-500 font-medium">${stats.overdueCount}项过期</span>` : ''}
+        </div>
+        <button id="statsToggleBtn" class="stats-toggle-btn" title="每周节奏">
+          <span id="statsChevron" class="stats-chevron">&#x25BE;</span>
+        </button>
+      </div>
+      <div id="weeklyGoalWrapper" style="display:none;">
+        ${renderWeeklyGoalCard()}
+      </div>
     </div>
   `
 }
@@ -395,6 +519,39 @@ export const renderTaskList = (): string => {
   }
 }
 
+// ==================== 未来 7 天快捷日期选择 ====================
+const renderQuickDates = (selectedDate: string): string => {
+  const today = new Date()
+  const dayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+  const todayStr = formatDate(today)
+
+  let html = '<div class="quick-dates-row">'
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(today)
+    d.setDate(today.getDate() + i)
+    const dateStr = formatDate(d)
+    const dayNum = d.getDate()
+    const isToday = dateStr === todayStr
+    const isSelected = dateStr === selectedDate
+
+    const label = isToday ? '今天' : i === 1 ? '明天' : dayNames[d.getDay()]
+
+    const classes = [
+      'quick-date-btn',
+      isToday ? 'today' : '',
+      isSelected ? 'selected' : ''
+    ].filter(Boolean).join(' ')
+
+    html += `<button type="button" class="${classes}" data-date="${dateStr}">
+      <span class="quick-day-name">${label}</span>
+      <span class="quick-day-num">${dayNum}</span>
+      ${isToday ? '<span class="quick-date-badge">今天</span>' : ''}
+    </button>`
+  }
+  html += '</div>'
+  return html
+}
+
 export const renderModal = (): string => {
   const { editingTask, categories = [], defaultCategory } = getState()
   const isEditing = editingTask !== null
@@ -465,6 +622,7 @@ export const renderModal = (): string => {
             <div id="dueDateField" style="${task.noTimeLimit ? 'opacity:0.5;pointer-events:none' : ''}">
               <div>
                 <label class="block text-sm font-medium mb-1">截止日期</label>
+                ${renderQuickDates(task.dueDate)}
                 <input type="date" name="dueDate" value="${task.dueDate}" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
               </div>
             </div>
@@ -744,6 +902,232 @@ export const renderApp = (container: HTMLElement): void => {
   } else {
     document.documentElement.classList.remove('dark')
   }
+  // 注入每周目标卡片样式（仅一次）
+  if (!document.getElementById('weeklyGoalStyles')) {
+    const style = document.createElement('style')
+    style.id = 'weeklyGoalStyles'
+    style.textContent = `
+      .stats-row {
+        margin-bottom: 16px;
+      }
+      .stats-row-bar {
+        display: flex;
+        align-items: center;
+        padding: 10px 16px;
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        font-size: 13px;
+      }
+      .dark .stats-row-bar {
+        background: #1f2937;
+        border-color: #374151;
+      }
+      .stats-row-items {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .stats-toggle-btn {
+        flex-shrink: 0;
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: none;
+        border-radius: 6px;
+        background: transparent;
+        cursor: pointer;
+        color: #cbd5e1;
+        transition: all 0.15s;
+        margin-left: 8px;
+      }
+      .stats-toggle-btn:hover {
+        background: #f1f5f9;
+        color: #6366f1;
+      }
+      .dark .stats-toggle-btn:hover {
+        background: rgba(99,102,241,0.1);
+      }
+      .stats-chevron {
+        font-size: 12px;
+        transition: transform 0.2s;
+        line-height: 1;
+      }
+      .stats-chevron.open { transform: rotate(180deg); }
+
+      .goal-card {
+        margin: 8px 0 0 0;
+        background: linear-gradient(135deg, #eef2ff 0%, #f0f9ff 100%);
+        border: 1px solid #e0e7ff;
+        border-radius: 12px;
+        padding: 18px 20px;
+        animation: goalFadeIn 0.2s ease;
+      }
+      @keyframes goalFadeIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
+      .dark .goal-card { background: linear-gradient(135deg, rgba(30,41,59,0.8), rgba(30,27,75,0.6)); border-color: rgba(99,102,241,0.3); }
+
+      .goal-card .goal-card-header {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 14px;
+      }
+      .goal-card-label { display: flex; align-items: center; gap: 8px; }
+      .goal-card-label svg { width: 18px; height: 18px; color: #6366f1; }
+      .goal-card-label span { font-size: 14px; font-weight: 600; color: #1e293b; }
+      .dark .goal-card-label span { color: #e2e8f0; }
+      .goal-card-target {
+        font-size: 13px; color: #6366f1;
+        background: rgba(99,102,241,0.1);
+        padding: 3px 10px; border-radius: 6px; font-weight: 500;
+      }
+      .goal-card-anchor { font-size: 12px; color: #64748b; margin-bottom: 12px; }
+      .goal-card-anchor strong { color: #475569; }
+      .goal-card-row { display: flex; gap: 16px; margin-bottom: 12px; }
+      .goal-card-stat {
+        flex: 1; background: rgba(255,255,255,0.7);
+        border-radius: 8px; padding: 10px 12px;
+      }
+      .dark .goal-card-stat { background: rgba(30,41,59,0.6); }
+      .goal-card-stat .stat-label {
+        font-size: 11px; color: #94a3b8;
+        text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 4px;
+      }
+      .goal-card-stat .stat-value { font-size: 20px; font-weight: 700; color: #0f172a; }
+      .dark .goal-card-stat .stat-value { color: #f1f5f9; }
+      .goal-card-stat .stat-value .unit { font-size: 13px; font-weight: 400; color: #94a3b8; margin-left: 2px; }
+      .goal-card-stat .stat-sub { font-size: 11px; margin-top: 2px; }
+      .stat-green { color: #059669; }
+      .stat-red { color: #dc2626; }
+      .stat-neutral { color: #6366f1; }
+      .gap-negative { color: #dc2626 !important; }
+      .gap-positive { color: #059669 !important; }
+      .goal-card-bar-wrap { margin-top: 4px; }
+      .goal-bar-labels {
+        display: flex; justify-content: space-between;
+        font-size: 11px; color: #94a3b8; margin-bottom: 4px;
+      }
+      .goal-bar-labels .pace { color: #6366f1; font-weight: 500; }
+      .goal-bar-bg {
+        height: 8px; background: rgba(99,102,241,0.15);
+        border-radius: 4px; overflow: hidden; position: relative;
+      }
+      .goal-bar-fill {
+        height: 100%; background: linear-gradient(90deg, #6366f1, #818cf8);
+        border-radius: 4px; transition: width 0.3s;
+      }
+      .goal-bar-line {
+        position: absolute; top: -2px; bottom: -2px;
+        width: 2px; background: #f59e0b; border-radius: 1px;
+      }
+      .goal-bar-label {
+        display: flex; justify-content: space-between;
+        font-size: 11px; color: #94a3b8; margin-top: 4px;
+      }
+      .goal-card-detail { display: none; margin-top: 14px; padding-top: 14px; border-top: 1px dashed #c7d2fe; }
+      .goal-card.expanded .goal-card-detail { display: block; }
+      .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .detail-item { background: rgba(255,255,255,0.6); border-radius: 8px; padding: 10px 12px; }
+      .dark .detail-item { background: rgba(30,41,59,0.6); }
+      .detail-item .label { font-size: 11px; color: #94a3b8; }
+      .detail-item .value { font-size: 14px; font-weight: 600; color: #0f172a; margin-top: 2px; }
+      .dark .detail-item .value { color: #f1f5f9; }
+      .detail-item .desc { font-size: 11px; color: #94a3b8; margin-top: 1px; }
+      .goal-adjust-btn {
+        margin-top: 12px; padding: 8px 0; width: 100%;
+        border: 1px dashed #c7d2fe; border-radius: 8px; background: transparent;
+        font-size: 13px; color: #6366f1; cursor: pointer; transition: background 0.15s;
+      }
+      .goal-adjust-btn:hover { background: rgba(99,102,241,0.06); }
+
+      /* 快捷日期选择 */
+      .quick-dates-row {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 8px;
+      }
+      .quick-date-btn {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1px;
+        padding: 6px 2px;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        background: white;
+        cursor: pointer;
+        transition: all 0.15s;
+        font-family: inherit;
+      }
+      .dark .quick-date-btn {
+        background: #374151;
+        border-color: #4b5563;
+      }
+      .quick-date-btn:hover {
+        border-color: #c7d2fe;
+        background: #f5f3ff;
+      }
+      .dark .quick-date-btn:hover {
+        border-color: #6366f1;
+        background: rgba(99,102,241,0.1);
+      }
+      .quick-date-btn .quick-day-name {
+        font-size: 9px;
+        color: #9ca3af;
+        font-weight: 500;
+      }
+      .quick-date-btn .quick-day-num {
+        font-size: 15px;
+        font-weight: 600;
+        color: #374151;
+      }
+      .dark .quick-date-btn .quick-day-num { color: #e5e7eb; }
+      .quick-date-btn .quick-date-badge {
+        font-size: 7px;
+        padding: 1px 4px;
+        border-radius: 3px;
+        background: transparent;
+        color: transparent;
+      }
+
+      /* 今天标记 */
+      .quick-date-btn.today {
+        border-color: #6366f1;
+        background: #eef2ff;
+      }
+      .dark .quick-date-btn.today {
+        background: rgba(99,102,241,0.15);
+        border-color: #818cf8;
+      }
+      .quick-date-btn.today .quick-day-name { color: #6366f1; }
+      .quick-date-btn.today .quick-day-num { color: #6366f1; }
+      .dark .quick-date-btn.today .quick-day-name,
+      .dark .quick-date-btn.today .quick-day-num { color: #a5b4fc; }
+      .quick-date-btn.today .quick-date-badge {
+        background: #6366f1;
+        color: white;
+      }
+      .dark .quick-date-btn.today .quick-date-badge { background: #818cf8; }
+
+      /* 选中状态 */
+      .quick-date-btn.selected {
+        border-color: #6366f1;
+        background: #6366f1;
+      }
+      .quick-date-btn.selected .quick-day-name { color: rgba(255,255,255,0.75); }
+      .quick-date-btn.selected .quick-day-num { color: white; }
+      .quick-date-btn.selected .quick-date-badge {
+        background: rgba(255,255,255,0.25);
+        color: white;
+      }
+      .dark .quick-date-btn.selected { border-color: #818cf8; background: #6366f1; }
+    `
+    document.head.appendChild(style)
+  }
+
   const viewMaxWidth: Record<string, string> = {
     list: 'max-w-4xl',
     day: 'max-w-4xl',
@@ -759,6 +1143,7 @@ export const renderApp = (container: HTMLElement): void => {
       ${renderTaskList()}
       ${renderModal()}
       ${renderCategoryModal()}
+      ${renderGoalSettingsModal()}
       ${renderSyncModal()}
       ${renderMobileSyncPanel()}
     </div>

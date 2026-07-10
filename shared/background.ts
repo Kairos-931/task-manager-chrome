@@ -108,6 +108,24 @@ async function handleRemoteSync(): Promise<{ synced?: number; error?: string }> 
       updatedAt: Date.now()
     }))]
     await saveData(localData)
+
+    // 标记已同步，避免下次重复拉回（即使本地删除后也不再出现）
+    try {
+      const syncedIds = newTasks.map(t => t.id).filter(Boolean)
+      if (syncedIds.length > 0) {
+        await fetch(`${settings.apiUrl}/api/tasks/sync`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${settings.apiToken}`
+          },
+          body: JSON.stringify({ ids: syncedIds })
+        })
+      }
+    } catch (e) {
+      console.warn('[TaskMaster] 标记已同步失败（不影响本次导入）:', e)
+    }
+
     return { synced: newTasks.length }
   } catch (e) {
     return { error: String(e) }

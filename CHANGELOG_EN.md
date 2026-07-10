@@ -6,6 +6,37 @@ This project was iteratively developed using AI coding assistants (Coze / Claude
 
 ---
 
+## [3.9.0] - 2026-07-10
+
+### Added
+
+- **Weekly goal tracking** — collapsible rhythm card in the stats bar
+  - Shows expected / actual / gap hours, progress bar with target line
+  - Auto-anchors to earliest completion date, supports manual anchor & goal adjustment
+
+- **Quick date picker** — 7-day shortcut buttons above the date input in task modal
+  - Starts from today, shows "Today / Tomorrow / weekday" labels
+  - Click fills the date input, two-way synced
+
+### Fixed
+
+- **Remote tasks not marked as synced after import** — extension never called the sync API after pulling from `pending_tasks`, causing deleted tasks to reappear on next open
+  - Fix: call `/api/tasks/sync` after successful merge
+
+---
+
+## [3.8.0] - 2026-06-17
+
+### Fixed (Major)
+
+- **Deleted tasks reappearing / completed state overwritten** — loadData no longer merges cloud over local
+  - Root cause: opening the extension always merged cloud data into local, and merge used "union" semantics (cloud-only tasks get added). cloudSyncWrite pushes async and may not finish before the extension is closed → cloud lags behind, still holds deleted tasks → next open merges them back, or overwrites local's latest complete/edit with stale state
+  - Fix: loadData now treats local as authoritative — uses local directly when it has data, no cloud merge; only restores from cloud when local is empty (reinstall/new device)
+  - Removed the now-dead merge functions (mergeStorageData / mergeTasks / mergeCategories)
+  - Cross-device pull moved to the manual "Pull from cloud" button to avoid auto-merge clobbering local
+
+---
+
 ## [3.7.0] - 2026-06-16
 
 ### Changed (Major)
