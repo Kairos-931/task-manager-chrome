@@ -1,5 +1,5 @@
 import type { Priority, Task } from './types'
-import { getState, setState, resetEditingTask, formatDate, parseDate, persistState, moveTaskToDate, loadState, getWeeklyGoalStats } from './task'
+import { getState, setState, resetEditingTask, formatDate, persistState, moveTaskToDate, loadState } from './task'
 import { toggleTask as toggleTaskAction, deleteTask as deleteTaskAction, addTask, updateTask, addCategory, updateCategory, deleteCategory as deleteCategoryAction } from './task'
 import { renderApp } from './render'
 import { downloadExportFile, importDataFromFile } from './storage'
@@ -231,7 +231,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
       category: formData.get('category') as string,
       dueDate: noTimeLimit ? '' : (formData.get('dueDate') as string),
       duration,
-      completed: editingTask?.completed || false,
+      completed: (form.querySelector('#taskCompleted') as HTMLInputElement)?.checked || false,
       repeatType: formData.get('repeatType') as Task['repeatType'],
       repeatDays,
       repeatInterval: parseInt(formData.get('repeatInterval') as string) || 1,
@@ -451,7 +451,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
       try {
         await downloadExportFile()
         showToast(container, '数据已导出成功！', 'success')
-      } catch (err) {
+      } catch {
         showToast(container, '导出失败，请重试', 'error')
       }
     })
@@ -499,21 +499,25 @@ export const attachEventListeners = (container: HTMLElement): void => {
       try {
         if (btn) btn.innerHTML = '<div class="card-title" style="color:#6b7280;">上传中...</div>'
         showSyncFeedback(container, '正在上传数据到云端...', 'info')
-        const { syncToCloud } = await import('./storage')
+        const { syncIncrementally } = await import('./storage')
         const { getState } = await import('./task')
         const state = getState()
-        const result = await syncToCloud({
+        const result = await syncIncrementally({
           tasks: state.tasks,
           categories: state.categories,
           defaultCategory: state.defaultCategory,
           hideCompleted: state.hideCompleted,
           hideOverdue: state.hideOverdue,
           showNoTimeLimitOnly: state.showNoTimeLimitOnly,
-          darkMode: state.darkMode
-        }, { force: true })
-        if (result.success) {
-          await persistState()
-          showSyncFeedback(container, `上传成功 — ${state.tasks.length} 个任务已同步到云端`, 'success')
+          darkMode: state.darkMode,
+          weeklyGoalMinutes: state.weeklyGoalMinutes,
+          weeklyGoalAnchor: state.weeklyGoalAnchor,
+          syncSettingsUpdatedAt: state.syncSettingsUpdatedAt
+        })
+        if (result.success && result.data) {
+          setState(result.data)
+          reRender()
+          showSyncFeedback(container, `同步完成 — ${result.data.tasks.length} 个任务已收敛`, 'success')
         } else {
           showSyncFeedback(container, '上传失败: ' + (result.error || '未知错误'), 'error')
         }
@@ -530,14 +534,24 @@ export const attachEventListeners = (container: HTMLElement): void => {
       try {
         if (btn) btn.innerHTML = '<div class="card-title" style="color:#6b7280;">拉取中...</div>'
         showSyncFeedback(container, '正在从云端拉取数据...', 'info')
-        const { syncFromCloud } = await import('./storage')
-        const result = await syncFromCloud()
-        if (result.data && result.data.tasks) {
-          const { saveData } = await import('./storage')
-          await saveData(result.data)
-          await loadState()
+        const { syncIncrementally } = await import('./storage')
+        const state = getState()
+        const result = await syncIncrementally({
+          tasks: state.tasks,
+          categories: state.categories,
+          defaultCategory: state.defaultCategory,
+          hideCompleted: state.hideCompleted,
+          hideOverdue: state.hideOverdue,
+          showNoTimeLimitOnly: state.showNoTimeLimitOnly,
+          darkMode: state.darkMode,
+          weeklyGoalMinutes: state.weeklyGoalMinutes,
+          weeklyGoalAnchor: state.weeklyGoalAnchor,
+          syncSettingsUpdatedAt: state.syncSettingsUpdatedAt
+        })
+        if (result.success && result.data) {
+          setState(result.data)
           reRender()
-          showSyncFeedback(container, `拉取成功 — 已恢复 ${result.data.tasks.length} 个任务`, 'success')
+          showSyncFeedback(container, `同步完成 — 已收敛 ${result.data.tasks.length} 个任务`, 'success')
         } else {
           showSyncFeedback(container, '云端暂无数据', 'error')
         }
@@ -701,7 +715,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
       const statusEl = container.querySelector('#mobileSyncStatus') as HTMLElement
       if (statusEl) statusEl.textContent = '同步中...'
       chrome.runtime.sendMessage({ action: 'syncRemoteTasks' }, (result: { synced?: number; error?: string }) => {
-        if (result?.synced > 0) {
+        if ((result?.synced ?? 0) > 0) {
           syncToast(`已同步 ${result.synced} 个任务`, 'success')
           if (statusEl) statusEl.textContent = `上次同步: 成功，${result.synced} 个任务`
         } else if (result?.error) {
@@ -741,7 +755,10 @@ function setupWeeklyGoalEvents(container: HTMLElement): void {
   // 卡片内点击：调整锚点（阻止冒泡）、展开详情
   card?.addEventListener('click', (e) => {
     const target = e.target as HTMLElement
-    if (target.id === 'adjustGoalAnchorBtn' || target.closest('#adjustGoalAnchorBtn')) {
+    if (
+      target.id === 'adjustGoalAnchorBtn' || target.closest('#adjustGoalAnchorBtn') ||
+      target.id === 'openGoalSettingsBtn' || target.closest('#openGoalSettingsBtn')
+    ) {
       const modal = container.querySelector('#goalSettingsModal') as HTMLElement
       if (modal) modal.classList.remove('hidden')
       return
@@ -849,7 +866,7 @@ function setupDragAndDrop(container: HTMLElement): void {
       ;(zone as HTMLElement).classList.add('bg-blue-100', 'dark:bg-blue-900/30')
     })
 
-    zone.addEventListener('dragleave', (e) => {
+    zone.addEventListener('dragleave', () => {
       ;(zone as HTMLElement).classList.remove('bg-blue-100', 'dark:bg-blue-900/30')
     })
 

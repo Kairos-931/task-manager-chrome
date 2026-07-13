@@ -13,23 +13,18 @@ export default {
 
     // Serve mobile web page (no auth)
     if (url.pathname === '/' || url.pathname === '/index.html') {
-      return serveStatic('index.html', 'text/html');
+      return serveStatic('index.html');
     }
     if (url.pathname === '/manifest.json') {
-      return serveStatic('manifest.json', 'application/json');
+      return serveStatic('manifest.json');
     }
-    if (url.pathname === '/icon.png') {
-      return serveStatic('icon.png', 'image/png');
+    if (url.pathname === '/icon.svg') {
+      return serveStatic('icon.svg');
     }
 
     // Telegram webhook (auth via bot token in URL path)
     if (url.pathname === '/api/telegram/webhook' && method === 'POST') {
       return handleTelegramWebhook(request, env);
-    }
-
-    // Categories read — no auth (mobile web needs this)
-    if (url.pathname === '/api/categories' && method === 'GET') {
-      return handleGetCategories(env);
     }
 
     // API routes — require auth
@@ -48,8 +43,16 @@ export default {
     if (url.pathname === '/api/categories' && method === 'POST') {
       return handleSaveCategories(request, env);
     }
+    if (url.pathname === '/api/categories' && method === 'GET') {
+      return handleGetCategories(env);
+    }
 
-    // Full data sync — primary cross-device sync
+    // Incremental sync is the only writer for current extension versions.
+    if (url.pathname === '/api/sync/incremental' && method === 'POST') {
+      return handleIncrementalSync(request, env);
+    }
+
+    // Legacy snapshot routes remain readable only until incremental sync starts.
     if (url.pathname === '/api/fullsync' && method === 'GET') {
       return handleFullSyncGet(env);
     }
@@ -64,6 +67,9 @@ export default {
 // ── Auth ──────────────────────────────────────────────
 
 function checkAuth(request, env) {
+  if (!env.API_TOKEN) {
+    return jsonResp({ error: 'Server is missing API_TOKEN configuration' }, 503);
+  }
   const auth = request.headers.get('Authorization');
   if (!auth || auth !== `Bearer ${env.API_TOKEN}`) {
     return jsonResp({ error: 'Unauthorized' }, 401);
@@ -88,7 +94,7 @@ function jsonResp(data, status = 200) {
 
 // ── Static file serving (embedded) ────────────────────
 
-async function serveStatic(filename, contentType) {
+async function serveStatic(filename) {
   // These are served from the Worker's static assets or inline
   // For simplicity, the HTML is served inline; assets can be added later
   if (filename === 'index.html') {
@@ -99,6 +105,11 @@ async function serveStatic(filename, contentType) {
   if (filename === 'manifest.json') {
     return new Response(PWA_MANIFEST, {
       headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  if (filename === 'icon.svg') {
+    return new Response(PWA_ICON, {
+      headers: { 'Content-Type': 'image/svg+xml; charset=utf-8', 'Cache-Control': 'public, max-age=86400' },
     });
   }
   return new Response('Not Found', { status: 404 });
@@ -112,9 +123,11 @@ async function handleCreateTask(request, env) {
   if (!title) return jsonResp({ error: 'title is required' }, 400);
 
   const id = crypto.randomUUID();
+  const completed = body.completed === true;
+  const completedAt = completed ? new Date().toISOString() : null;
   await env.DB.prepare(
-    `INSERT INTO pending_tasks (id, title, description, priority, category, due_date, duration, no_time_limit, source)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO pending_tasks (id, title, description, priority, category, due_date, duration, no_time_limit, completed, completed_at, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     id, title,
     body.description || '',
@@ -123,6 +136,8 @@ async function handleCreateTask(request, env) {
     body.dueDate || '',
     body.duration || 60,
     body.noTimeLimit ? 1 : 0,
+    completed ? 1 : 0,
+    completedAt,
     body.source || 'web'
   ).run();
 
@@ -163,18 +178,47 @@ function formatTask(row) {
     dueDate: row.due_date,
     duration: row.duration,
     noTimeLimit: row.no_time_limit === 1,
+    completed: row.completed === 1,
+    completedAt: row.completed_at ? Date.parse(row.completed_at) : undefined,
     source: row.source,
-    createdAt: row.created_at,
+    createdAt: Date.parse(row.created_at) || Date.now(),
   };
 }
 
 // ── Categories sync ───────────────────────────────────
 
 async function handleGetCategories(env) {
-  const row = await env.DB.prepare(
-    `SELECT value FROM user_data WHERE key = 'categories'`
-  ).first();
-  const categories = row ? JSON.parse(row.value) : [];
+  const syncedRows = await env.DB.prepare(
+    `SELECT payload FROM sync_records WHERE record_type = 'category' AND deleted = 0 ORDER BY updated_at ASC`
+  ).all();
+  let categories = (syncedRows.results || []).flatMap(row => {
+    try {
+      const category = JSON.parse(row.payload || 'null');
+      return category?.id && category?.name ? [category] : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Existing installations may still have categories saved by the mobile page
+  // before incremental sync was introduced.
+  if (categories.length === 0) {
+    const row = await env.DB.prepare(
+      `SELECT value FROM user_data WHERE key = 'categories'`
+    ).first();
+    categories = row ? JSON.parse(row.value) : [];
+  }
+  const defaults = [
+    { id: 'default-starred', name: '星标', color: '#f59e0b' },
+    { id: 'default-work', name: '工作', color: '#3b82f6' },
+    { id: 'default-life', name: '生活', color: '#10b981' },
+    { id: 'default-learning', name: '学习', color: '#8b5cf6' },
+  ];
+  for (const category of defaults.reverse()) {
+    if (!categories.some(current => current && current.name === category.name)) {
+      categories.unshift(category);
+    }
+  }
   return jsonResp({ categories });
 }
 
@@ -376,9 +420,191 @@ function formatDate(date) {
   return `${y}-${m}-${d}`;
 }
 
+// ── Incremental data sync ─────────────────────────────
+
+const SYNC_RECORD_TYPES = new Set(['task', 'category', 'settings']);
+const MAX_SYNC_CHANGES = 500;
+
+const syncRecordKey = (type, id) => `${type}:${id}`;
+
+function normalizeSyncRecord(raw, sourceDevice) {
+  if (!raw || !SYNC_RECORD_TYPES.has(raw.type) || typeof raw.id !== 'string' || !raw.id) {
+    return null;
+  }
+  const updatedAt = Number(raw.updatedAt);
+  if (!Number.isFinite(updatedAt) || updatedAt <= 0) return null;
+  if (raw.deleted !== true && (!raw.payload || typeof raw.payload !== 'object')) return null;
+
+  return {
+    key: syncRecordKey(raw.type, raw.id),
+    type: raw.type,
+    id: raw.id,
+    payload: raw.deleted === true ? null : JSON.stringify(raw.payload),
+    deleted: raw.deleted === true ? 1 : 0,
+    updatedAt: Math.floor(updatedAt),
+    sourceDevice,
+  };
+}
+
+async function applySyncRecord(env, record) {
+  const existing = await env.DB.prepare(
+    `SELECT record_type, record_id, payload, deleted, updated_at, source_device
+     FROM sync_records WHERE record_key = ?`
+  ).bind(record.key).first();
+
+  // Last-write-wins is deterministic for the same record. Different records
+  // are independent, so edits made on separate tasks always coexist.
+  if (existing) {
+    const existingUpdatedAt = Number(existing.updated_at);
+    const existingDevice = existing.source_device || '';
+    if (existingUpdatedAt > record.updatedAt ||
+        (existingUpdatedAt === record.updatedAt && existingDevice >= record.sourceDevice)) {
+      return {
+        accepted: false,
+        canonical: {
+          type: existing.record_type,
+          id: existing.record_id,
+          payload: existing.payload ? JSON.parse(existing.payload) : null,
+          deleted: existing.deleted === 1,
+          updatedAt: existingUpdatedAt,
+          sourceDevice: existingDevice,
+        },
+      };
+    }
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO sync_records (record_key, record_type, record_id, payload, deleted, updated_at, source_device)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(record_key) DO UPDATE SET
+       record_type = excluded.record_type,
+       record_id = excluded.record_id,
+       payload = excluded.payload,
+       deleted = excluded.deleted,
+       updated_at = excluded.updated_at,
+       source_device = excluded.source_device`
+  ).bind(
+    record.key, record.type, record.id, record.payload, record.deleted,
+    record.updatedAt, record.sourceDevice
+  ).run();
+
+  const change = await env.DB.prepare(
+    `INSERT INTO sync_changes (record_key, record_type, record_id, payload, deleted, updated_at, source_device)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    record.key, record.type, record.id, record.payload, record.deleted,
+    record.updatedAt, record.sourceDevice
+  ).run();
+  const revision = Number(change.meta?.last_row_id || 0);
+  if (revision) {
+    await env.DB.prepare('UPDATE sync_records SET revision = ? WHERE record_key = ?')
+      .bind(revision, record.key).run();
+  }
+  return { accepted: true };
+}
+
+async function migrateLegacyFullSync(env) {
+  const existing = await env.DB.prepare('SELECT 1 FROM sync_records LIMIT 1').first();
+  if (existing) return;
+
+  const legacy = await env.DB.prepare(
+    "SELECT value, updated_at FROM user_data WHERE key = 'full_sync'"
+  ).first();
+  if (!legacy) return;
+
+  try {
+    const data = JSON.parse(legacy.value);
+    const fallbackUpdatedAt = Date.parse(legacy.updated_at || '') || Date.now();
+    const sourceDevice = 'legacy-full-sync';
+    const records = [];
+    for (const task of Array.isArray(data.tasks) ? data.tasks : []) {
+      if (!task?.id) continue;
+      records.push({ type: 'task', id: String(task.id), payload: task, updatedAt: task.updatedAt || fallbackUpdatedAt });
+    }
+    for (const category of Array.isArray(data.categories) ? data.categories : []) {
+      if (!category?.id) continue;
+      records.push({ type: 'category', id: String(category.id), payload: category, updatedAt: category.updatedAt || fallbackUpdatedAt });
+    }
+    records.push({
+      type: 'settings',
+      id: 'app',
+      payload: {
+        defaultCategory: data.defaultCategory || '',
+        hideCompleted: !!data.hideCompleted,
+        hideOverdue: !!data.hideOverdue,
+        showNoTimeLimitOnly: !!data.showNoTimeLimitOnly,
+        darkMode: !!data.darkMode,
+        weeklyGoalMinutes: data.weeklyGoalMinutes,
+        weeklyGoalAnchor: data.weeklyGoalAnchor,
+      },
+      updatedAt: data.syncSettingsUpdatedAt || fallbackUpdatedAt,
+    });
+    for (const raw of records) {
+      const record = normalizeSyncRecord(raw, sourceDevice);
+      if (record) await applySyncRecord(env, record);
+    }
+  } catch {
+    // A malformed legacy snapshot must not make the new sync endpoint fail.
+  }
+}
+
+async function handleIncrementalSync(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResp({ error: 'invalid JSON body' }, 400);
+  }
+  const sourceDevice = typeof body.deviceId === 'string' && body.deviceId.length <= 128
+    ? body.deviceId
+    : '';
+  if (!sourceDevice) return jsonResp({ error: 'deviceId is required' }, 400);
+  const cursor = Number.isInteger(body.cursor) && body.cursor >= 0 ? body.cursor : 0;
+  if (!Array.isArray(body.changes) || body.changes.length > MAX_SYNC_CHANGES) {
+    return jsonResp({ error: `changes must be an array of at most ${MAX_SYNC_CHANGES}` }, 400);
+  }
+
+  await migrateLegacyFullSync(env);
+  const rejectedChanges = [];
+  for (const raw of body.changes) {
+    const record = normalizeSyncRecord(raw, sourceDevice);
+    if (!record) return jsonResp({ error: 'invalid sync record' }, 400);
+    const outcome = await applySyncRecord(env, record);
+    if (!outcome.accepted && outcome.canonical) rejectedChanges.push(outcome.canonical);
+  }
+
+  const { results } = await env.DB.prepare(
+    `SELECT revision, record_type, record_id, payload, deleted, updated_at, source_device
+     FROM sync_changes WHERE revision > ? ORDER BY revision ASC LIMIT ?`
+  ).bind(cursor, MAX_SYNC_CHANGES + 1).all();
+  const hasMore = results.length > MAX_SYNC_CHANGES;
+  const page = hasMore ? results.slice(0, MAX_SYNC_CHANGES) : results;
+  const nextCursor = page.length > 0 ? Number(page[page.length - 1].revision) : cursor;
+  const changes = page.map(row => ({
+    type: row.record_type,
+    id: row.record_id,
+    payload: row.payload ? JSON.parse(row.payload) : null,
+    deleted: row.deleted === 1,
+    updatedAt: Number(row.updated_at),
+    sourceDevice: row.source_device,
+  }));
+  return jsonResp({ changes, rejectedChanges, cursor: nextCursor, hasMore });
+}
+
 // ── Full Data Sync ─────────────────────────────────────
 
+async function hasIncrementalRecords(env) {
+  const row = await env.DB.prepare('SELECT 1 FROM sync_records LIMIT 1').first();
+  return !!row;
+}
+
+const legacyUpgradeRequired = () => jsonResp({
+  error: 'upgrade_required',
+  hint: 'Please reload the current TaskMaster extension before syncing.'
+}, 409);
+
 async function handleFullSyncGet(env) {
+  if (await hasIncrementalRecords(env)) return legacyUpgradeRequired();
   const row = await env.DB.prepare(
     `SELECT value, updated_at FROM user_data WHERE key = 'full_sync'`
   ).first();
@@ -390,6 +616,7 @@ async function handleFullSyncGet(env) {
 }
 
 async function handleFullSyncSet(request, env) {
+  if (await hasIncrementalRecords(env)) return legacyUpgradeRequired();
   const body = await request.json();
   if (!body.data || typeof body.data !== 'object') {
     return jsonResp({ error: 'data object required' }, 400);
@@ -411,7 +638,7 @@ async function handleFullSyncSet(request, env) {
     try {
       const parsed = JSON.parse(existing.value);
       existingTaskCount = Array.isArray(parsed.tasks) ? parsed.tasks.length : 0;
-    } catch (e) {}
+    } catch {}
   }
 
   // Guard 1: refuse empty data overwriting non-empty cloud (reinstall wipe protection)
@@ -449,9 +676,11 @@ const PWA_MANIFEST = JSON.stringify({
   background_color: "#ffffff",
   theme_color: "#3b82f6",
   icons: [
-    { src: "/icon.png", sizes: "128x128", type: "image/png" }
+    { src: "/icon.svg", sizes: "any", type: "image/svg+xml" }
   ]
 });
+
+const PWA_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><rect width="128" height="128" rx="24" fill="#2563eb"/><path fill="#fff" d="M37 30h54v68H37z" opacity=".2"/><path fill="#fff" d="M45 32h38v8H45zm0 17h38v8H45zm0 17h25v8H45zm0 17h25v8H45z"/><path fill="#86efac" d="m92 78 6 6 14-16 6 5-20 23-12-12z"/></svg>`;
 
 const MOBILE_HTML = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -586,6 +815,9 @@ const MOBILE_HTML = `<!DOCTYPE html>
   .no-date label { margin: 0; font-size: 13px; color: #475569; }
   .date-group { transition: opacity 0.2s; }
   .date-group.hidden { opacity: 0.3; pointer-events: none; }
+  .completed-toggle { display: flex; align-items: center; gap: 8px; margin: 2px 0 14px; }
+  .completed-toggle input { width: 18px; height: 18px; accent-color: #3b82f6; }
+  .completed-toggle label { font-size: 14px; color: #475569; }
 </style>
 </head>
 <body>
@@ -629,7 +861,10 @@ const MOBILE_HTML = `<!DOCTYPE html>
 	    <div class="input-group">
 	      <label>分类</label>
 	      <select id="category">
-	        <option value="">加载中...</option>
+        <option value="default-starred" selected>星标</option>
+        <option value="default-work">工作</option>
+        <option value="default-life">生活</option>
+        <option value="default-learning">学习</option>
 	      </select>
 	    </div>
   </div>
@@ -644,6 +879,10 @@ const MOBILE_HTML = `<!DOCTYPE html>
   <div class="input-group">
     <label>预计时长 (小时)</label>
     <input type="number" id="duration" value="1" min="0.1" step="0.1" inputmode="decimal">
+  </div>
+  <div class="completed-toggle">
+    <input type="checkbox" id="completed">
+    <label for="completed">已完成</label>
   </div>
   <div class="input-group">
     <label>备注</label>
@@ -731,6 +970,7 @@ const MOBILE_HTML = `<!DOCTYPE html>
       dueDate: noDate ? '' : document.getElementById('dueDate').value,
       noTimeLimit: noDate,
       duration: Math.round((parseFloat(document.getElementById('duration').value) || 0) * 60),
+      completed: document.getElementById('completed').checked,
       source: 'web'
     };
 
@@ -749,9 +989,10 @@ const MOBILE_HTML = `<!DOCTYPE html>
       });
 
       if (res.ok) {
-        showToast('任务已添加', 'success');
+        showToast(body.completed ? '已添加为完成任务' : '任务已添加', 'success');
         document.getElementById('title').value = '';
         document.getElementById('description').value = '';
+        document.getElementById('completed').checked = false;
         document.getElementById('title').focus();
       } else {
         var err = await res.json().catch(function() { return {}; });
@@ -784,31 +1025,33 @@ const MOBILE_HTML = `<!DOCTYPE html>
 
   function loadCategories() {
     var s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-    if (!s.apiUrl) return;
-    fetch(s.apiUrl + '/api/categories')
-      .then(function(r) { return r.json(); })
+    if (!s.apiUrl || !s.apiToken) return;
+    fetch(s.apiUrl + '/api/categories', {
+      headers: { 'Authorization': 'Bearer ' + (s.apiToken || '') }
+    })
+      .then(function(r) {
+        if (!r.ok) throw new Error('Unable to load categories');
+        return r.json();
+      })
       .then(function(data) {
-        var cats = data.categories || [];
-        var sel = document.getElementById('category');
-        sel.innerHTML = '';
-        if (cats.length === 0) {
-          sel.innerHTML = '<option value="">其他</option>';
-          return;
+        var cats = Array.isArray(data.categories) ? data.categories.slice() : [];
+        if (!cats.some(function(c) { return c && c.name === '星标'; })) {
+          cats.unshift({ id: 'default-starred', name: '星标', color: '#f59e0b' });
         }
+        var sel = document.getElementById('category');
+        if (cats.length === 0) return;
+        sel.innerHTML = '';
         var defaultIdx = 0;
         cats.forEach(function(c, i) {
           var opt = document.createElement('option');
-          opt.value = c.name;
+          opt.value = c.id || c.name;
           opt.textContent = c.name;
           sel.appendChild(opt);
-          if (c.name === '其他') defaultIdx = i;
+          if (c.name === '星标') defaultIdx = i;
         });
         sel.selectedIndex = defaultIdx;
       })
-      .catch(function() {
-        var sel = document.getElementById('category');
-        sel.innerHTML = '<option value="">其他</option>';
-      });
+      .catch(function() {});
   }
 
   loadCategories();

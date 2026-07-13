@@ -1,8 +1,9 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
-    "./**/*.html",
-    "./**/*.ts",
+    "./popup/**/*.html",
+    "./newtab/**/*.html",
+    "./shared/**/*.ts",
   ],
   darkMode: 'class',
   theme: {

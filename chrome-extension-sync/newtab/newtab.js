@@ -1,3 +1,4 @@
+"use strict";
 var TaskManager = (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -39,25 +40,36 @@ var TaskManager = (() => {
     restoreBackup: () => restoreBackup,
     saveData: () => saveData,
     syncFromCloud: () => syncFromCloud,
+    syncIncrementally: () => syncIncrementally,
     syncToCloud: () => syncToCloud,
     validateImportData: () => validateImportData
   });
-  var STORAGE_KEY, LOCAL_BACKUP_KEY, generateId, defaultCategories, getDefaultData, loadFromLocal, saveToLocal, dedupeCategories, CLOUD_SYNC_SETTINGS_KEY, getCloudSettings, CLOUD_BASE_AT_KEY, getCloudBaseAt, setCloudBaseAt, syncToCloud, syncFromCloud, isCloudConfigured, loadData, fixRecurringTasks, isTaskMatchRepeat, saveData, cloudSyncWrite, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
+  var STORAGE_KEY, LOCAL_BACKUP_KEY, generateId, DEFAULT_CATEGORY_DEFINITIONS, defaultCategoryByName, createDefaultCategories, defaultCategories, getDefaultData, loadFromLocal, saveToLocal, dedupeCategories, CLOUD_SYNC_SETTINGS_KEY, getCloudSettings, CLOUD_BASE_AT_KEY, getCloudBaseAt, setCloudBaseAt, syncToCloud, syncFromCloud, normalizeStorageData, INCREMENTAL_CURSOR_KEY, INCREMENTAL_DEVICE_KEY, INCREMENTAL_SHADOW_KEY, INCREMENTAL_CLOCK_KEY, OUTGOING_SYNC_BATCH, lastSyncTimestamp, syncQueue, recordKey, nextSyncTimestamp, cloneStorageData, enqueueSync, getLocalValue, setLocalValues, getSyncDeviceId, getSyncShadow, getSettingsPayload, samePayload, buildCurrentRecords, buildLocalChanges, applyRemoteChanges, isVirginDefaultData, syncIncrementallyNow, syncIncrementally, isCloudConfigured, loadData, fixRecurringTasks, isTaskMatchRepeat, saveData, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
   var init_storage = __esm({
     "shared/storage.ts"() {
+      "use strict";
       STORAGE_KEY = "tm_data";
       LOCAL_BACKUP_KEY = "tm_local_backup";
       generateId = () => {
         return Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
       };
-      defaultCategories = [
-        { id: generateId(), name: "\u5DE5\u4F5C", color: "#3b82f6" },
-        { id: generateId(), name: "\u751F\u6D3B", color: "#10b981" },
-        { id: generateId(), name: "\u5B66\u4E60", color: "#8b5cf6" }
+      DEFAULT_CATEGORY_DEFINITIONS = [
+        { id: "default-starred", name: "\u661F\u6807", color: "#f59e0b" },
+        { id: "default-work", name: "\u5DE5\u4F5C", color: "#3b82f6" },
+        { id: "default-life", name: "\u751F\u6D3B", color: "#10b981" },
+        { id: "default-learning", name: "\u5B66\u4E60", color: "#8b5cf6" }
       ];
+      defaultCategoryByName = new Map(
+        DEFAULT_CATEGORY_DEFINITIONS.map((category) => [category.name, category])
+      );
+      createDefaultCategories = () => {
+        const updatedAt = Date.now();
+        return DEFAULT_CATEGORY_DEFINITIONS.map((category) => ({ ...category, updatedAt }));
+      };
+      defaultCategories = createDefaultCategories();
       getDefaultData = () => ({
         tasks: [],
-        categories: defaultCategories,
+        categories: createDefaultCategories(),
         defaultCategory: "",
         hideCompleted: false,
         hideOverdue: false,
@@ -190,30 +202,261 @@ var TaskManager = (() => {
           return { data: null, error: String(e) };
         }
       };
+      normalizeStorageData = (data) => {
+        const categoryIdMap = /* @__PURE__ */ new Map();
+        const categoriesByName = /* @__PURE__ */ new Map();
+        const sourceCategories = Array.isArray(data.categories) ? data.categories : createDefaultCategories();
+        for (const category of sourceCategories) {
+          if (!category?.id || !category.name)
+            continue;
+          const definition = defaultCategoryByName.get(category.name);
+          const normalized = definition ? { ...category, id: definition.id, name: definition.name } : { ...category };
+          if (normalized.id !== category.id)
+            categoryIdMap.set(category.id, normalized.id);
+          const existing = categoriesByName.get(normalized.name);
+          if (!existing || (normalized.updatedAt || 0) >= (existing.updatedAt || 0)) {
+            categoriesByName.set(normalized.name, normalized);
+          }
+        }
+        const categories = dedupeCategories([...categoriesByName.values()]);
+        const categoryNameToId = new Map(categories.map((category) => [category.name, category.id]));
+        const resolveCategoryId = (id) => categoryIdMap.get(id) || categoryNameToId.get(id) || id;
+        return {
+          ...data,
+          tasks: Array.isArray(data.tasks) ? data.tasks.map((task) => ({ ...task, category: resolveCategoryId(task.category || "") })) : [],
+          categories,
+          defaultCategory: resolveCategoryId(data.defaultCategory || "")
+        };
+      };
+      INCREMENTAL_CURSOR_KEY = "tm_incremental_sync_cursor";
+      INCREMENTAL_DEVICE_KEY = "tm_incremental_sync_device";
+      INCREMENTAL_SHADOW_KEY = "tm_incremental_sync_shadow";
+      INCREMENTAL_CLOCK_KEY = "tm_incremental_sync_clock";
+      OUTGOING_SYNC_BATCH = 400;
+      lastSyncTimestamp = 0;
+      syncQueue = Promise.resolve();
+      recordKey = (type, id) => `${type}:${id}`;
+      nextSyncTimestamp = () => {
+        lastSyncTimestamp = Math.max(Date.now(), lastSyncTimestamp + 1);
+        return lastSyncTimestamp;
+      };
+      cloneStorageData = (data) => JSON.parse(JSON.stringify(data));
+      enqueueSync = (operation) => {
+        const next = syncQueue.then(operation, operation);
+        syncQueue = next.then(() => void 0, () => void 0);
+        return next;
+      };
+      getLocalValue = async (key, fallback) => {
+        return new Promise((resolve) => {
+          chrome.storage.local.get([key], (result) => resolve(result[key] || fallback));
+        });
+      };
+      setLocalValues = async (values) => {
+        return new Promise((resolve, reject) => {
+          chrome.storage.local.set(values, () => {
+            if (chrome.runtime.lastError)
+              reject(chrome.runtime.lastError);
+            else
+              resolve();
+          });
+        });
+      };
+      getSyncDeviceId = async () => {
+        const existing = await getLocalValue(INCREMENTAL_DEVICE_KEY, "");
+        if (existing)
+          return existing;
+        const id = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : generateId();
+        await setLocalValues({ [INCREMENTAL_DEVICE_KEY]: id });
+        return id;
+      };
+      getSyncShadow = async () => {
+        const shadow = await getLocalValue(INCREMENTAL_SHADOW_KEY, null);
+        return shadow && shadow.records ? shadow : { records: {} };
+      };
+      getSettingsPayload = (data) => ({
+        defaultCategory: data.defaultCategory,
+        hideCompleted: data.hideCompleted,
+        hideOverdue: data.hideOverdue,
+        showNoTimeLimitOnly: data.showNoTimeLimitOnly,
+        darkMode: data.darkMode,
+        weeklyGoalMinutes: data.weeklyGoalMinutes,
+        weeklyGoalAnchor: data.weeklyGoalAnchor
+      });
+      samePayload = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      buildCurrentRecords = (data, shadow) => {
+        const records = {};
+        for (const task of data.tasks) {
+          if (!task.updatedAt)
+            task.updatedAt = nextSyncTimestamp();
+          const id = String(task.id);
+          records[recordKey("task", id)] = {
+            type: "task",
+            id,
+            payload: task,
+            deleted: false,
+            updatedAt: task.updatedAt
+          };
+        }
+        for (const category of data.categories) {
+          if (!category.updatedAt)
+            category.updatedAt = nextSyncTimestamp();
+          const id = String(category.id);
+          records[recordKey("category", id)] = {
+            type: "category",
+            id,
+            payload: category,
+            deleted: false,
+            updatedAt: category.updatedAt
+          };
+        }
+        const settingsPayload = getSettingsPayload(data);
+        const previous = shadow.records[recordKey("settings", "app")];
+        const settingsUpdatedAt = previous && samePayload(settingsPayload, previous.payload) ? previous.updatedAt : nextSyncTimestamp();
+        data.syncSettingsUpdatedAt = settingsUpdatedAt;
+        records[recordKey("settings", "app")] = {
+          type: "settings",
+          id: "app",
+          payload: settingsPayload,
+          deleted: false,
+          updatedAt: settingsUpdatedAt
+        };
+        return records;
+      };
+      buildLocalChanges = (current, shadow) => {
+        const changes = [];
+        for (const [key, record] of Object.entries(current)) {
+          const previous = shadow.records[key];
+          if (!previous || previous.deleted || !samePayload(record.payload, previous.payload)) {
+            if (previous && record.updatedAt <= previous.updatedAt) {
+              record.updatedAt = nextSyncTimestamp();
+              if (record.payload)
+                record.payload.updatedAt = record.updatedAt;
+            }
+            changes.push(record);
+          }
+        }
+        for (const previous of Object.values(shadow.records)) {
+          const key = recordKey(previous.type, previous.id);
+          if (!previous.deleted && !current[key]) {
+            changes.push({ ...previous, payload: null, deleted: true, updatedAt: nextSyncTimestamp() });
+          }
+        }
+        return changes;
+      };
+      applyRemoteChanges = (data, changes) => {
+        const tasks = new Map(data.tasks.map((task) => [task.id, task]));
+        const categories = new Map(data.categories.map((category) => [category.id, category]));
+        let settings = { ...data };
+        for (const change of changes) {
+          if (change.type === "task") {
+            const local = tasks.get(change.id);
+            if (local && local.updatedAt > change.updatedAt)
+              continue;
+            if (change.deleted)
+              tasks.delete(change.id);
+            else if (change.payload)
+              tasks.set(change.id, change.payload);
+          } else if (change.type === "category") {
+            const local = categories.get(change.id);
+            if (local && (local.updatedAt || 0) > change.updatedAt)
+              continue;
+            if (change.deleted)
+              categories.delete(change.id);
+            else if (change.payload)
+              categories.set(change.id, change.payload);
+          } else if (!change.deleted && change.payload) {
+            if ((settings.syncSettingsUpdatedAt || 0) <= change.updatedAt) {
+              settings = { ...settings, ...change.payload, syncSettingsUpdatedAt: change.updatedAt };
+            }
+          }
+        }
+        return normalizeStorageData({
+          ...settings,
+          tasks: [...tasks.values()],
+          categories: dedupeCategories([...categories.values()])
+        });
+      };
+      isVirginDefaultData = (data) => {
+        if (data.tasks.length > 0 || data.categories.length !== DEFAULT_CATEGORY_DEFINITIONS.length)
+          return false;
+        const hasDefaultCategories = data.categories.every((category) => {
+          const definition = defaultCategoryByName.get(category.name);
+          return definition?.id === category.id && definition.color === category.color;
+        });
+        return hasDefaultCategories && !data.defaultCategory && !data.hideCompleted && !data.hideOverdue && !data.showNoTimeLimitOnly && !data.darkMode && !data.weeklyGoalMinutes && !data.weeklyGoalAnchor;
+      };
+      syncIncrementallyNow = async (inputData) => {
+        try {
+          const data = normalizeStorageData(inputData);
+          const settings = await getCloudSettings();
+          if (!settings.apiUrl || !settings.apiToken)
+            return { success: false, error: "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" };
+          const [deviceId, shadow, initialCursor, storedClock] = await Promise.all([
+            getSyncDeviceId(),
+            getSyncShadow(),
+            getLocalValue(INCREMENTAL_CURSOR_KEY, 0),
+            getLocalValue(INCREMENTAL_CLOCK_KEY, 0)
+          ]);
+          lastSyncTimestamp = Math.max(lastSyncTimestamp, storedClock);
+          let cursor = initialCursor;
+          let mergedData = data;
+          const firstSync = initialCursor === 0 && Object.keys(shadow.records).length === 0;
+          let pending = firstSync && isVirginDefaultData(mergedData) ? [] : buildLocalChanges(buildCurrentRecords(mergedData, shadow), shadow);
+          let hasMore = true;
+          const receivedChanges = [];
+          while (pending.length > 0 || hasMore) {
+            const outgoing = pending.splice(0, OUTGOING_SYNC_BATCH);
+            const resp = await fetch(`${settings.apiUrl}/api/sync/incremental`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${settings.apiToken}`
+              },
+              body: JSON.stringify({ deviceId, cursor, changes: outgoing })
+            });
+            if (!resp.ok) {
+              const error = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+              return { success: false, error: error.error || `HTTP ${resp.status}` };
+            }
+            const result = await resp.json();
+            const remoteChanges = Array.isArray(result.changes) ? result.changes : [];
+            const rejectedChanges = Array.isArray(result.rejectedChanges) ? result.rejectedChanges : [];
+            receivedChanges.push(...remoteChanges, ...rejectedChanges);
+            mergedData = applyRemoteChanges(mergedData, [...remoteChanges, ...rejectedChanges]);
+            cursor = Number.isInteger(result.cursor) ? result.cursor : cursor;
+            hasMore = result.hasMore === true;
+          }
+          const latestLocal = await loadFromLocal();
+          const finalData = latestLocal ? applyRemoteChanges(normalizeStorageData(latestLocal), receivedChanges) : mergedData;
+          const finalRecords = buildCurrentRecords(mergedData, { records: {} });
+          await Promise.all([
+            saveToLocal(finalData),
+            setLocalValues({
+              [INCREMENTAL_CURSOR_KEY]: cursor,
+              [INCREMENTAL_SHADOW_KEY]: { records: finalRecords },
+              [INCREMENTAL_CLOCK_KEY]: lastSyncTimestamp
+            })
+          ]);
+          return { success: true, data: finalData };
+        } catch (e) {
+          return { success: false, error: String(e) };
+        }
+      };
+      syncIncrementally = (data) => enqueueSync(() => syncIncrementallyNow(cloneStorageData(data)));
       isCloudConfigured = async () => {
         const settings = await getCloudSettings();
         return !!(settings.apiUrl && settings.apiToken);
       };
       loadData = async () => {
         const localBackup = await loadFromLocal();
-        if (localBackup && localBackup.tasks && localBackup.tasks.length > 0) {
-          localBackup.tasks = localBackup.tasks.map((t) => ({
+        if (localBackup) {
+          const normalized = normalizeStorageData(localBackup);
+          normalized.tasks = normalized.tasks.map((t) => ({
             ...t,
             updatedAt: t.updatedAt || t.createdAt || Date.now()
           }));
-          return localBackup;
+          return normalized;
         }
-        const cloudResult = await syncFromCloud();
-        if (cloudResult.data && cloudResult.data.tasks && cloudResult.data.tasks.length > 0) {
-          cloudResult.data.tasks = cloudResult.data.tasks.map((t) => ({
-            ...t,
-            updatedAt: t.updatedAt || t.createdAt || Date.now()
-          }));
-          await saveToLocal(cloudResult.data);
-          console.log("[TaskMaster] loadData: \u672C\u5730\u4E3A\u7A7A\uFF0C\u4ECE\u4E91\u7AEF\u6062\u590D", cloudResult.data.tasks.length, "\u6761");
-          return cloudResult.data;
-        }
-        console.warn("[TaskMaster] \u672C\u5730\u548C\u4E91\u7AEF\u90FD\u4E3A\u7A7A\uFF0C\u8FD4\u56DE\u9ED8\u8BA4\u6570\u636E");
         return getDefaultData();
       };
       fixRecurringTasks = (tasks) => tasks.map((t) => {
@@ -265,23 +508,17 @@ var TaskManager = (() => {
             return false;
         }
       };
-      saveData = async (data) => {
-        data.tasks = fixRecurringTasks(data.tasks);
-        data.categories = dedupeCategories(data.categories);
-        await saveToLocal(data);
-        cloudSyncWrite(data).catch((e) => console.warn("[TaskMaster] cloud sync write failed:", e));
-      };
-      cloudSyncWrite = async (data) => {
-        const result = await syncToCloud(data);
-        if (result.success)
-          return;
-        if (result.conflict) {
-          console.warn("[TaskMaster] cloud sync conflict (stale base), refreshing base from cloud");
-          await syncFromCloud().catch(() => {
-          });
-          return;
-        }
-        console.warn("[TaskMaster] cloud sync failed:", result.error);
+      saveData = async (data, onRemoteData, onSyncResult) => {
+        const localData = normalizeStorageData(data);
+        localData.tasks = fixRecurringTasks(localData.tasks);
+        await saveToLocal(localData);
+        syncIncrementally(localData).then((result) => {
+          if (result.success && result.data)
+            onRemoteData?.(result.data);
+          else if (result.error !== "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E")
+            console.warn("[TaskMaster] incremental sync failed:", result.error);
+          onSyncResult?.(result);
+        }).catch((e) => console.warn("[TaskMaster] incremental sync failed:", e));
       };
       BACKUP_PREFIX = "tm_auto_backup_";
       MAX_BACKUPS = 3;
@@ -411,7 +648,7 @@ var TaskManager = (() => {
       exportData = async () => {
         const data = await loadData();
         const exportObj = {
-          version: "1.2.0",
+          version: "3.10.0",
           exportTime: (/* @__PURE__ */ new Date()).toISOString(),
           data
         };
@@ -484,9 +721,10 @@ var TaskManager = (() => {
       toast.remove();
     }, 3e3);
   }
-  var syncStatus, statusChangeCallback, statusTimeoutId, reRenderFn, getSyncStatus, setSyncStatus, onSyncStatusChange, markLocalSave, markSaveComplete, initSyncMonitor;
+  var syncStatus, statusChangeCallback, statusTimeoutId, reRenderFn, getSyncStatus, setSyncStatus, onSyncStatusChange, markLocalSave, markSaveComplete, markCloudSynced, initSyncMonitor, markSyncError, markRemoteUpdated;
   var init_sync = __esm({
     "shared/sync.ts"() {
+      "use strict";
       syncStatus = "idle";
       statusChangeCallback = null;
       statusTimeoutId = null;
@@ -503,6 +741,9 @@ var TaskManager = (() => {
         setSyncStatus("saving");
       };
       markSaveComplete = () => {
+        setSyncStatus("local-saved");
+      };
+      markCloudSynced = () => {
         setSyncStatus("synced");
         if (statusTimeoutId)
           clearTimeout(statusTimeoutId);
@@ -515,6 +756,18 @@ var TaskManager = (() => {
       };
       initSyncMonitor = (reRender2) => {
         reRenderFn = reRender2;
+      };
+      markSyncError = () => {
+        setSyncStatus("error");
+      };
+      markRemoteUpdated = () => {
+        setSyncStatus("remote-updated");
+        if (statusTimeoutId)
+          clearTimeout(statusTimeoutId);
+        statusTimeoutId = setTimeout(() => {
+          if (syncStatus === "remote-updated")
+            setSyncStatus("idle");
+        }, 3e3);
       };
     }
   });
@@ -538,6 +791,7 @@ var TaskManager = (() => {
     getState: () => getState,
     getStats: () => getStats,
     getTodayStr: () => getTodayStr,
+    getWeeklyGoalStats: () => getWeeklyGoalStats,
     isOverdue: () => isOverdue,
     isTaskDueOnDate: () => isTaskDueOnDate,
     loadState: () => loadState,
@@ -550,9 +804,10 @@ var TaskManager = (() => {
     updateCategory: () => updateCategory,
     updateTask: () => updateTask
   });
-  var escapeHtml, formatDate, parseDate, formatHours, getDateLabel, getTodayStr, state, getState, setState, resetEditingTask, getRemainingTime, isOverdue, isTaskDueOnDate, getPriorityColor, getCatColor, getCatName, loadState, persistState, getFilteredTasks, addTask, updateTask, deleteTask, toggleThrottleMap, toggleTask, moveTaskToDate, getNextUncompletedDate, addCategory, updateCategory, deleteCategory, getStats;
+  var escapeHtml, formatDate, parseDate, formatHours, getDateLabel, getTodayStr, state, getState, setState, resetEditingTask, getRemainingTime, isOverdue, isTaskDueOnDate, getPriorityColor, getCatColor, getCatName, applyStorageData, loadState, persistState, getFilteredTasks, addTask, updateTask, deleteTask, toggleThrottleMap, toggleTask, moveTaskToDate, getNextUncompletedDate, addCategory, updateCategory, deleteCategory, getWeeklyGoalStats, getStats;
   var init_task = __esm({
     "shared/task.ts"() {
+      "use strict";
       init_storage();
       init_sync();
       escapeHtml = (str) => {
@@ -677,15 +932,16 @@ var TaskManager = (() => {
         const c = state.categories.find((x) => x.id === id);
         return c ? c.name : "";
       };
-      loadState = async () => {
-        const data = await loadData();
+      applyStorageData = (data) => {
         const catMap = /* @__PURE__ */ new Map();
         const cats = data.categories || defaultCategories;
         for (const c of cats) {
-          if (catMap.has(c.name)) {
-            catMap.get(c.name).color = c.color;
+          const normalized = { ...c, updatedAt: c.updatedAt || Date.now() };
+          if (catMap.has(normalized.name)) {
+            const existing = catMap.get(normalized.name);
+            catMap.set(normalized.name, { ...existing, color: normalized.color, updatedAt: normalized.updatedAt });
           } else {
-            catMap.set(c.name, { ...c });
+            catMap.set(normalized.name, normalized);
           }
         }
         state = {
@@ -695,6 +951,17 @@ var TaskManager = (() => {
           editingTask: null,
           draggedTaskId: null
         };
+      };
+      loadState = async () => {
+        const data = await loadData();
+        applyStorageData(data);
+        syncIncrementally(data).then((result) => {
+          if (result.success && result.data) {
+            applyStorageData(result.data);
+            markRemoteUpdated();
+          }
+        }).catch(() => {
+        });
       };
       persistState = async () => {
         markLocalSave();
@@ -706,7 +973,18 @@ var TaskManager = (() => {
             hideCompleted: state.hideCompleted,
             hideOverdue: state.hideOverdue,
             showNoTimeLimitOnly: state.showNoTimeLimitOnly,
-            darkMode: state.darkMode
+            darkMode: state.darkMode,
+            weeklyGoalMinutes: state.weeklyGoalMinutes,
+            weeklyGoalAnchor: state.weeklyGoalAnchor,
+            syncSettingsUpdatedAt: state.syncSettingsUpdatedAt
+          }, (remoteData) => {
+            applyStorageData(remoteData);
+            markRemoteUpdated();
+          }, (result) => {
+            if (result.success)
+              markCloudSynced();
+            else if (result.error !== "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E")
+              markSyncError();
           });
           markSaveComplete();
         } catch {
@@ -742,7 +1020,7 @@ var TaskManager = (() => {
           id: generateId(),
           createdAt: now,
           updatedAt: now,
-          completed: false,
+          completed: task.completed || false,
           completedDates: []
         };
         if (newTask.repeatType && newTask.repeatType !== "none" && !newTask.noTimeLimit) {
@@ -815,21 +1093,83 @@ var TaskManager = (() => {
           return;
         if (state.categories.some((c) => c.name === trimmed))
           return;
-        state.categories.push({ id: generateId(), name: trimmed, color });
+        state.categories.push({ id: generateId(), name: trimmed, color, updatedAt: Date.now() });
       };
       updateCategory = (id, name, color) => {
         const cat = state.categories.find((c) => c.id === id);
         if (cat) {
           cat.name = name;
           cat.color = color;
+          cat.updatedAt = Date.now();
         }
       };
       deleteCategory = (id) => {
         if (state.categories.length > 1) {
+          const fallback = state.categories.find((category) => category.id !== id);
+          if (!fallback)
+            return;
+          const now = Date.now();
+          state.tasks = state.tasks.map((task) => task.category === id ? { ...task, category: fallback.id, updatedAt: now } : task);
           state.categories = state.categories.filter((c) => c.id !== id);
+          if (state.defaultCategory === id)
+            state.defaultCategory = fallback.id;
           if (state.filterCategory === id)
             state.filterCategory = "all";
         }
+      };
+      getWeeklyGoalStats = () => {
+        const { weeklyGoalMinutes = 600, weeklyGoalAnchor } = state;
+        let anchor = weeklyGoalAnchor;
+        if (!anchor) {
+          let earliest = Infinity;
+          for (const t of state.tasks) {
+            if (t.completed && (!t.repeatType || t.repeatType === "none")) {
+              const date = t.completedAt || parseDate(t.dueDate).getTime();
+              if (date < earliest)
+                earliest = date;
+            }
+            if (t.repeatType && t.repeatType !== "none" && t.completedDates?.length > 0) {
+              const firstDate = parseDate(t.completedDates[0]).getTime();
+              if (firstDate < earliest)
+                earliest = firstDate;
+            }
+          }
+          if (earliest === Infinity)
+            return null;
+          anchor = formatDate(new Date(earliest));
+        }
+        const anchorMs = parseDate(anchor).getTime();
+        const nowMs = Date.now();
+        const weeksElapsed = Math.max(0.1, (nowMs - anchorMs) / (7 * 864e5));
+        let totalMinutes = 0;
+        let completedCount = 0;
+        for (const t of state.tasks) {
+          if (t.completed && (!t.repeatType || t.repeatType === "none")) {
+            totalMinutes += t.duration;
+            completedCount++;
+          }
+          if (t.repeatType && t.repeatType !== "none" && t.completedDates?.length > 0) {
+            totalMinutes += t.duration * t.completedDates.length;
+            completedCount += t.completedDates.length;
+          }
+        }
+        const expectedMinutes = Math.round(weeklyGoalMinutes * weeksElapsed);
+        const pace = Math.round(totalMinutes / weeksElapsed * 10) / 10;
+        const gap = totalMinutes - expectedMinutes;
+        const progress = expectedMinutes > 0 ? Math.min(100, Math.round(totalMinutes / expectedMinutes * 100)) : 0;
+        return {
+          anchorDate: anchor,
+          weeksElapsed: Math.round(weeksElapsed * 10) / 10,
+          weeklyGoalMinutes,
+          expectedMinutes,
+          actualMinutes: totalMinutes,
+          completedCount,
+          paceMinutesPerWeek: pace,
+          gapMinutes: gap,
+          gapWeeks: Math.round(Math.abs(gap) / weeklyGoalMinutes * 10) / 10,
+          progressPercent: progress,
+          behindExpected: gap < 0
+        };
       };
       getStats = () => {
         const tasks = getFilteredTasks();
@@ -863,6 +1203,7 @@ var TaskManager = (() => {
     getRemainingTime: () => getRemainingTime,
     getState: () => getState,
     getStats: () => getStats,
+    getWeeklyGoalStats: () => getWeeklyGoalStats,
     isOverdue: () => isOverdue,
     isTaskDueOnDate: () => isTaskDueOnDate,
     loadState: () => loadState,
@@ -873,6 +1214,7 @@ var TaskManager = (() => {
     renderCategoryModal: () => renderCategoryModal,
     renderDayView: () => renderDayView,
     renderFilters: () => renderFilters,
+    renderGoalSettingsModal: () => renderGoalSettingsModal,
     renderHeader: () => renderHeader,
     renderListView: () => renderListView,
     renderMobileSyncPanel: () => renderMobileSyncPanel,
@@ -883,6 +1225,7 @@ var TaskManager = (() => {
     renderTaskItem: () => renderTaskItem,
     renderTaskList: () => renderTaskList,
     renderWeekView: () => renderWeekView,
+    renderWeeklyGoalCard: () => renderWeeklyGoalCard,
     resetEditingTask: () => resetEditingTask,
     setState: () => setState,
     toggleTask: () => toggleTask,
@@ -902,6 +1245,9 @@ var TaskManager = (() => {
       saving: `<span id="syncIndicator" class="p-2 rounded-lg transition text-blue-500" title="\u6B63\u5728\u540C\u6B65...">
       <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
     </span>`,
+      "local-saved": `<span id="syncIndicator" class="p-2 rounded-lg transition text-amber-500" title="\u5DF2\u4FDD\u5B58\u5728\u672C\u673A\uFF0C\u7B49\u5F85\u4E91\u540C\u6B65">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    </span>`,
       synced: `<span id="syncIndicator" class="p-2 rounded-lg transition text-green-500" title="\u5DF2\u540C\u6B65">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
     </span>`,
@@ -914,14 +1260,147 @@ var TaskManager = (() => {
     };
     return icons[status];
   };
+  var renderWeeklyGoalCard = () => {
+    const stats = getWeeklyGoalStats();
+    if (!stats) {
+      return `
+      <div class="goal-card goal-card-empty" id="weeklyGoalCard">
+        <div class="goal-card-header">
+          <div class="goal-card-label">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            <span>\u6BCF\u5468\u8282\u594F</span>
+          </div>
+        </div>
+        <p class="goal-card-empty-copy">\u6682\u65E0\u53EF\u7EDF\u8BA1\u7684\u5B8C\u6210\u65F6\u957F</p>
+        <button id="openGoalSettingsBtn" class="goal-adjust-btn">\u8BBE\u7F6E\u5468\u76EE\u6807</button>
+      </div>
+    `;
+    }
+    const formatWeeks = (w) => {
+      if (w < 1)
+        return "<1 \u5468";
+      return `${Math.floor(w)} \u5468` + (w % 1 >= 0.5 ? "\u534A" : "");
+    };
+    const formatH = (m) => (m / 60).toFixed(1) + "h";
+    const gapClass = stats.behindExpected ? "gap-negative" : "gap-positive";
+    const gapSign = stats.behindExpected ? "" : "+";
+    const expectedPos = Math.min(100, stats.progressPercent);
+    return `
+    <div class="goal-card" id="weeklyGoalCard">
+      <div class="goal-card-header">
+        <div class="goal-card-label">
+          <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          <span>\u6BCF\u5468\u8282\u594F</span>
+        </div>
+        <span class="goal-card-target">\u76EE\u6807 ${formatH(stats.weeklyGoalMinutes)} / \u5468</span>
+      </div>
+      <div class="goal-card-anchor"><strong>\u951A\u70B9\uFF1A</strong>${stats.anchorDate} \u7B2C 1 \u5468</div>
+      <div class="goal-card-row">
+        <div class="goal-card-stat">
+          <div class="stat-label">\u671F\u671B\u5DE5\u65F6</div>
+          <div class="stat-value">${formatH(stats.expectedMinutes)}<span class="unit">h</span></div>
+          <div class="stat-sub stat-neutral">\u5386\u65F6 ${formatWeeks(stats.weeksElapsed)}</div>
+        </div>
+        <div class="goal-card-stat">
+          <div class="stat-label">\u5B9E\u9645\u5B8C\u6210</div>
+          <div class="stat-value">${formatH(stats.actualMinutes)}<span class="unit">h</span></div>
+          <div class="stat-sub stat-green">${stats.completedCount} \u4E2A\u4EFB\u52A1</div>
+        </div>
+        <div class="goal-card-stat">
+          <div class="stat-label">\u5DEE\u8DDD</div>
+          <div class="stat-value ${gapClass}">${gapSign}${formatH(Math.abs(stats.gapMinutes))}<span class="unit">h</span></div>
+          <div class="stat-sub ${gapClass}">${stats.behindExpected ? `\u843D\u540E\u7EA6 ${stats.gapWeeks} \u5468` : `\u9886\u5148\u7EA6 ${stats.gapWeeks} \u5468`}</div>
+        </div>
+      </div>
+      <div class="goal-card-bar-wrap">
+        <div class="goal-bar-labels">
+          <span>\u5B8C\u6210\u8FDB\u5EA6</span>
+          <span class="pace">\u5B9E\u9645\u8282\u594F ${formatH(stats.paceMinutesPerWeek)}/\u5468 \xB7 \u76EE\u6807 ${formatH(stats.weeklyGoalMinutes)}/\u5468</span>
+        </div>
+        <div class="goal-bar-bg">
+          <div class="goal-bar-fill" style="width:${Math.min(100, stats.progressPercent)}%;"></div>
+          <div class="goal-bar-line" style="left:${expectedPos}%;"></div>
+        </div>
+        <div class="goal-bar-label">
+          <span>\u5F53\u524D ${formatH(stats.actualMinutes)}</span>
+          <span>\u671F\u671B ${formatH(stats.expectedMinutes)}</span>
+          <span>${stats.progressPercent}%</span>
+        </div>
+      </div>
+      <div class="goal-card-detail">
+        <div class="detail-grid">
+          <div class="detail-item">
+            <div class="label">\u5468\u76EE\u6807</div>
+            <div class="value">${formatH(stats.weeklyGoalMinutes)}</div>
+            <div class="desc">\u6BCF 7 \u5929\u671F\u671B\u5B8C\u6210\u91CF</div>
+          </div>
+          <div class="detail-item">
+            <div class="label">\u5B9E\u9645\u8282\u594F</div>
+            <div class="value">${formatH(stats.paceMinutesPerWeek)} / \u5468</div>
+            <div class="desc">\u603B\u5DE5\u65F6 \xF7 \u603B\u5468\u6570</div>
+          </div>
+          <div class="detail-item">
+            <div class="label">\u5B8C\u6210\u603B\u5DE5\u65F6</div>
+            <div class="value">${formatH(stats.actualMinutes)}</div>
+            <div class="desc">${stats.completedCount} \u4E2A\u5DF2\u5B8C\u6210\u4EFB\u52A1\u5408\u8BA1</div>
+          </div>
+          <div class="detail-item">
+            <div class="label">\u4EFB\u52A1\u5E73\u5747\u65F6\u957F</div>
+            <div class="value">${formatH(stats.completedCount > 0 ? stats.actualMinutes / stats.completedCount : 0)}</div>
+            <div class="desc">\u603B\u5DE5\u65F6 \xF7 \u4EFB\u52A1\u6570</div>
+          </div>
+        </div>
+        <button id="adjustGoalAnchorBtn" class="goal-adjust-btn">\u8C03\u6574\u8D77\u59CB\u951A\u70B9</button>
+      </div>
+    </div>
+  `;
+  };
+  var renderGoalSettingsModal = () => {
+    const { weeklyGoalMinutes = 600, weeklyGoalAnchor } = getState();
+    const anchorDate = weeklyGoalAnchor || formatDate(/* @__PURE__ */ new Date());
+    return `
+    <div id="goalSettingsModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[90%] max-w-sm p-6">
+        <h3 class="text-lg font-semibold mb-4">\u6BCF\u5468\u76EE\u6807\u8BBE\u7F6E</h3>
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium mb-1">\u6BCF\u5468\u76EE\u6807\u65F6\u957F\uFF08\u5C0F\u65F6\uFF09</label>
+            <input type="number" id="goalWeeklyHours" value="${(weeklyGoalMinutes / 60).toFixed(1)}" min="0.5" step="0.5" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">\u8D77\u59CB\u951A\u70B9\u65E5\u671F</label>
+            <input type="date" id="goalAnchorDate" value="${anchorDate}" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
+          </div>
+          <p class="text-xs text-gray-400">\u951A\u70B9\u7528\u4E8E\u8BA1\u7B97\u5DF2\u8FC7\u5468\u6570\u3002\u4FEE\u6539\u540E\u91CD\u65B0\u8BA1\u7B97\u671F\u671B\u503C\u3002</p>
+        </div>
+        <div class="flex gap-3 mt-6">
+          <button id="closeGoalSettingsBtn" class="flex-1 px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition text-sm">\u53D6\u6D88</button>
+          <button id="saveGoalSettingsBtn" class="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm">\u4FDD\u5B58</button>
+        </div>
+      </div>
+    </div>
+  `;
+  };
   var renderStats = () => {
     const stats = getStats();
     return `
-    <div class="flex gap-6 p-3 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 mb-4 text-sm">
-      <div><span class="text-gray-500">\u5F85\u5B8C\u6210\uFF1A</span><span class="font-medium text-orange-500">${formatHours(stats.pending)}</span></div>
-      <div><span class="text-gray-500">\u5DF2\u5B8C\u6210\uFF1A</span><span class="font-medium text-green-500">${formatHours(stats.done)}</span></div>
-      <div><span class="text-gray-500">\u4ECA\u65E5\uFF1A</span><span class="font-medium">${stats.todayDone}/${stats.todayTotal}</span></div>
-      ${stats.overdueCount > 0 ? `<div class="text-red-500">${stats.overdueCount}\u9879\u5DF2\u8FC7\u671F</div>` : ""}
+    <div id="statsRow" class="stats-row">
+      <div class="stats-row-bar">
+        <div class="stats-row-items">
+          <span class="text-gray-500">\u5F85\u5B8C\u6210\uFF1A</span><span class="font-medium text-orange-500">${formatHours(stats.pending)}</span>
+          <span class="text-gray-300 dark:text-gray-600">|</span>
+          <span class="text-gray-500">\u5DF2\u5B8C\u6210\uFF1A</span><span class="font-medium text-green-500">${formatHours(stats.done)}</span>
+          <span class="text-gray-300 dark:text-gray-600">|</span>
+          <span class="text-gray-500">\u4ECA\u65E5\uFF1A</span><span class="font-medium">${stats.todayDone}/${stats.todayTotal}</span>
+          ${stats.overdueCount > 0 ? `<span class="text-red-500 font-medium">${stats.overdueCount}\u9879\u8FC7\u671F</span>` : ""}
+        </div>
+        <button id="statsToggleBtn" class="stats-toggle-btn" title="\u6BCF\u5468\u8282\u594F">
+          <span id="statsChevron" class="stats-chevron">&#x25BE;</span>
+        </button>
+      </div>
+      <div id="weeklyGoalWrapper" style="display:none;">
+        ${renderWeeklyGoalCard()}
+      </div>
     </div>
   `;
   };
@@ -1264,6 +1743,33 @@ var TaskManager = (() => {
         return renderMonthView();
     }
   };
+  var renderQuickDates = (selectedDate) => {
+    const today = /* @__PURE__ */ new Date();
+    const dayNames = ["\u5468\u65E5", "\u5468\u4E00", "\u5468\u4E8C", "\u5468\u4E09", "\u5468\u56DB", "\u5468\u4E94", "\u5468\u516D"];
+    const todayStr = formatDate(today);
+    let html = '<div class="quick-dates-row">';
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(today);
+      d.setDate(today.getDate() + i);
+      const dateStr = formatDate(d);
+      const dayNum = d.getDate();
+      const isToday = dateStr === todayStr;
+      const isSelected = dateStr === selectedDate;
+      const label = isToday ? "\u4ECA\u5929" : i === 1 ? "\u660E\u5929" : dayNames[d.getDay()];
+      const classes = [
+        "quick-date-btn",
+        isToday ? "today" : "",
+        isSelected ? "selected" : ""
+      ].filter(Boolean).join(" ");
+      html += `<button type="button" class="${classes}" data-date="${dateStr}">
+      <span class="quick-day-name">${label}</span>
+      <span class="quick-day-num">${dayNum}</span>
+      ${isToday ? '<span class="quick-date-badge">\u4ECA\u5929</span>' : ""}
+    </button>`;
+    }
+    html += "</div>";
+    return html;
+  };
   var renderModal = () => {
     const { editingTask, categories = [], defaultCategory } = getState();
     const isEditing = editingTask !== null;
@@ -1296,14 +1802,12 @@ var TaskManager = (() => {
               <label class="block text-sm font-medium mb-1">\u4EFB\u52A1\u540D\u79F0 *</label>
               <input type="text" name="title" value="${escapeHtml(task.title)}" required class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
             </div>
-            ${isEditing ? `
-              <div class="pt-6">
-                <label class="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" id="taskCompleted" ${task.completed ? "checked" : ""} class="rounded"> 
-                  <span class="text-sm">\u5DF2\u5B8C\u6210</span>
-                </label>
-              </div>
-            ` : ""}
+            <div class="pt-6">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="taskCompleted" ${task.completed ? "checked" : ""} class="rounded">
+                <span class="text-sm">\u5DF2\u5B8C\u6210</span>
+              </label>
+            </div>
           </div>
           <div>
             <label class="block text-sm font-medium mb-1">\u5907\u6CE8</label>
@@ -1333,6 +1837,7 @@ var TaskManager = (() => {
             <div id="dueDateField" style="${task.noTimeLimit ? "opacity:0.5;pointer-events:none" : ""}">
               <div>
                 <label class="block text-sm font-medium mb-1">\u622A\u6B62\u65E5\u671F</label>
+                ${renderQuickDates(task.dueDate)}
                 <input type="date" name="dueDate" value="${task.dueDate}" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
               </div>
             </div>
@@ -1608,6 +2113,232 @@ var TaskManager = (() => {
     } else {
       document.documentElement.classList.remove("dark");
     }
+    if (!document.getElementById("weeklyGoalStyles")) {
+      const style = document.createElement("style");
+      style.id = "weeklyGoalStyles";
+      style.textContent = `
+      .stats-row {
+        margin-bottom: 16px;
+      }
+      .stats-row-bar {
+        display: flex;
+        align-items: center;
+        padding: 10px 16px;
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        font-size: 13px;
+      }
+      .dark .stats-row-bar {
+        background: #1f2937;
+        border-color: #374151;
+      }
+      .stats-row-items {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .stats-toggle-btn {
+        flex-shrink: 0;
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: none;
+        border-radius: 6px;
+        background: transparent;
+        cursor: pointer;
+        color: #cbd5e1;
+        transition: all 0.15s;
+        margin-left: 8px;
+      }
+      .stats-toggle-btn:hover {
+        background: #f1f5f9;
+        color: #6366f1;
+      }
+      .dark .stats-toggle-btn:hover {
+        background: rgba(99,102,241,0.1);
+      }
+      .stats-chevron {
+        font-size: 12px;
+        transition: transform 0.2s;
+        line-height: 1;
+      }
+      .stats-chevron.open { transform: rotate(180deg); }
+
+      .goal-card {
+        margin: 8px 0 0 0;
+        background: linear-gradient(135deg, #eef2ff 0%, #f0f9ff 100%);
+        border: 1px solid #e0e7ff;
+        border-radius: 12px;
+        padding: 18px 20px;
+        animation: goalFadeIn 0.2s ease;
+      }
+      @keyframes goalFadeIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
+      .dark .goal-card { background: linear-gradient(135deg, rgba(30,41,59,0.8), rgba(30,27,75,0.6)); border-color: rgba(99,102,241,0.3); }
+      .goal-card-empty-copy { margin: 0 0 12px; font-size: 13px; color: #64748b; }
+      .dark .goal-card-empty-copy { color: #94a3b8; }
+
+      .goal-card .goal-card-header {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 14px;
+      }
+      .goal-card-label { display: flex; align-items: center; gap: 8px; }
+      .goal-card-label svg { width: 18px; height: 18px; color: #6366f1; }
+      .goal-card-label span { font-size: 14px; font-weight: 600; color: #1e293b; }
+      .dark .goal-card-label span { color: #e2e8f0; }
+      .goal-card-target {
+        font-size: 13px; color: #6366f1;
+        background: rgba(99,102,241,0.1);
+        padding: 3px 10px; border-radius: 6px; font-weight: 500;
+      }
+      .goal-card-anchor { font-size: 12px; color: #64748b; margin-bottom: 12px; }
+      .goal-card-anchor strong { color: #475569; }
+      .goal-card-row { display: flex; gap: 16px; margin-bottom: 12px; }
+      .goal-card-stat {
+        flex: 1; background: rgba(255,255,255,0.7);
+        border-radius: 8px; padding: 10px 12px;
+      }
+      .dark .goal-card-stat { background: rgba(30,41,59,0.6); }
+      .goal-card-stat .stat-label {
+        font-size: 11px; color: #94a3b8;
+        text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 4px;
+      }
+      .goal-card-stat .stat-value { font-size: 20px; font-weight: 700; color: #0f172a; }
+      .dark .goal-card-stat .stat-value { color: #f1f5f9; }
+      .goal-card-stat .stat-value .unit { font-size: 13px; font-weight: 400; color: #94a3b8; margin-left: 2px; }
+      .goal-card-stat .stat-sub { font-size: 11px; margin-top: 2px; }
+      .stat-green { color: #059669; }
+      .stat-red { color: #dc2626; }
+      .stat-neutral { color: #6366f1; }
+      .gap-negative { color: #dc2626 !important; }
+      .gap-positive { color: #059669 !important; }
+      .goal-card-bar-wrap { margin-top: 4px; }
+      .goal-bar-labels {
+        display: flex; justify-content: space-between;
+        font-size: 11px; color: #94a3b8; margin-bottom: 4px;
+      }
+      .goal-bar-labels .pace { color: #6366f1; font-weight: 500; }
+      .goal-bar-bg {
+        height: 8px; background: rgba(99,102,241,0.15);
+        border-radius: 4px; overflow: hidden; position: relative;
+      }
+      .goal-bar-fill {
+        height: 100%; background: linear-gradient(90deg, #6366f1, #818cf8);
+        border-radius: 4px; transition: width 0.3s;
+      }
+      .goal-bar-line {
+        position: absolute; top: -2px; bottom: -2px;
+        width: 2px; background: #f59e0b; border-radius: 1px;
+      }
+      .goal-bar-label {
+        display: flex; justify-content: space-between;
+        font-size: 11px; color: #94a3b8; margin-top: 4px;
+      }
+      .goal-card-detail { display: none; margin-top: 14px; padding-top: 14px; border-top: 1px dashed #c7d2fe; }
+      .goal-card.expanded .goal-card-detail { display: block; }
+      .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .detail-item { background: rgba(255,255,255,0.6); border-radius: 8px; padding: 10px 12px; }
+      .dark .detail-item { background: rgba(30,41,59,0.6); }
+      .detail-item .label { font-size: 11px; color: #94a3b8; }
+      .detail-item .value { font-size: 14px; font-weight: 600; color: #0f172a; margin-top: 2px; }
+      .dark .detail-item .value { color: #f1f5f9; }
+      .detail-item .desc { font-size: 11px; color: #94a3b8; margin-top: 1px; }
+      .goal-adjust-btn {
+        margin-top: 12px; padding: 8px 0; width: 100%;
+        border: 1px dashed #c7d2fe; border-radius: 8px; background: transparent;
+        font-size: 13px; color: #6366f1; cursor: pointer; transition: background 0.15s;
+      }
+      .goal-adjust-btn:hover { background: rgba(99,102,241,0.06); }
+
+      /* \u5FEB\u6377\u65E5\u671F\u9009\u62E9 */
+      .quick-dates-row {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 8px;
+      }
+      .quick-date-btn {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1px;
+        padding: 6px 2px;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        background: white;
+        cursor: pointer;
+        transition: all 0.15s;
+        font-family: inherit;
+      }
+      .dark .quick-date-btn {
+        background: #374151;
+        border-color: #4b5563;
+      }
+      .quick-date-btn:hover {
+        border-color: #c7d2fe;
+        background: #f5f3ff;
+      }
+      .dark .quick-date-btn:hover {
+        border-color: #6366f1;
+        background: rgba(99,102,241,0.1);
+      }
+      .quick-date-btn .quick-day-name {
+        font-size: 9px;
+        color: #9ca3af;
+        font-weight: 500;
+      }
+      .quick-date-btn .quick-day-num {
+        font-size: 15px;
+        font-weight: 600;
+        color: #374151;
+      }
+      .dark .quick-date-btn .quick-day-num { color: #e5e7eb; }
+      .quick-date-btn .quick-date-badge {
+        font-size: 7px;
+        padding: 1px 4px;
+        border-radius: 3px;
+        background: transparent;
+        color: transparent;
+      }
+
+      /* \u4ECA\u5929\u6807\u8BB0 */
+      .quick-date-btn.today {
+        border-color: #6366f1;
+        background: #eef2ff;
+      }
+      .dark .quick-date-btn.today {
+        background: rgba(99,102,241,0.15);
+        border-color: #818cf8;
+      }
+      .quick-date-btn.today .quick-day-name { color: #6366f1; }
+      .quick-date-btn.today .quick-day-num { color: #6366f1; }
+      .dark .quick-date-btn.today .quick-day-name,
+      .dark .quick-date-btn.today .quick-day-num { color: #a5b4fc; }
+      .quick-date-btn.today .quick-date-badge {
+        background: #6366f1;
+        color: white;
+      }
+      .dark .quick-date-btn.today .quick-date-badge { background: #818cf8; }
+
+      /* \u9009\u4E2D\u72B6\u6001 */
+      .quick-date-btn.selected {
+        border-color: #6366f1;
+        background: #6366f1;
+      }
+      .quick-date-btn.selected .quick-day-name { color: rgba(255,255,255,0.75); }
+      .quick-date-btn.selected .quick-day-num { color: white; }
+      .quick-date-btn.selected .quick-date-badge {
+        background: rgba(255,255,255,0.25);
+        color: white;
+      }
+      .dark .quick-date-btn.selected { border-color: #818cf8; background: #6366f1; }
+    `;
+      document.head.appendChild(style);
+    }
     const viewMaxWidth = {
       list: "max-w-4xl",
       day: "max-w-4xl",
@@ -1623,6 +2354,7 @@ var TaskManager = (() => {
       ${renderTaskList()}
       ${renderModal()}
       ${renderCategoryModal()}
+      ${renderGoalSettingsModal()}
       ${renderSyncModal()}
       ${renderMobileSyncPanel()}
     </div>
@@ -1823,7 +2555,7 @@ var TaskManager = (() => {
         category: formData.get("category"),
         dueDate: noTimeLimit ? "" : formData.get("dueDate"),
         duration,
-        completed: editingTask?.completed || false,
+        completed: form.querySelector("#taskCompleted")?.checked || false,
         repeatType: formData.get("repeatType"),
         repeatDays,
         repeatInterval: parseInt(formData.get("repeatInterval")) || 1,
@@ -1889,6 +2621,32 @@ var TaskManager = (() => {
         dueDateField.style.opacity = e.target.checked ? "0.5" : "1";
         dueDateField.style.pointerEvents = e.target.checked ? "none" : "auto";
       }
+    });
+    const refreshQuickDates = () => {
+      const dateInput = container.querySelector('input[name="dueDate"]');
+      if (!dateInput)
+        return;
+      const val = dateInput.value;
+      container.querySelectorAll(".quick-date-btn").forEach((btn) => {
+        const date = btn.dataset.date;
+        btn.classList.toggle("selected", date === val);
+      });
+    };
+    container.querySelectorAll(".quick-date-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const date = btn.dataset.date;
+        if (!date)
+          return;
+        const dateInput = container.querySelector('input[name="dueDate"]');
+        if (dateInput) {
+          dateInput.value = date;
+          refreshQuickDates();
+        }
+      });
+    });
+    container.querySelector('input[name="dueDate"]')?.addEventListener("change", refreshQuickDates);
+    container.querySelector("#addTaskBtn")?.addEventListener("click", () => {
+      setTimeout(refreshQuickDates, 0);
     });
     container.querySelector("#repeatType")?.addEventListener("change", (e) => {
       const weeklyDays = container.querySelector("#weeklyDays");
@@ -1982,7 +2740,7 @@ var TaskManager = (() => {
         try {
           await downloadExportFile();
           showToast(container, "\u6570\u636E\u5DF2\u5BFC\u51FA\u6210\u529F\uFF01", "success");
-        } catch (err) {
+        } catch {
           showToast(container, "\u5BFC\u51FA\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5", "error");
         }
       });
@@ -2022,21 +2780,25 @@ var TaskManager = (() => {
           if (btn)
             btn.innerHTML = '<div class="card-title" style="color:#6b7280;">\u4E0A\u4F20\u4E2D...</div>';
           showSyncFeedback(container, "\u6B63\u5728\u4E0A\u4F20\u6570\u636E\u5230\u4E91\u7AEF...", "info");
-          const { syncToCloud: syncToCloud2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
+          const { syncIncrementally: syncIncrementally2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
           const { getState: getState2 } = await Promise.resolve().then(() => (init_task(), task_exports));
           const state2 = getState2();
-          const result = await syncToCloud2({
+          const result = await syncIncrementally2({
             tasks: state2.tasks,
             categories: state2.categories,
             defaultCategory: state2.defaultCategory,
             hideCompleted: state2.hideCompleted,
             hideOverdue: state2.hideOverdue,
             showNoTimeLimitOnly: state2.showNoTimeLimitOnly,
-            darkMode: state2.darkMode
-          }, { force: true });
-          if (result.success) {
-            await persistState();
-            showSyncFeedback(container, `\u4E0A\u4F20\u6210\u529F \u2014 ${state2.tasks.length} \u4E2A\u4EFB\u52A1\u5DF2\u540C\u6B65\u5230\u4E91\u7AEF`, "success");
+            darkMode: state2.darkMode,
+            weeklyGoalMinutes: state2.weeklyGoalMinutes,
+            weeklyGoalAnchor: state2.weeklyGoalAnchor,
+            syncSettingsUpdatedAt: state2.syncSettingsUpdatedAt
+          });
+          if (result.success && result.data) {
+            setState(result.data);
+            reRender();
+            showSyncFeedback(container, `\u540C\u6B65\u5B8C\u6210 \u2014 ${result.data.tasks.length} \u4E2A\u4EFB\u52A1\u5DF2\u6536\u655B`, "success");
           } else {
             showSyncFeedback(container, "\u4E0A\u4F20\u5931\u8D25: " + (result.error || "\u672A\u77E5\u9519\u8BEF"), "error");
           }
@@ -2054,14 +2816,24 @@ var TaskManager = (() => {
           if (btn)
             btn.innerHTML = '<div class="card-title" style="color:#6b7280;">\u62C9\u53D6\u4E2D...</div>';
           showSyncFeedback(container, "\u6B63\u5728\u4ECE\u4E91\u7AEF\u62C9\u53D6\u6570\u636E...", "info");
-          const { syncFromCloud: syncFromCloud2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
-          const result = await syncFromCloud2();
-          if (result.data && result.data.tasks) {
-            const { saveData: saveData2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
-            await saveData2(result.data);
-            await loadState();
+          const { syncIncrementally: syncIncrementally2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
+          const state2 = getState();
+          const result = await syncIncrementally2({
+            tasks: state2.tasks,
+            categories: state2.categories,
+            defaultCategory: state2.defaultCategory,
+            hideCompleted: state2.hideCompleted,
+            hideOverdue: state2.hideOverdue,
+            showNoTimeLimitOnly: state2.showNoTimeLimitOnly,
+            darkMode: state2.darkMode,
+            weeklyGoalMinutes: state2.weeklyGoalMinutes,
+            weeklyGoalAnchor: state2.weeklyGoalAnchor,
+            syncSettingsUpdatedAt: state2.syncSettingsUpdatedAt
+          });
+          if (result.success && result.data) {
+            setState(result.data);
             reRender();
-            showSyncFeedback(container, `\u62C9\u53D6\u6210\u529F \u2014 \u5DF2\u6062\u590D ${result.data.tasks.length} \u4E2A\u4EFB\u52A1`, "success");
+            showSyncFeedback(container, `\u540C\u6B65\u5B8C\u6210 \u2014 \u5DF2\u6536\u655B ${result.data.tasks.length} \u4E2A\u4EFB\u52A1`, "success");
           } else {
             showSyncFeedback(container, "\u4E91\u7AEF\u6682\u65E0\u6570\u636E", "error");
           }
@@ -2209,7 +2981,7 @@ var TaskManager = (() => {
         if (statusEl)
           statusEl.textContent = "\u540C\u6B65\u4E2D...";
         chrome.runtime.sendMessage({ action: "syncRemoteTasks" }, (result) => {
-          if (result?.synced > 0) {
+          if ((result?.synced ?? 0) > 0) {
             syncToast(`\u5DF2\u540C\u6B65 ${result.synced} \u4E2A\u4EFB\u52A1`, "success");
             if (statusEl)
               statusEl.textContent = `\u4E0A\u6B21\u540C\u6B65: \u6210\u529F\uFF0C${result.synced} \u4E2A\u4EFB\u52A1`;
@@ -2224,8 +2996,61 @@ var TaskManager = (() => {
         });
       });
     }
+    setupWeeklyGoalEvents(container);
     setupDragAndDrop(container);
   };
+  function setupWeeklyGoalEvents(container) {
+    const toggleBtn = container.querySelector("#statsToggleBtn");
+    const wrapper = container.querySelector("#weeklyGoalWrapper");
+    const card = container.querySelector("#weeklyGoalCard");
+    const chevron = container.querySelector("#statsChevron");
+    toggleBtn?.addEventListener("click", () => {
+      if (!wrapper)
+        return;
+      const isOpen = wrapper.style.display !== "none";
+      wrapper.style.display = isOpen ? "none" : "block";
+      chevron?.classList.toggle("open");
+      if (card && isOpen && card.classList.contains("expanded")) {
+        card.classList.remove("expanded");
+      }
+    });
+    card?.addEventListener("click", (e) => {
+      const target = e.target;
+      if (target.id === "adjustGoalAnchorBtn" || target.closest("#adjustGoalAnchorBtn") || target.id === "openGoalSettingsBtn" || target.closest("#openGoalSettingsBtn")) {
+        const modal = container.querySelector("#goalSettingsModal");
+        if (modal)
+          modal.classList.remove("hidden");
+        return;
+      }
+      card.classList.toggle("expanded");
+    });
+    const closeBtn = container.querySelector("#closeGoalSettingsBtn");
+    closeBtn?.addEventListener("click", () => {
+      const modal = container.querySelector("#goalSettingsModal");
+      if (modal)
+        modal.classList.add("hidden");
+    });
+    const saveBtn = container.querySelector("#saveGoalSettingsBtn");
+    saveBtn?.addEventListener("click", async () => {
+      const hoursInput = container.querySelector("#goalWeeklyHours");
+      const anchorInput = container.querySelector("#goalAnchorDate");
+      setState({
+        weeklyGoalMinutes: Math.round(parseFloat(hoursInput?.value || "10") * 60),
+        weeklyGoalAnchor: anchorInput?.value || void 0
+      });
+      await persistState();
+      reRender();
+      const modal = container.querySelector("#goalSettingsModal");
+      if (modal)
+        modal.classList.add("hidden");
+    });
+    const overlay = container.querySelector("#goalSettingsModal");
+    overlay?.addEventListener("click", (e) => {
+      if (e.target === overlay) {
+        overlay.classList.add("hidden");
+      }
+    });
+  }
   function setupDragAndDrop(container) {
     container.querySelectorAll('[draggable="true"]').forEach((el) => {
       el.addEventListener("dragstart", async (e) => {
@@ -2290,7 +3115,7 @@ var TaskManager = (() => {
           dt.dropEffect = "move";
         zone.classList.add("bg-blue-100", "dark:bg-blue-900/30");
       });
-      zone.addEventListener("dragleave", (e) => {
+      zone.addEventListener("dragleave", () => {
         ;
         zone.classList.remove("bg-blue-100", "dark:bg-blue-900/30");
       });
@@ -2341,7 +3166,7 @@ var TaskManager = (() => {
       renderApp(container);
       attachEventListeners(container);
       chrome.runtime.sendMessage({ action: "syncRemoteTasks" }, (result) => {
-        if (result?.synced > 0) {
+        if ((result?.synced ?? 0) > 0) {
           syncActionToast(`\u5DF2\u4ECE\u624B\u673A\u540C\u6B65 ${result.synced} \u4E2A\u4EFB\u52A1`, "success");
         }
       });

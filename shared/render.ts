@@ -1,9 +1,8 @@
 import type { Task, Priority } from './types'
 import {
-  getState, setState, resetEditingTask,
+  getState,
   formatDate, parseDate, formatHours, getDateLabel, getRemainingTime, isOverdue, isTaskDueOnDate,
-  getPriorityColor, getCatColor, getCatName, getFilteredTasks, getStats, getWeeklyGoalStats,
-  toggleTask as toggleTaskAction, deleteTask as deleteTaskAction, moveTaskToDate,
+  getPriorityColor, getFilteredTasks, getStats, getWeeklyGoalStats,
   escapeHtml
 } from './task'
 import { getSyncStatus } from './sync'
@@ -18,6 +17,9 @@ const renderSyncIndicator = (): string => {
     idle: '',
     saving: `<span id="syncIndicator" class="p-2 rounded-lg transition text-blue-500" title="正在同步...">
       <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+    </span>`,
+    'local-saved': `<span id="syncIndicator" class="p-2 rounded-lg transition text-amber-500" title="已保存在本机，等待云同步">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
     </span>`,
     synced: `<span id="syncIndicator" class="p-2 rounded-lg transition text-green-500" title="已同步">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
@@ -35,7 +37,20 @@ const renderSyncIndicator = (): string => {
 // ==================== 渲染函数 ====================
 export const renderWeeklyGoalCard = (): string => {
   const stats = getWeeklyGoalStats()
-  if (!stats) return ''
+  if (!stats) {
+    return `
+      <div class="goal-card goal-card-empty" id="weeklyGoalCard">
+        <div class="goal-card-header">
+          <div class="goal-card-label">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            <span>每周节奏</span>
+          </div>
+        </div>
+        <p class="goal-card-empty-copy">暂无可统计的完成时长</p>
+        <button id="openGoalSettingsBtn" class="goal-adjust-btn">设置周目标</button>
+      </div>
+    `
+  }
 
   const formatWeeks = (w: number) => {
     if (w < 1) return '<1 周'
@@ -48,7 +63,7 @@ export const renderWeeklyGoalCard = (): string => {
   const expectedPos = Math.min(100, stats.progressPercent)
 
   return `
-    <div class="goal-card" id="weeklyGoalCard" style="display:none;">
+    <div class="goal-card" id="weeklyGoalCard">
       <div class="goal-card-header">
         <div class="goal-card-label">
           <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
@@ -585,14 +600,12 @@ export const renderModal = (): string => {
               <label class="block text-sm font-medium mb-1">任务名称 *</label>
               <input type="text" name="title" value="${escapeHtml(task.title)}" required class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
             </div>
-            ${isEditing ? `
-              <div class="pt-6">
-                <label class="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" id="taskCompleted" ${task.completed ? 'checked' : ''} class="rounded"> 
-                  <span class="text-sm">已完成</span>
-                </label>
-              </div>
-            ` : ''}
+            <div class="pt-6">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="taskCompleted" ${task.completed ? 'checked' : ''} class="rounded">
+                <span class="text-sm">已完成</span>
+              </label>
+            </div>
           </div>
           <div>
             <label class="block text-sm font-medium mb-1">备注</label>
@@ -969,6 +982,8 @@ export const renderApp = (container: HTMLElement): void => {
       }
       @keyframes goalFadeIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
       .dark .goal-card { background: linear-gradient(135deg, rgba(30,41,59,0.8), rgba(30,27,75,0.6)); border-color: rgba(99,102,241,0.3); }
+      .goal-card-empty-copy { margin: 0 0 12px; font-size: 13px; color: #64748b; }
+      .dark .goal-card-empty-copy { color: #94a3b8; }
 
       .goal-card .goal-card-header {
         display: flex; justify-content: space-between; align-items: center;

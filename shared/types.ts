@@ -27,6 +27,7 @@ interface Category {
   id: string
   name: string
   color: string
+  updatedAt?: number
 }
 
 interface StorageData {
@@ -39,6 +40,7 @@ interface StorageData {
   darkMode?: boolean
   weeklyGoalMinutes?: number       // 每周目标时长（分钟），默认 600（10h）
   weeklyGoalAnchor?: string        // 锚点日期 YYYY-MM-DD
+  syncSettingsUpdatedAt?: number   // 设置记录的增量同步时间戳
 }
 
 interface AppState extends StorageData {

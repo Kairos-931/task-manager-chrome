@@ -95,25 +95,41 @@ async function handleRemoteSync(): Promise<{ synced?: number; error?: string }> 
 
     const localData = await loadData()
 
-    const newTasks = remoteTasks.filter((rt: any) => {
-      return !localData.tasks.some(lt => lt.id === (rt.id as string) || lt.title === (rt.title as string))
-    })
+    // Titles are not identifiers: two different phone tasks may legitimately
+    // have the same title. Keep the server ID as the only deduplication key.
+    const newTasks = remoteTasks.filter((rt: any) =>
+      rt.id && !localData.tasks.some(lt => lt.id === (rt.id as string))
+    )
 
-    if (newTasks.length === 0) return { synced: 0 }
+    if (newTasks.length > 0) {
+      localData.tasks = [...localData.tasks, ...newTasks.map((t: any) => {
+      const createdAt = Number(t.createdAt) || Date.now()
+      const completed = t.completed === true
+      return {
+        ...t,
+        id: t.id || Math.random().toString(36).substring(2, 11) + Date.now().toString(36),
+        createdAt,
+        updatedAt: Date.now(),
+        completed,
+        completedAt: completed ? (Number(t.completedAt) || createdAt) : undefined,
+        repeatType: t.repeatType || 'none',
+        repeatDays: Array.isArray(t.repeatDays) ? t.repeatDays : [],
+        repeatInterval: Number(t.repeatInterval) || 1,
+        completedDates: Array.isArray(t.completedDates) ? t.completedDates : []
+      }
+      })]
+      await saveData(localData)
+    }
 
-    localData.tasks = [...localData.tasks, ...newTasks.map((t: any) => ({
-      ...t,
-      id: t.id || Math.random().toString(36).substring(2, 11) + Date.now().toString(36),
-      createdAt: t.createdAt || Date.now(),
-      updatedAt: Date.now()
-    }))]
-    await saveData(localData)
-
-    // 标记已同步，避免下次重复拉回（即使本地删除后也不再出现）
+    // A retry can arrive after the task was saved locally but before the old
+    // acknowledgement request completed. Acknowledge every fetched ID that is
+    // durably present locally, not only IDs imported in this invocation.
     try {
-      const syncedIds = newTasks.map(t => t.id).filter(Boolean)
+      const syncedIds = remoteTasks
+        .filter((task: any) => task.id && localData.tasks.some(local => local.id === task.id))
+        .map((task: any) => task.id)
       if (syncedIds.length > 0) {
-        await fetch(`${settings.apiUrl}/api/tasks/sync`, {
+        const acknowledge = await fetch(`${settings.apiUrl}/api/tasks/sync`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -121,9 +137,10 @@ async function handleRemoteSync(): Promise<{ synced?: number; error?: string }> 
           },
           body: JSON.stringify({ ids: syncedIds })
         })
+        if (!acknowledge.ok) return { error: `确认导入失败: HTTP ${acknowledge.status}` }
       }
     } catch (e) {
-      console.warn('[TaskMaster] 标记已同步失败（不影响本次导入）:', e)
+      return { error: `确认导入失败: ${String(e)}` }
     }
 
     return { synced: newTasks.length }

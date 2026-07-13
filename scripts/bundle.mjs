@@ -55,4 +55,7 @@ async function buildSharedIIFE() {
 }
 
 // Run
-buildSharedIIFE().catch(console.error)
+buildSharedIIFE().catch((error) => {
+  console.error(error)
+  process.exitCode = 1
+})

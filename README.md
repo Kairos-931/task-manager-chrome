@@ -13,9 +13,9 @@
 - **筛选过滤** — 按优先级/分类筛选，隐藏已完成或过期任务
 - **拖拽操作** — 任务拖拽到不同日期
 - **深色模式** — 明暗主题一键切换
-- **数据同步** — 通过 Cloudflare Worker 实现跨设备同步，手动上传/拉取，支持 Telegram Bot 添加任务
+- **数据同步** — 通过 Cloudflare Worker 实现离线优先的跨设备增量同步，支持 Telegram Bot 添加任务
 - **同步管理面板** — 手动上传到云端、从云端拉取、导出文件、导入文件
-- **冲突合并** — 多设备离线编辑时按时间戳自动合并，两端修改不丢失
+- **冲突合并** — 多设备离线编辑时按任务时间戳自动合并，删除不会被旧设备复活
 - **数据导入导出** — JSON 格式备份与恢复
 - **双模式使用** — 弹窗快速查看 + 全屏管理页面
 
@@ -92,16 +92,16 @@ npm run build
 
 ```
 设备 A（Chrome 插件）
-  → 增删改任务 → POST /api/fullsync → Cloudflare D1
-                                        ↓
+  → 增删改任务 → POST /api/sync/incremental → Cloudflare D1 变更日志
+                                                    ↓
 设备 B（Chrome 插件）
-  → 手动拉取 → GET /api/fullsync ← Cloudflare D1
+  ← 游标拉取增量变更 ← POST /api/sync/incremental
 ```
 
 | 功能 | API | 说明 |
 |------|-----|------|
-| 全量上传 | `POST /api/fullsync` | 每次操作自动触发，全量覆盖云端数据 |
-| 全量拉取 | `GET /api/fullsync` | 设置面板手动触发，替换本地数据 |
+| 增量同步 | `POST /api/sync/incremental` | 每次操作自动发送变更并按游标接收远端更新 |
+| 旧版兼容 | `GET/POST /api/fullsync` | 仅供未升级的扩展继续使用 |
 | 创建任务 | `POST /api/tasks` | 手机网页 / Telegram Bot 使用 |
 | Telegram Bot | `POST /api/telegram/webhook` | 通过 Telegram 消息添加任务 |
 
@@ -114,11 +114,9 @@ npm run build
    npx wrangler d1 create taskmaster-db
    ```
 
-2. **初始化数据库表结构**
+2. **初始化或迁移数据库表结构**
    ```bash
-   npx wrangler d1 execute taskmaster-db --command "CREATE TABLE IF NOT EXISTS user_data (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);"
-   npx wrangler d1 execute taskmaster-db --command "CREATE TABLE IF NOT EXISTS pending_tasks (id TEXT PRIMARY KEY, title TEXT, description TEXT DEFAULT '', priority TEXT DEFAULT 'medium', category TEXT DEFAULT '', due_date TEXT DEFAULT '', duration INTEGER DEFAULT 60, no_time_limit INTEGER DEFAULT 0, source TEXT DEFAULT 'web', synced INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')));"
-   npx wrangler d1 execute taskmaster-db --command "CREATE TABLE IF NOT EXISTS telegram_users (telegram_user_id INTEGER PRIMARY KEY, api_token TEXT);"
+   npx wrangler d1 execute taskmaster-db --remote --file=backend/schema.sql
    ```
 
 3. **配置 wrangler.toml**
@@ -150,7 +148,8 @@ npm run build
 5. 之后直接发消息即可添加任务
 
 **注意事项**：
-- 同步为全量覆盖模式，非增量同步。以最后一次写入为准
+- 扩展会在联网后自动收敛任务、分类和设置；同一任务并发编辑时采用较新的修改
+- 删除任务会同步为墓碑记录，旧设备恢复联网后不会把它重新创建
 - 国内使用无需 VPN（Cloudflare Worker 全球可达）
 - 建议定期使用"导出数据"功能备份重要数据
 

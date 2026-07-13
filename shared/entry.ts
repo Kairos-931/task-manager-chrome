@@ -2,7 +2,7 @@
 // esbuild will bundle these imports into a single IIFE
 
 import { loadState, persistState, getState, setState, resetEditingTask, getFilteredTasks, getStats, getWeeklyGoalStats, addTask, updateTask, deleteTask, toggleTask, moveTaskToDate, addCategory, deleteCategory, formatDate, parseDate, formatHours, getDateLabel, getRemainingTime, isOverdue, isTaskDueOnDate, getPriorityColor, getCatColor, getCatName, escapeHtml } from './task'
-import { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, renderListView, renderDayView, renderWeekView, renderMonthView, renderTaskList, renderModal, renderCategoryModal, renderGoalSettingsModal, renderSyncModal, renderMobileSyncPanel } from './render'
+import { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, renderListView, renderDayView, renderWeekView, renderMonthView, renderTaskList, renderModal, renderCategoryModal, renderGoalSettingsModal, renderSyncModal, renderMobileSyncPanel, renderWeeklyGoalCard } from './render'
 import { attachEventListeners } from './events'
 import { initSyncMonitor, onSyncStatusChange } from './sync'
 
@@ -50,7 +50,7 @@ function autoInit() {
     attachEventListeners(container)
     // Auto-sync mobile tasks with toast feedback
     chrome.runtime.sendMessage({ action: 'syncRemoteTasks' }, (result: { synced?: number }) => {
-      if (result?.synced > 0) {
+      if ((result?.synced ?? 0) > 0) {
         syncActionToast(`已从手机同步 ${result.synced} 个任务`, 'success')
       }
     })

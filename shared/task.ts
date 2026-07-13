@@ -1,6 +1,6 @@
-import type { Task, Category, AppState, Priority } from './types'
-import { generateId, loadData, saveData, defaultCategories } from './storage'
-import { markLocalSave, markSaveComplete } from './sync'
+import type { Task, Category, StorageData, AppState, Priority } from './types'
+import { generateId, loadData, saveData, syncIncrementally, defaultCategories } from './storage'
+import { markCloudSynced, markLocalSave, markSaveComplete, markRemoteUpdated, markSyncError } from './sync'
 
 // ==================== 工具函数 ====================
 export const escapeHtml = (str: string): string => {
@@ -128,16 +128,18 @@ export const getCatName = (id: string): string => {
 }
 
 // ==================== 数据操作 ====================
-export const loadState = async (): Promise<void> => {
-  const data = await loadData()
-  // 按 name 去重：同名保留第一次出现的 id 和最后一次出现的 color
-  const catMap = new Map<string, { id: string; name: string; color: string }>()
+const applyStorageData = (data: StorageData): void => {
+  // Keep the original category id for existing task references while removing
+  // duplicate names left by older versions of the sync implementation.
+  const catMap = new Map<string, Category>()
   const cats = data.categories || defaultCategories
   for (const c of cats) {
-    if (catMap.has(c.name)) {
-      catMap.get(c.name)!.color = c.color // 后写入的覆盖颜色
+    const normalized = { ...c, updatedAt: c.updatedAt || Date.now() }
+    if (catMap.has(normalized.name)) {
+      const existing = catMap.get(normalized.name)!
+      catMap.set(normalized.name, { ...existing, color: normalized.color, updatedAt: normalized.updatedAt })
     } else {
-      catMap.set(c.name, { ...c })
+      catMap.set(normalized.name, normalized)
     }
   }
   state = {
@@ -147,6 +149,17 @@ export const loadState = async (): Promise<void> => {
     editingTask: null,
     draggedTaskId: null
   }
+}
+
+export const loadState = async (): Promise<void> => {
+  const data = await loadData()
+  applyStorageData(data)
+  syncIncrementally(data).then(result => {
+    if (result.success && result.data) {
+      applyStorageData(result.data)
+      markRemoteUpdated()
+    }
+  }).catch(() => {})
 }
 
 export const persistState = async (): Promise<void> => {
@@ -161,7 +174,14 @@ export const persistState = async (): Promise<void> => {
       showNoTimeLimitOnly: state.showNoTimeLimitOnly,
       darkMode: state.darkMode,
       weeklyGoalMinutes: state.weeklyGoalMinutes,
-      weeklyGoalAnchor: state.weeklyGoalAnchor
+      weeklyGoalAnchor: state.weeklyGoalAnchor,
+      syncSettingsUpdatedAt: state.syncSettingsUpdatedAt
+    }, (remoteData) => {
+      applyStorageData(remoteData)
+      markRemoteUpdated()
+    }, (result) => {
+      if (result.success) markCloudSynced()
+      else if (result.error !== '未配置同步设置') markSyncError()
     })
     markSaveComplete()
   } catch {
@@ -186,14 +206,14 @@ export const getFilteredTasks = (): Task[] => {
   })
 }
 
-export const addTask = (task: Omit<Task, 'id' | 'createdAt' | 'completed' | 'completedAt' | 'updatedAt' | 'completedDates' | 'repeatStartDate'>): void => {
+export const addTask = (task: Omit<Task, 'id' | 'createdAt' | 'completedAt' | 'updatedAt' | 'completedDates' | 'repeatStartDate'>): void => {
   const now = Date.now()
   const newTask: Task = {
     ...task,
     id: generateId(),
     createdAt: now,
     updatedAt: now,
-    completed: false,
+    completed: task.completed || false,
     completedDates: []
   }
   if (newTask.repeatType && newTask.repeatType !== 'none' && !newTask.noTimeLimit) {
@@ -268,52 +288,11 @@ const getNextUncompletedDate = (task: Task, afterDate?: string): string => {
   return formatDate(start)
 }
 
-const getNextDueDate = (task: Task): string => {
-  const current = parseDate(task.dueDate)
-  const next = new Date(current)
-  switch (task.repeatType) {
-    case 'daily':
-      next.setDate(next.getDate() + 1)
-      break
-    case 'weekly': {
-      if (task.repeatDays.length === 0) {
-        next.setDate(next.getDate() + 7)
-        break
-      }
-      next.setDate(next.getDate() + 1)
-      let maxIterations = 8
-      while (!task.repeatDays.includes(next.getDay()) && maxIterations > 0) {
-        next.setDate(next.getDate() + 1)
-        maxIterations--
-      }
-      break
-    }
-    case 'monthly': {
-      const day = current.getDate()
-      next.setMonth(next.getMonth() + 1)
-      const lastDay = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()
-      if (day > lastDay) next.setDate(lastDay)
-      break
-    }
-    case 'workdays':
-      next.setDate(next.getDate() + 1)
-      if (next.getDay() === 0) next.setDate(next.getDate() + 1)
-      if (next.getDay() === 6) next.setDate(next.getDate() + 2)
-      break
-    case 'custom':
-      next.setDate(next.getDate() + (task.repeatInterval || 1))
-      break
-    default:
-      next.setDate(next.getDate() + 1)
-  }
-  return formatDate(next)
-}
-
 export const addCategory = (name: string, color: string): void => {
   const trimmed = name.trim()
   if (!trimmed) return
   if (state.categories.some(c => c.name === trimmed)) return
-  state.categories.push({ id: generateId(), name: trimmed, color })
+  state.categories.push({ id: generateId(), name: trimmed, color, updatedAt: Date.now() })
 }
 
 export const updateCategory = (id: string, name: string, color: string): void => {
@@ -321,12 +300,20 @@ export const updateCategory = (id: string, name: string, color: string): void =>
   if (cat) {
     cat.name = name
     cat.color = color
+    cat.updatedAt = Date.now()
   }
 }
 
 export const deleteCategory = (id: string): void => {
   if (state.categories.length > 1) {
+    const fallback = state.categories.find(category => category.id !== id)
+    if (!fallback) return
+    const now = Date.now()
+    state.tasks = state.tasks.map(task => task.category === id
+      ? { ...task, category: fallback.id, updatedAt: now }
+      : task)
     state.categories = state.categories.filter(c => c.id !== id)
+    if (state.defaultCategory === id) state.defaultCategory = fallback.id
     if (state.filterCategory === id) state.filterCategory = 'all'
   }
 }

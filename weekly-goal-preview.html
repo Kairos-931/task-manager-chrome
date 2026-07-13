@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>每周节奏 - 隐藏版样稿</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: #f1f5f9;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 24px;
+  }
+  .mockup {
+    width: 420px;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    overflow: hidden;
+  }
+  .header {
+    padding: 20px 24px 12px;
+    border-bottom: 1px solid #f1f5f9;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .header h1 { font-size: 18px; font-weight: 600; color: #0f172a; }
+  .header .date { font-size: 13px; color: #94a3b8; }
+
+  /* ===== 隐藏模式 ===== */
+  /* 收起态：一行极简文字 */
+  .goal-trigger {
+    margin: 0 20px;
+    padding: 8px 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    cursor: pointer;
+    user-select: none;
+    transition: opacity 0.15s;
+    border-bottom: 1px solid transparent;
+  }
+  .goal-trigger:hover {
+    opacity: 0.7;
+  }
+  .goal-trigger .dot {
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: #cbd5e1;
+  }
+  .goal-trigger .dot.active {
+    background: #6366f1;
+  }
+  .goal-trigger .label {
+    font-size: 11px;
+    color: #94a3b8;
+    letter-spacing: 0.5px;
+  }
+  .goal-trigger .chevron {
+    font-size: 10px;
+    color: #cbd5e1;
+    transition: transform 0.2s;
+  }
+  .goal-trigger .chevron.open {
+    transform: rotate(180deg);
+  }
+
+  /* 展开态：卡片 */
+  .goal-card {
+    margin: 12px 20px 4px;
+    background: linear-gradient(135deg, #eef2ff 0%, #f0f9ff 100%);
+    border: 1px solid #e0e7ff;
+    border-radius: 12px;
+    padding: 18px 20px;
+    display: none;
+    animation: fadeIn 0.2s ease;
+  }
+  .goal-card.open { display: block; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
+
+  .goal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+  .goal-label { display: flex; align-items: center; gap: 8px; }
+  .goal-label svg { width: 18px; height: 18px; color: #6366f1; }
+  .goal-label span { font-size: 14px; font-weight: 600; color: #1e293b; }
+  .goal-target {
+    font-size: 13px; color: #6366f1;
+    background: rgba(99,102,241,0.1);
+    padding: 3px 10px; border-radius: 6px; font-weight: 500;
+  }
+  .goal-anchor { font-size: 12px; color: #64748b; margin-bottom: 12px; }
+  .goal-anchor strong { color: #475569; }
+  .goal-row { display: flex; gap: 16px; margin-bottom: 12px; }
+  .goal-stat {
+    flex: 1; background: rgba(255,255,255,0.7);
+    border-radius: 8px; padding: 10px 12px;
+  }
+  .goal-stat .stat-label {
+    font-size: 11px; color: #94a3b8;
+    text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 4px;
+  }
+  .goal-stat .stat-value { font-size: 20px; font-weight: 700; color: #0f172a; }
+  .goal-stat .stat-value .unit { font-size: 13px; font-weight: 400; color: #94a3b8; margin-left: 2px; }
+  .goal-stat .stat-sub { font-size: 11px; margin-top: 2px; }
+  .stat-green { color: #059669; }
+  .stat-red { color: #dc2626; }
+  .stat-neutral { color: #6366f1; }
+  .goal-bar-wrap { margin-top: 4px; }
+  .goal-bar-labels {
+    display: flex; justify-content: space-between;
+    font-size: 11px; color: #94a3b8; margin-bottom: 4px;
+  }
+  .goal-bar-labels .pace { color: #6366f1; font-weight: 500; }
+  .goal-bar-bg {
+    height: 8px; background: rgba(99,102,241,0.15);
+    border-radius: 4px; overflow: hidden; position: relative;
+  }
+  .goal-bar-fill {
+    height: 100%; background: linear-gradient(90deg, #6366f1, #818cf8);
+    border-radius: 4px; width: 75%; transition: width 0.3s;
+  }
+  .goal-bar-line {
+    position: absolute; top: -2px; bottom: -2px;
+    width: 2px; background: #f59e0b; border-radius: 1px;
+  }
+  .goal-bar-label {
+    display: flex; justify-content: space-between;
+    font-size: 11px; color: #94a3b8; margin-top: 4px;
+  }
+  .goal-detail { display: none; margin-top: 14px; padding-top: 14px; border-top: 1px dashed #c7d2fe; }
+  .goal-card.expanded .goal-detail { display: block; }
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .detail-item { background: rgba(255,255,255,0.6); border-radius: 8px; padding: 10px 12px; }
+  .detail-item .label { font-size: 11px; color: #94a3b8; }
+  .detail-item .value { font-size: 14px; font-weight: 600; color: #0f172a; margin-top: 2px; }
+  .detail-item .desc { font-size: 11px; color: #94a3b8; margin-top: 1px; }
+  .adjust-btn {
+    margin-top: 12px; padding: 8px 0; width: 100%;
+    border: 1px dashed #c7d2fe; border-radius: 8px; background: transparent;
+    font-size: 13px; color: #6366f1; cursor: pointer; transition: background 0.15s;
+  }
+  .adjust-btn:hover { background: rgba(99,102,241,0.06); }
+
+  .task-list { padding: 4px 20px 20px; }
+  .task-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 0; border-bottom: 1px solid #f1f5f9;
+  }
+  .task-item:last-child { border-bottom: none; }
+  .task-check {
+    width: 20px; height: 20px; border: 2px solid #cbd5e1;
+    border-radius: 6px; flex-shrink: 0;
+  }
+  .task-check.done { background: #6366f1; border-color: #6366f1; position: relative; }
+  .task-check.done::after { content: "✓"; color: #fff; font-size: 13px; display: flex; justify-content: center; line-height: 16px; }
+  .task-info { flex: 1; }
+  .task-title { font-size: 14px; color: #0f172a; }
+  .task-title.done-text { color: #94a3b8; text-decoration: line-through; }
+  .task-meta { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+  .task-dur { font-size: 12px; color: #64748b; background: #f1f5f9; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
+  .note { margin: 0 20px 16px; padding: 10px 14px; background: #fef9c3; border-radius: 8px; font-size: 12px; color: #a16207; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="mockup">
+  <div class="header">
+    <h1>任务管理</h1>
+    <span class="date">2026年7月10日 周五</span>
+  </div>
+  <div class="note">⚡ 隐藏版样稿。点击灰色触发线展开周目标卡片。</div>
+
+  <!-- 收起态：极小触发点 -->
+  <div class="goal-trigger" id="trigger">
+    <span class="dot active"></span><span class="dot"></span><span class="dot"></span>
+    <span class="label">每周节奏</span>
+    <span class="chevron" id="chevron">▾</span>
+  </div>
+
+  <!-- 展开态卡片 -->
+  <div class="goal-card" id="goalCard">
+    <div class="goal-header">
+      <div class="goal-label">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+        </svg>
+        <span>每周节奏</span>
+      </div>
+      <span class="goal-target">目标 10h / 周</span>
+    </div>
+    <div class="goal-anchor"><strong>锚点：</strong>2026年5月25日 第 1 周</div>
+    <div class="goal-row">
+      <div class="goal-stat">
+        <div class="stat-label">期望工时</div>
+        <div class="stat-value">65<span class="unit">h</span></div>
+        <div class="stat-sub stat-neutral">历时 6.5 周</div>
+      </div>
+      <div class="goal-stat">
+        <div class="stat-label">实际完成</div>
+        <div class="stat-value">48.5<span class="unit">h</span></div>
+        <div class="stat-sub stat-green">24 个任务</div>
+      </div>
+      <div class="goal-stat">
+        <div class="stat-label">差距</div>
+        <div class="stat-value" style="color:#dc2626;">-16.5<span class="unit">h</span></div>
+        <div class="stat-sub stat-red">落后约 1.6 周</div>
+      </div>
+    </div>
+    <div class="goal-bar-wrap">
+      <div class="goal-bar-labels">
+        <span>完成进度</span>
+        <span class="pace">实际节奏 7.5h/周 · 目标 10h/周</span>
+      </div>
+      <div class="goal-bar-bg">
+        <div class="goal-bar-fill" style="width:75%;"></div>
+        <div class="goal-bar-line" style="left:65%;"></div>
+      </div>
+      <div class="goal-bar-label">
+        <span>当前 48.5h</span>
+        <span>期望 65h</span>
+        <span>75%</span>
+      </div>
+    </div>
+    <div class="goal-detail">
+      <div class="detail-grid">
+        <div class="detail-item">
+          <div class="label">周目标</div>
+          <div class="value">10h</div>
+          <div class="desc">每 7 天期望完成量</div>
+        </div>
+        <div class="detail-item">
+          <div class="label">实际节奏</div>
+          <div class="value">7.5h / 周</div>
+          <div class="desc">总工时 ÷ 总周数</div>
+        </div>
+        <div class="detail-item">
+          <div class="label">完成总工时</div>
+          <div class="value">48.5h</div>
+          <div class="desc">24 个已完成任务合计</div>
+        </div>
+        <div class="detail-item">
+          <div class="label">任务平均时长</div>
+          <div class="value">2.0h</div>
+          <div class="desc">总工时 ÷ 任务数</div>
+        </div>
+      </div>
+      <button class="adjust-btn">调整起始锚点</button>
+    </div>
+  </div>
+
+  <div class="task-list">
+    <div class="task-item">
+      <div class="task-check done"></div>
+      <div class="task-info"><div class="task-title done-text">QQavatar 项目讲解课程寻找</div><div class="task-meta">6月30日 · 工作</div></div>
+      <span class="task-dur">3h</span>
+    </div>
+    <div class="task-item">
+      <div class="task-check done"></div>
+      <div class="task-info"><div class="task-title done-text">整理线下笔记以及有道云</div><div class="task-meta">7月2日 · 商业</div></div>
+      <span class="task-dur">3.5h</span>
+    </div>
+    <div class="task-item">
+      <div class="task-check done"></div>
+      <div class="task-info"><div class="task-title done-text">建立运势评分体系</div><div class="task-meta">7月5日 · 玄学</div></div>
+      <span class="task-dur">5h</span>
+    </div>
+    <div class="task-item">
+      <div class="task-check"></div>
+      <div class="task-info"><div class="task-title">管理课程处理</div><div class="task-meta">今天 · AI</div></div>
+      <span class="task-dur">6.5h</span>
+    </div>
+  </div>
+</div>
+<script>
+  const trigger = document.getElementById('trigger')
+  const card = document.getElementById('goalCard')
+  const chevron = document.getElementById('chevron')
+
+  trigger.addEventListener('click', () => {
+    const isOpen = card.classList.contains('open')
+    card.classList.toggle('open')
+    chevron.classList.toggle('open')
+  })
+
+  // 卡片内的"调整锚点"不触发关闭
+  card.addEventListener('click', (e) => {
+    if (e.target.tagName === 'BUTTON') {
+      e.stopPropagation()
+    }
+  })
+</script>
+</body>
+</html>

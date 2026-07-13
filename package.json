@@ -1,9 +1,13 @@
 {
   "name": "task-manager-extension",
-  "version": "1.2.0",
+  "version": "3.10.0",
   "type": "module",
   "scripts": {
-    "build": "tsc && node scripts/generate-icons.js && npx tailwindcss -i ./styles/main.css -o ./styles/main.css --minify && node scripts/bundle.mjs && node scripts/copy-assets.js",
+    "build": "tsc && node scripts/generate-icons.js && npx tailwindcss -i ./styles/main.css -o ./styles/main.css --minify && node scripts/bundle.mjs && node scripts/copy-assets.js && node scripts/check-release.mjs",
+    "test": "node tests/incremental-sync.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint shared backend/index.js tests",
+    "check": "npm run typecheck && npm run lint && npm test",
     "watch": "tsc --watch",
     "build:css": "npx tailwindcss -i ./styles/main.css -o ./styles/main.css --minify",
     "icons": "node scripts/generate-icons.js",
@@ -11,11 +15,14 @@
     "copy": "node scripts/copy-assets.js"
   },
   "devDependencies": {
-    "typescript": "^5.3.0",
+    "@eslint/js": "^10.0.1",
     "@types/chrome": "^0.0.260",
-    "esbuild": "^0.20.0",
-    "tailwindcss": "^3.4.0",
     "autoprefixer": "^10.4.0",
-    "postcss": "^8.4.0"
+    "esbuild": "^0.20.0",
+    "eslint": "^10.7.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.3.0",
+    "typescript-eslint": "^8.63.0"
   }
 }

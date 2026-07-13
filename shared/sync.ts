@@ -1,4 +1,4 @@
-export type SyncStatus = 'idle' | 'saving' | 'synced' | 'remote-updated' | 'error'
+export type SyncStatus = 'idle' | 'saving' | 'local-saved' | 'synced' | 'remote-updated' | 'error'
 
 let syncStatus: SyncStatus = 'idle'
 let statusChangeCallback: ((status: SyncStatus) => void) | null = null
@@ -21,6 +21,10 @@ export const markLocalSave = () => {
 }
 
 export const markSaveComplete = () => {
+  setSyncStatus('local-saved')
+}
+
+export const markCloudSynced = () => {
   setSyncStatus('synced')
   if (statusTimeoutId) clearTimeout(statusTimeoutId)
   statusTimeoutId = setTimeout(() => {
@@ -46,5 +50,17 @@ export function showToast(container: HTMLElement, message: string, type: 'succes
 
   setTimeout(() => {
     toast.remove()
+  }, 3000)
+}
+
+export const markSyncError = () => {
+  setSyncStatus('error')
+}
+
+export const markRemoteUpdated = () => {
+  setSyncStatus('remote-updated')
+  if (statusTimeoutId) clearTimeout(statusTimeoutId)
+  statusTimeoutId = setTimeout(() => {
+    if (syncStatus === 'remote-updated') setSyncStatus('idle')
   }, 3000)
 }
