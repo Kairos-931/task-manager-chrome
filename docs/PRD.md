@@ -1,6 +1,8 @@
 # PRD：TaskMaster - Chrome 任务管理插件
 
-> 最后更新：2026-06-04 | 当前版本 v1.2.0（Chrome 扩展）+ v3.2.0（含手机同步）
+> 历史 PRD 快照：2026-06-04 | 对应 v1.2.0（Chrome 扩展）+ v3.2.0（含手机同步）
+>
+> 当前产品能力、架构和发布记录请参阅 [current-product.md](current-product.md) 与 [release-history.md](release-history.md)。
 
 ---
 

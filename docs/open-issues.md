@@ -1,19 +1,10 @@
-# Open Issues
+# 开放事项
 
-## Sync protocol follow-up
+## 同步协议后续优化
 
-The current incremental sync protocol protects record-level writes, deletes,
-and mobile imports. Two deliberate follow-up items remain:
+当前增量同步已保护记录级写入、删除和手机导入。仍有两项刻意保留的后续工作：
 
-1. **Field-level task merge**: concurrent edits to different fields of the
-   same task still use deterministic last-write-wins. A future change should
-   store per-field versions and show a clear resolution when both devices edit
-   the same field.
-2. **Safe history compaction**: `sync_changes` and delete tombstones remain
-   retained so a long-offline device cannot restore deleted data. Compaction
-   must first add device acknowledgement tracking and an inactive-device
-   retention policy; deleting history on a timer would risk data resurrection.
+1. **任务字段级合并**：两台设备同时修改同一任务的不同字段时，当前仍采用确定性的“最后修改优先”。后续应保存每个字段的版本，并在同一字段被同时修改时给出清晰的解决方式。
+2. **安全的历史清理**：`sync_changes` 和删除墓碑会保留，避免长期离线的设备复活已删除数据。清理前必须增加设备确认记录和不活跃设备保留策略；按时间直接删除历史会有数据复活风险。
 
-Tracking: [GitHub Issue #16](https://github.com/Kairos-931/task-manager-chrome/issues/16).
-This file records the product context so the issue remains actionable even
-outside GitHub.
+跟踪 Issue：[GitHub Issue #16](https://github.com/Kairos-931/task-manager-chrome/issues/16)。本文件保留产品上下文，确保不依赖 GitHub 时也能继续处理。
