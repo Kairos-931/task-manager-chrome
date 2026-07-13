@@ -186,6 +186,8 @@ npm run copy         # 只复制资源文件
 
 当前能力与版本、Issue 的对应关系请查看 [docs/current-product.md](docs/current-product.md) 和 [docs/release-history.md](docs/release-history.md)。
 
+变更与发布的记录规则见 [docs/change-recording.md](docs/change-recording.md)。
+
 本项目经历了 20+ 个版本的迭代，从 Vite 全栈架构逐步演化为纯 Chrome 扩展，v1.2.0 实现了统一存储架构、同步管理面板和多设备冲突合并。
 
 ## 许可证
