@@ -41,6 +41,8 @@ TaskMaster 是一个 Chrome 扩展任务管理项目，同时包含 Cloudflare W
 - `popup/`、`newtab/`：对应界面的源文件与模块。
 - `styles/`：样式源文件。
 - `backend/`：Cloudflare Worker、手机端页面和后端 API。
+- `demo/`：公开展示用的静态演示页面与样例数据；禁止连接真实 API 或包含真实任务。
+- `deploy/`：服务器部署配置、容器和反向代理示例，不存放密钥。
 - `scripts/`：项目自动化脚本。
 - `docs/`：长期维护的项目文档。
 - `icons/`：扩展图标资源。

@@ -1,6 +1,10 @@
 import type { Task, Category, StorageData, AppState, Priority } from './types'
-import { generateId, loadData, saveData, syncIncrementally, defaultCategories } from './storage'
+import { generateId, getNextLocalSettingsUpdatedAt, loadData, saveData, syncIncrementally, defaultCategories } from './storage'
 import { markCloudSynced, markLocalSave, markSaveComplete, markRemoteUpdated, markSyncError } from './sync'
+import { isTaskDueOnDate } from './calendar'
+import { getTaskProgress, isExecutableTask } from './planning'
+export { getWeekDates, isTaskDueOnDate, isTaskCompletedOnDate, summarizeTaskDurationsForDates, shiftMonth } from './calendar'
+export { getTaskProgress } from './planning'
 
 // ==================== 工具函数 ====================
 export const escapeHtml = (str: string): string => {
@@ -45,17 +49,36 @@ let state: AppState = {
   showNoTimeLimitOnly: false,
   darkMode: false,
   editingTask: null,
-  currentView: 'list',
+  currentView: 'focus',
   currentDate: getTodayStr(),
   filterPriority: 'all',
   filterCategory: 'all',
-  draggedTaskId: null
+  draggedTaskId: null,
+  replanningTaskId: null,
+  splittingTaskId: null,
+  overdueCollapsed: true
 }
 
 export const getState = () => state
 export const setState = (newState: Partial<AppState>) => {
   state = { ...state, ...newState }
 }
+
+type LocalSettingsUpdate = Partial<Pick<AppState,
+  'defaultCategory' | 'hideCompleted' | 'hideOverdue' | 'darkMode' |
+  'weeklyGoalMinutes' | 'weeklyGoalAnchor'
+>>
+
+export const setLocalSettings = (updates: LocalSettingsUpdate): void => {
+  const changed = Object.entries(updates).some(([key, value]) =>
+    state[key as keyof LocalSettingsUpdate] !== value
+  )
+  state = { ...state, ...updates }
+  if (changed) {
+    state.syncSettingsUpdatedAt = getNextLocalSettingsUpdatedAt(state.syncSettingsUpdatedAt)
+  }
+}
+
 export const resetEditingTask = () => { state.editingTask = null }
 
 export const getRemainingTime = (d: string, completed: boolean): string => {
@@ -85,30 +108,6 @@ export const isOverdue = (d: string, completed: boolean): boolean => {
   return d < todayStr
 }
 
-export const isTaskDueOnDate = (t: Task, d: string): boolean => {
-  if (t.noTimeLimit) return false
-  // Non-recurring: exact date match only
-  if (!t.repeatType || t.repeatType === 'none') {
-    return t.dueDate === d
-  }
-  // Recurring: use repeatStartDate as anchor for calendar calculations
-  const anchor = t.repeatStartDate || t.dueDate
-  if (anchor === d) return true
-  const date = parseDate(d)
-  const anchorDate = parseDate(anchor)
-  switch (t.repeatType) {
-    case 'daily': return date >= anchorDate
-    case 'weekly': return date >= anchorDate && (t.repeatDays || []).includes(date.getDay())
-    case 'monthly': return date >= anchorDate && date.getDate() === anchorDate.getDate()
-    case 'workdays': return date >= anchorDate && date.getDay() >= 1 && date.getDay() <= 5
-    case 'custom':
-      if (date < anchorDate) return false
-      const daysDiff = Math.floor((date.getTime() - anchorDate.getTime()) / 86400000)
-      return daysDiff % (t.repeatInterval || 1) === 0
-    default: return anchor === d
-  }
-}
-
 export const getPriorityColor = (p: Priority): string => {
   switch (p) {
     case 'high': return 'bg-red-500'
@@ -129,6 +128,7 @@ export const getCatName = (id: string): string => {
 
 // ==================== 数据操作 ====================
 const applyStorageData = (data: StorageData): void => {
+  const activeEditingTask = state.editingTask
   // Keep the original category id for existing task references while removing
   // duplicate names left by older versions of the sync implementation.
   const catMap = new Map<string, Category>()
@@ -145,9 +145,12 @@ const applyStorageData = (data: StorageData): void => {
   state = {
     ...state,
     ...data,
+    showNoTimeLimitOnly: false,
     categories: [...catMap.values()],
-    editingTask: null,
-    draggedTaskId: null
+    editingTask: activeEditingTask,
+    draggedTaskId: null,
+    replanningTaskId: null,
+    splittingTaskId: null
   }
 }
 
@@ -191,7 +194,6 @@ export const persistState = async (): Promise<void> => {
 
 export const getFilteredTasks = (): Task[] => {
   return state.tasks.filter(t => {
-    if (state.showNoTimeLimitOnly && !t.noTimeLimit) return false
     if (state.hideCompleted && t.completed) return false
     if (state.hideOverdue && !t.noTimeLimit && t.dueDate < getTodayStr()) return false
     if (state.filterPriority !== 'all' && t.priority !== state.filterPriority) return false
@@ -230,7 +232,10 @@ export const updateTask = (id: string, updates: Partial<Task>): void => {
 }
 
 export const deleteTask = (id: string): void => {
-  state.tasks = state.tasks.filter(t => t.id !== id)
+  const task = state.tasks.find(t => t.id === id)
+  state.tasks = task?.isParent
+    ? state.tasks.filter(t => t.id !== id && t.parentId !== id)
+    : state.tasks.filter(t => t.id !== id)
 }
 
 // 防止循环任务快速双击导致重复推进日期
@@ -239,6 +244,23 @@ let toggleThrottleMap: Map<string, number> = new Map()
 export const toggleTask = (id: string): void => {
   const task = state.tasks.find(t => t.id === id)
   if (!task) return
+  // 父任务：独立的手工完成状态，不受子任务影响，也没有循环推进逻辑
+  if (task.isParent) {
+    task.completed = !task.completed
+    task.completedAt = task.completed ? Date.now() : undefined
+    task.updatedAt = Date.now()
+    // 标记父任务完成时，把所有未完成的子任务一并标记完成（非循环子任务）
+    if (task.completed) {
+      const now = Date.now()
+      for (const child of state.tasks) {
+        if (child.parentId !== id || child.completed || child.repeatType !== 'none') continue
+        child.completed = true
+        child.completedAt = now
+        child.updatedAt = now
+      }
+    }
+    return
+  }
   if (!task.completed && task.repeatType && task.repeatType !== 'none') {
     // 防重入：500ms 内不重复 toggle 同一个循环任务
     const last = toggleThrottleMap.get(id) || 0
@@ -265,7 +287,7 @@ export const toggleTask = (id: string): void => {
 
 export const moveTaskToDate = (id: string, date: string): void => {
   const task = state.tasks.find(t => t.id === id)
-  if (task) {
+  if (task && !task.isParent) {
     task.dueDate = date
     task.noTimeLimit = false
     task.updatedAt = Date.now()
@@ -304,6 +326,146 @@ export const updateCategory = (id: string, name: string, color: string): void =>
   }
 }
 
+export const toggleTaskOnDate = (id: string, date: string): void => {
+  const task = state.tasks.find(t => t.id === id)
+  if (!task || task.isParent) return
+  if (!task.repeatType || task.repeatType === 'none') {
+    toggleTask(id)
+    return
+  }
+
+  if (!task.repeatStartDate) task.repeatStartDate = task.dueDate || date
+  const completedDates = task.completedDates || []
+  if (completedDates.includes(date)) {
+    task.completedDates = completedDates.filter(completedDate => completedDate !== date)
+    if (!task.dueDate || date < task.dueDate) task.dueDate = date
+  } else {
+    task.completedDates = [...completedDates, date]
+    if (task.dueDate === date) task.dueDate = getNextUncompletedDate(task, date)
+  }
+  task.updatedAt = Date.now()
+}
+
+export const focusTaskToday = (id: string): void => {
+  const task = state.tasks.find(t => t.id === id)
+  if (!task || task.isParent) return
+  const today = getTodayStr()
+  task.dueDate = today
+  task.noTimeLimit = false
+  task.focusDate = today
+  task.updatedAt = Date.now()
+}
+
+export const replanTask = (id: string, date: string): void => {
+  const task = state.tasks.find(t => t.id === id)
+  if (!task || task.isParent) return
+  task.dueDate = date
+  task.noTimeLimit = false
+  task.focusDate = date === getTodayStr() ? date : undefined
+  task.updatedAt = Date.now()
+}
+
+export const moveTaskToPool = (id: string): void => {
+  const task = state.tasks.find(t => t.id === id)
+  if (!task || task.isParent) return
+  task.dueDate = ''
+  task.noTimeLimit = true
+  task.focusDate = undefined
+  task.updatedAt = Date.now()
+}
+
+export interface SplitChildInput {
+  title: string
+  duration: number
+  dueDate: string
+  id?: string // 已有子任务 ID；用于继续编辑父任务时匹配更新而不是重复创建
+}
+
+export const splitTask = (id: string, children: SplitChildInput[]): boolean => {
+  const task = state.tasks.find(t => t.id === id)
+  const validChildren = children.filter(child => child.title.trim() && child.duration > 0 && child.dueDate)
+  if (!task || task.repeatType !== 'none' || validChildren.length < 2) return false
+
+  const now = Date.now()
+
+  // 已是父任务：保留现有子任务，只更新已有行并追加新行（继续编辑场景）
+  if (task.isParent) {
+    const existingChildren = state.tasks.filter(t => t.parentId === id)
+    for (const child of validChildren) {
+      const match = child.id ? existingChildren.find(t => t.id === child.id) : undefined
+      if (match) {
+        match.title = child.title.trim()
+        match.duration = child.duration
+        match.dueDate = child.dueDate
+        match.focusDate = child.dueDate === getTodayStr() ? getTodayStr() : undefined
+        match.updatedAt = now
+      } else {
+        state.tasks.push({
+          id: generateId(),
+          title: child.title.trim(),
+          description: '',
+          priority: task.priority,
+          category: task.category,
+          dueDate: child.dueDate,
+          hardDeadline: task.hardDeadline,
+          focusDate: child.dueDate === getTodayStr() ? getTodayStr() : undefined,
+          duration: child.duration,
+          repeatType: 'none',
+          repeatDays: [],
+          repeatInterval: 1,
+          completed: false,
+          completedDates: [],
+          createdAt: now,
+          updatedAt: now,
+          noTimeLimit: false,
+          parentId: task.id
+        })
+      }
+    }
+    return true
+  }
+
+  // 首次拆分：把原任务转换为父任务并创建子任务
+  task.isParent = true
+  task.duration = 0
+  task.completed = false
+  task.completedAt = undefined
+  task.completedDates = []
+  task.repeatType = 'none'
+  task.repeatDays = []
+  task.repeatInterval = 1
+  task.repeatStartDate = undefined
+  task.noTimeLimit = true
+  task.dueDate = ''
+  task.focusDate = undefined
+  task.updatedAt = now
+
+  for (const child of validChildren) {
+    const childDate = child.dueDate
+    state.tasks.push({
+      id: generateId(),
+      title: child.title.trim(),
+      description: '',
+      priority: task.priority,
+      category: task.category,
+      dueDate: childDate,
+      hardDeadline: task.hardDeadline,
+      focusDate: childDate === getTodayStr() ? getTodayStr() : undefined,
+      duration: child.duration,
+      repeatType: 'none',
+      repeatDays: [],
+      repeatInterval: 1,
+      completed: false,
+      completedDates: [],
+      createdAt: now,
+      updatedAt: now,
+      noTimeLimit: false,
+      parentId: task.id
+    })
+  }
+  return true
+}
+
 export const deleteCategory = (id: string): void => {
   if (state.categories.length > 1) {
     const fallback = state.categories.find(category => category.id !== id)
@@ -340,6 +502,7 @@ export const getWeeklyGoalStats = (): WeeklyGoalStats | null => {
   if (!anchor) {
     let earliest = Infinity
     for (const t of state.tasks) {
+      if (!isExecutableTask(t)) continue
       if (t.completed && (!t.repeatType || t.repeatType === 'none')) {
         const date = t.completedAt || parseDate(t.dueDate).getTime()
         if (date < earliest) earliest = date
@@ -361,6 +524,7 @@ export const getWeeklyGoalStats = (): WeeklyGoalStats | null => {
   let totalMinutes = 0
   let completedCount = 0
   for (const t of state.tasks) {
+    if (!isExecutableTask(t)) continue
     if (t.completed && (!t.repeatType || t.repeatType === 'none')) {
       totalMinutes += t.duration
       completedCount++
@@ -392,7 +556,7 @@ export const getWeeklyGoalStats = (): WeeklyGoalStats | null => {
 }
 
 export const getStats = () => {
-  const tasks = getFilteredTasks()
+  const tasks = getFilteredTasks().filter(isExecutableTask)
   const pending = tasks.filter(t => !t.completed && t.repeatType === 'none').reduce((s, t) => s + t.duration, 0)
   const done = tasks.filter(t => t.completed && t.repeatType === 'none').reduce((s, t) => s + t.duration, 0)
   const overdueCount = tasks.filter(t => !t.completed && !t.noTimeLimit && isOverdue(t.dueDate, false)).length
@@ -401,3 +565,5 @@ export const getStats = () => {
   const todayDone = todayTasks.filter(t => t.completed).length
   return { pending, done, overdueCount, todayTotal: todayTasks.length, todayDone }
 }
+
+export const getParentTaskProgress = (task: Task) => getTaskProgress(task, state.tasks)

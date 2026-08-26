@@ -12,6 +12,10 @@ chrome-extension-loadable/
 
 # Release packaging
 release/
+outputs/
+
+# Codex temporary prototypes and analysis
+work/
 
 # One-time scripts
 convert-eisenhower.cjs

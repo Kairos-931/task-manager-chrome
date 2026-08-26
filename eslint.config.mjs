@@ -12,17 +12,34 @@ export default [
     ]
   },
   {
-    files: ['backend/**/*.js', 'tests/**/*.mjs'],
+    files: ['backend/**/*.js', 'scripts/**/*.mjs', 'tests/**/*.mjs'],
     ...js.configs.recommended,
     languageOptions: {
       ...js.configs.recommended.languageOptions,
       globals: {
         console: 'readonly',
+        Buffer: 'readonly',
         crypto: 'readonly',
         fetch: 'readonly',
         Request: 'readonly',
         Response: 'readonly',
-        URL: 'readonly'
+        URL: 'readonly',
+        process: 'readonly'
+      }
+    },
+    rules: {
+      'no-unused-vars': ['error', { argsIgnorePattern: '^_' }]
+    }
+  },
+  {
+    files: ['demo/**/*.js'],
+    ...js.configs.recommended,
+    languageOptions: {
+      ...js.configs.recommended.languageOptions,
+      globals: {
+        document: 'readonly',
+        Intl: 'readonly',
+        window: 'readonly'
       }
     },
     rules: {

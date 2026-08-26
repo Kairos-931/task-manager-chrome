@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import ts from 'typescript'
 import worker from '../backend/index.js'
 
 const createDb = (legacyData = null) => {
@@ -15,6 +17,10 @@ const createDb = (legacyData = null) => {
         },
         async first() {
           if (sql.includes('SELECT 1 FROM sync_records')) return records.size ? { ok: 1 } : null
+          if (sql.includes("record_type = 'settings'")) {
+            const record = records.get('settings:app')
+            return record && !record.deleted ? { payload: record.payload } : null
+          }
           if (sql.includes('FROM sync_records WHERE record_key')) {
             const record = records.get(args[0])
             return record ? {
@@ -244,10 +250,11 @@ const categoryResponse = await worker.fetch(new Request('https://taskmaster.test
 })
 assert.equal(categoryResponse.status, 200)
 const categoryData = await categoryResponse.json()
-assert.ok(categoryData.categories.some(category => category.name === '星标'))
-assert.deepEqual(categoryData.categories.slice(0, 4).map(category => category.id), [
-  'default-starred', 'default-work', 'default-life', 'default-learning'
+assert.ok(!categoryData.categories.some(category => category.id === 'default-starred'))
+assert.deepEqual(categoryData.categories.slice(0, 3).map(category => category.id), [
+  'default-work', 'default-life', 'default-learning'
 ])
+assert.equal(categoryData.defaultCategory, 'default-work')
 
 const categorySyncDb = createDb()
 await sync(categorySyncDb, {
@@ -256,6 +263,9 @@ await sync(categorySyncDb, {
   changes: [{
     type: 'category', id: 'project-category', deleted: false, updatedAt: 500,
     payload: { id: 'project-category', name: '项目', color: '#123456', updatedAt: 500 }
+  }, {
+    type: 'settings', id: 'app', deleted: false, updatedAt: 501,
+    payload: { defaultCategory: 'project-category' }
   }]
 })
 const syncedCategoryResponse = await worker.fetch(new Request('https://taskmaster.test/api/categories', {
@@ -263,6 +273,32 @@ const syncedCategoryResponse = await worker.fetch(new Request('https://taskmaste
 }), { API_TOKEN: 'test-token', DB: categorySyncDb })
 const syncedCategoryData = await syncedCategoryResponse.json()
 assert.ok(syncedCategoryData.categories.some(category => category.id === 'project-category'))
+assert.equal(syncedCategoryData.defaultCategory, 'project-category')
+
+const storageSource = await readFile(new URL('../shared/storage.ts', import.meta.url), 'utf8')
+const storageJavaScript = ts.transpileModule(storageSource, {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }
+}).outputText
+const { getNextLocalSettingsUpdatedAt, normalizeStorageData } = await import(
+  `data:text/javascript;base64,${Buffer.from(storageJavaScript).toString('base64')}`
+)
+assert.equal(getNextLocalSettingsUpdatedAt(500, 400), 501, 'local settings version must advance beyond the current version')
+assert.equal(getNextLocalSettingsUpdatedAt(500, 600), 600, 'local settings version should use the current clock when it is newer')
+
+const migratedStarredData = normalizeStorageData({
+  tasks: [{ ...createTask('legacy-starred-task', 600, 'Legacy starred'), category: 'default-starred' }],
+  categories: [
+    { id: 'default-starred', name: '星标', color: '#f59e0b', updatedAt: 1 },
+    { id: 'project-category', name: '项目', color: '#123456', updatedAt: 2 }
+  ],
+  defaultCategory: 'project-category',
+  hideCompleted: false,
+  hideOverdue: false,
+  showNoTimeLimitOnly: false
+})
+assert.ok(!migratedStarredData.categories.some(category => category.id === 'default-starred'))
+assert.equal(migratedStarredData.defaultCategory, 'project-category')
+assert.equal(migratedStarredData.tasks[0].category, 'project-category')
 
 const legacyWriteResponse = await worker.fetch(new Request('https://taskmaster.test/api/fullsync', {
   method: 'POST',
@@ -272,8 +308,14 @@ const legacyWriteResponse = await worker.fetch(new Request('https://taskmaster.t
 assert.equal(legacyWriteResponse.status, 409)
 assert.equal((await legacyWriteResponse.json()).error, 'upgrade_required')
 
-const backgroundSource = await import('node:fs/promises').then(fs => fs.readFile(new URL('../shared/background.ts', import.meta.url), 'utf8'))
+const [backgroundSource, taskSource, eventSource] = await Promise.all([
+  readFile(new URL('../shared/background.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../shared/task.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../shared/events.ts', import.meta.url), 'utf8')
+])
 assert.doesNotMatch(backgroundSource, /lt\.title === \(rt\.title as string\)/)
 assert.match(backgroundSource, /localData\.tasks\.some\(local => local\.id === task\.id\)/)
+assert.match(taskSource, /setLocalSettings[\s\S]*syncSettingsUpdatedAt = getNextLocalSettingsUpdatedAt/)
+assert.match(eventSource, /#hideCompleted[\s\S]*setLocalSettings\(\{ hideCompleted:/)
 
 console.log('Incremental sync tests passed')

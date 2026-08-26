@@ -48,6 +48,16 @@ npm run build
 - **弹窗模式**：点击浏览器右上角插件图标，弹出小窗口快速查看
 - **全屏模式**：弹窗中点击"新标签页打开"按钮，进入全屏任务管理页面
 
+## 公开演示页
+
+`demo/` 提供完全隔离真实数据的公开交互式演示页。页面只使用虚构预填任务，不连接 Worker、不读取扩展数据，刷新后恢复初始状态。
+
+```bash
+npm run demo
+```
+
+打开 `http://127.0.0.1:4173`。服务器与 Docker 部署方式见 [docs/demo-deployment.md](docs/demo-deployment.md)。
+
 ## 技术架构
 
 | 技术 | 用途 |
@@ -150,7 +160,7 @@ npm run build
 **注意事项**：
 - 扩展会在联网后自动收敛任务、分类和设置；同一任务并发编辑时采用较新的修改
 - 删除任务会同步为墓碑记录，旧设备恢复联网后不会把它重新创建
-- 国内使用无需 VPN（Cloudflare Worker 全球可达）
+- `workers.dev` 在部分网络环境中可能无法直连；使用 Clash 规则模式时需将 Worker 域名分流到代理
 - 建议定期使用"导出数据"功能备份重要数据
 
 ## 常见问题
@@ -160,6 +170,16 @@ npm run build
 1. **确认 API 地址和密钥正确** — 打开设置面板检查是否填写
 2. **确认 Worker 已部署** — 直接访问 Worker URL，应返回 `{"error":"Not Found"}`（说明 Worker 在线）
 3. **确认 D1 数据库已绑定** — 检查 wrangler.toml 中的 database_id 是否正确
+4. **区分网络错误和认证错误** — `TypeError: Failed to fetch` 表示请求未收到 HTTP 响应，优先检查网络、TLS 和代理；密钥错误会返回 `401`
+5. **Clash 规则模式覆盖 Worker** — 在当前订阅关联的 Rules 覆写中，将以下规则放在 `GEOIP`、`GEOSITE` 和 `MATCH` 等兜底规则之前，然后重新加载配置：
+
+   ```yaml
+   prepend:
+     - DOMAIN,taskmaster-api.yx9391.workers.dev,Proxy
+     - DOMAIN-SUFFIX,workers.dev,Proxy
+   ```
+
+   `Proxy` 必须替换为配置中实际存在的代理组名。验证时直接在同一个 Chrome 中访问 Worker URL；能打开 TaskMaster 手机添加页，说明浏览器链路已经恢复。
 
 ## 开发
 
@@ -185,6 +205,8 @@ npm run copy         # 只复制资源文件
 完整的迭代开发记录请查看 [CHANGELOG.md](CHANGELOG.md)。
 
 当前能力与版本、Issue 的对应关系请查看 [docs/current-product.md](docs/current-product.md) 和 [docs/release-history.md](docs/release-history.md)。
+
+当前有效的统一产品需求请查看 [docs/PRD.md](docs/PRD.md)。
 
 变更与发布的记录规则见 [docs/change-recording.md](docs/change-recording.md)。
 

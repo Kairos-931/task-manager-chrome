@@ -2,9 +2,9 @@
 // esbuild will bundle these imports into a single IIFE
 
 import { loadState, persistState, getState, setState, resetEditingTask, getFilteredTasks, getStats, getWeeklyGoalStats, addTask, updateTask, deleteTask, toggleTask, moveTaskToDate, addCategory, deleteCategory, formatDate, parseDate, formatHours, getDateLabel, getRemainingTime, isOverdue, isTaskDueOnDate, getPriorityColor, getCatColor, getCatName, escapeHtml } from './task'
-import { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, renderListView, renderDayView, renderWeekView, renderMonthView, renderTaskList, renderModal, renderCategoryModal, renderGoalSettingsModal, renderSyncModal, renderMobileSyncPanel, renderWeeklyGoalCard } from './render'
+import { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, renderPoolView, renderListView, renderDayView, renderWeekView, renderMonthView, renderTaskList, renderModal, renderCategoryModal, renderGoalSettingsModal, renderSyncModal, renderMobileSyncPanel, renderWeeklyGoalCard, renderSyncIndicator } from './render'
 import { attachEventListeners } from './events'
-import { initSyncMonitor, onSyncStatusChange } from './sync'
+import { onSyncStatusChange, shouldRefreshAppForSyncStatus } from './sync'
 
 // 同步操作反馈 toast（独立定义避免循环依赖）
 function syncActionToast(message: string, type: 'success' | 'error' = 'success') {
@@ -23,7 +23,7 @@ function syncActionToast(message: string, type: 'success' | 'error' = 'success')
 
 // Export for external use
 export { loadState, persistState, getState, setState, resetEditingTask, getFilteredTasks, getStats, getWeeklyGoalStats, addTask, updateTask, deleteTask, toggleTask, moveTaskToDate, addCategory, deleteCategory, formatDate, parseDate, formatHours, getDateLabel, getRemainingTime, isOverdue, isTaskDueOnDate, getPriorityColor, getCatColor, getCatName, escapeHtml }
-export { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, renderListView, renderDayView, renderWeekView, renderMonthView, renderTaskList, renderModal, renderCategoryModal, renderGoalSettingsModal, renderSyncModal, renderMobileSyncPanel, renderWeeklyGoalCard }
+export { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, renderPoolView, renderListView, renderDayView, renderWeekView, renderMonthView, renderTaskList, renderModal, renderCategoryModal, renderGoalSettingsModal, renderSyncModal, renderMobileSyncPanel, renderWeeklyGoalCard }
 export { attachEventListeners }
 
 // Auto-initialize when DOM is ready
@@ -48,16 +48,23 @@ function autoInit() {
 
     renderApp(container)
     attachEventListeners(container)
+
     // Auto-sync mobile tasks with toast feedback
     chrome.runtime.sendMessage({ action: 'syncRemoteTasks' }, (result: { synced?: number }) => {
       if ((result?.synced ?? 0) > 0) {
         syncActionToast(`已从手机同步 ${result.synced} 个任务`, 'success')
       }
     })
-    initSyncMonitor(reRender)
-    onSyncStatusChange(() => {
-      const indicator = container.querySelector('#syncIndicator')
-      if (indicator) {
+
+    onSyncStatusChange((status) => {
+      const indicatorSlot = container.querySelector('#syncIndicatorSlot')
+      if (indicatorSlot) {
+        indicatorSlot.innerHTML = renderSyncIndicator()
+      }
+
+      const taskModal = container.querySelector('#taskModal')
+      const isTaskModalOpen = !!taskModal && !taskModal.classList.contains('hidden')
+      if (shouldRefreshAppForSyncStatus(status, isTaskModalOpen)) {
         reRender()
       }
     })

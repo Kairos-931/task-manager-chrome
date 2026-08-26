@@ -12,11 +12,12 @@ export const generateId = (): string => {
 // Default categories are protocol data, not per-install random data. Tasks use
 // these IDs on every device, including the mobile quick-add page.
 const DEFAULT_CATEGORY_DEFINITIONS = [
-  { id: 'default-starred', name: '星标', color: '#f59e0b' },
   { id: 'default-work', name: '工作', color: '#3b82f6' },
   { id: 'default-life', name: '生活', color: '#10b981' },
   { id: 'default-learning', name: '学习', color: '#8b5cf6' },
 ] as const
+
+const LEGACY_STARRED_CATEGORY_ID = 'default-starred'
 
 const defaultCategoryByName = new Map<string, (typeof DEFAULT_CATEGORY_DEFINITIONS)[number]>(
   DEFAULT_CATEGORY_DEFINITIONS.map(category => [category.name, category])
@@ -181,13 +182,14 @@ export const syncFromCloud = async (): Promise<{ data: StorageData | null; updat
   }
 }
 
-const normalizeStorageData = (data: StorageData): StorageData => {
+export const normalizeStorageData = (data: StorageData): StorageData => {
   const categoryIdMap = new Map<string, string>()
   const categoriesByName = new Map<string, Category>()
   const sourceCategories = Array.isArray(data.categories) ? data.categories : createDefaultCategories()
 
   for (const category of sourceCategories) {
     if (!category?.id || !category.name) continue
+    if (category.id === LEGACY_STARRED_CATEGORY_ID) continue
     const definition = defaultCategoryByName.get(category.name)
     const normalized = definition
       ? { ...category, id: definition.id, name: definition.name }
@@ -203,14 +205,32 @@ const normalizeStorageData = (data: StorageData): StorageData => {
   const categories = dedupeCategories([...categoriesByName.values()])
   const categoryNameToId = new Map(categories.map(category => [category.name, category.id]))
   const resolveCategoryId = (id: string): string => categoryIdMap.get(id) || categoryNameToId.get(id) || id
+  const requestedDefault = resolveCategoryId(data.defaultCategory || '')
+  const defaultCategory = requestedDefault !== LEGACY_STARRED_CATEGORY_ID &&
+    categories.some(category => category.id === requestedDefault)
+    ? requestedDefault
+    : (categories[0]?.id || '')
+  const resolveTaskCategory = (id: string): string => {
+    const resolved = resolveCategoryId(id)
+    return resolved === LEGACY_STARRED_CATEGORY_ID ? defaultCategory : resolved
+  }
 
   return {
     ...data,
     tasks: Array.isArray(data.tasks)
-      ? data.tasks.map(task => ({ ...task, category: resolveCategoryId(task.category || '') }))
+      ? data.tasks.map(task => ({
+          ...task,
+          category: resolveTaskCategory(task.category || ''),
+          hardDeadline: typeof task.hardDeadline === 'string' && task.hardDeadline ? task.hardDeadline : undefined,
+          focusDate: typeof task.focusDate === 'string' && task.focusDate ? task.focusDate : undefined,
+          parentId: typeof task.parentId === 'string' && task.parentId ? task.parentId : undefined,
+          isParent: task.isParent === true || undefined,
+          duration: task.isParent === true ? 0 : task.duration,
+          noTimeLimit: task.isParent === true ? true : task.noTimeLimit
+        }))
       : [],
     categories,
-    defaultCategory: resolveCategoryId(data.defaultCategory || '')
+    defaultCategory
   }
 }
 
@@ -237,6 +257,9 @@ const INCREMENTAL_CLOCK_KEY = 'tm_incremental_sync_clock'
 const OUTGOING_SYNC_BATCH = 400
 let lastSyncTimestamp = 0
 let syncQueue: Promise<void> = Promise.resolve()
+
+export const getNextLocalSettingsUpdatedAt = (current = 0, now = Date.now()): number =>
+  Math.max(now, current + 1)
 
 const recordKey = (type: SyncRecordType, id: string): string => `${type}:${id}`
 

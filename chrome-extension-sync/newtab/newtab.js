@@ -32,11 +32,13 @@ var TaskManager = (() => {
     exportData: () => exportData,
     generateId: () => generateId,
     getDefaultData: () => getDefaultData,
+    getNextLocalSettingsUpdatedAt: () => getNextLocalSettingsUpdatedAt,
     getStorageUsage: () => getStorageUsage,
     importDataFromFile: () => importDataFromFile,
     isCloudConfigured: () => isCloudConfigured,
     listBackups: () => listBackups,
     loadData: () => loadData,
+    normalizeStorageData: () => normalizeStorageData,
     restoreBackup: () => restoreBackup,
     saveData: () => saveData,
     syncFromCloud: () => syncFromCloud,
@@ -44,7 +46,7 @@ var TaskManager = (() => {
     syncToCloud: () => syncToCloud,
     validateImportData: () => validateImportData
   });
-  var STORAGE_KEY, LOCAL_BACKUP_KEY, generateId, DEFAULT_CATEGORY_DEFINITIONS, defaultCategoryByName, createDefaultCategories, defaultCategories, getDefaultData, loadFromLocal, saveToLocal, dedupeCategories, CLOUD_SYNC_SETTINGS_KEY, getCloudSettings, CLOUD_BASE_AT_KEY, getCloudBaseAt, setCloudBaseAt, syncToCloud, syncFromCloud, normalizeStorageData, INCREMENTAL_CURSOR_KEY, INCREMENTAL_DEVICE_KEY, INCREMENTAL_SHADOW_KEY, INCREMENTAL_CLOCK_KEY, OUTGOING_SYNC_BATCH, lastSyncTimestamp, syncQueue, recordKey, nextSyncTimestamp, cloneStorageData, enqueueSync, getLocalValue, setLocalValues, getSyncDeviceId, getSyncShadow, getSettingsPayload, samePayload, buildCurrentRecords, buildLocalChanges, applyRemoteChanges, isVirginDefaultData, syncIncrementallyNow, syncIncrementally, isCloudConfigured, loadData, fixRecurringTasks, isTaskMatchRepeat, saveData, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
+  var STORAGE_KEY, LOCAL_BACKUP_KEY, generateId, DEFAULT_CATEGORY_DEFINITIONS, LEGACY_STARRED_CATEGORY_ID, defaultCategoryByName, createDefaultCategories, defaultCategories, getDefaultData, loadFromLocal, saveToLocal, dedupeCategories, CLOUD_SYNC_SETTINGS_KEY, getCloudSettings, CLOUD_BASE_AT_KEY, getCloudBaseAt, setCloudBaseAt, syncToCloud, syncFromCloud, normalizeStorageData, INCREMENTAL_CURSOR_KEY, INCREMENTAL_DEVICE_KEY, INCREMENTAL_SHADOW_KEY, INCREMENTAL_CLOCK_KEY, OUTGOING_SYNC_BATCH, lastSyncTimestamp, syncQueue, getNextLocalSettingsUpdatedAt, recordKey, nextSyncTimestamp, cloneStorageData, enqueueSync, getLocalValue, setLocalValues, getSyncDeviceId, getSyncShadow, getSettingsPayload, samePayload, buildCurrentRecords, buildLocalChanges, applyRemoteChanges, isVirginDefaultData, syncIncrementallyNow, syncIncrementally, isCloudConfigured, loadData, fixRecurringTasks, isTaskMatchRepeat, saveData, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
   var init_storage = __esm({
     "shared/storage.ts"() {
       "use strict";
@@ -54,11 +56,11 @@ var TaskManager = (() => {
         return Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
       };
       DEFAULT_CATEGORY_DEFINITIONS = [
-        { id: "default-starred", name: "\u661F\u6807", color: "#f59e0b" },
         { id: "default-work", name: "\u5DE5\u4F5C", color: "#3b82f6" },
         { id: "default-life", name: "\u751F\u6D3B", color: "#10b981" },
         { id: "default-learning", name: "\u5B66\u4E60", color: "#8b5cf6" }
       ];
+      LEGACY_STARRED_CATEGORY_ID = "default-starred";
       defaultCategoryByName = new Map(
         DEFAULT_CATEGORY_DEFINITIONS.map((category) => [category.name, category])
       );
@@ -209,6 +211,8 @@ var TaskManager = (() => {
         for (const category of sourceCategories) {
           if (!category?.id || !category.name)
             continue;
+          if (category.id === LEGACY_STARRED_CATEGORY_ID)
+            continue;
           const definition = defaultCategoryByName.get(category.name);
           const normalized = definition ? { ...category, id: definition.id, name: definition.name } : { ...category };
           if (normalized.id !== category.id)
@@ -221,11 +225,26 @@ var TaskManager = (() => {
         const categories = dedupeCategories([...categoriesByName.values()]);
         const categoryNameToId = new Map(categories.map((category) => [category.name, category.id]));
         const resolveCategoryId = (id) => categoryIdMap.get(id) || categoryNameToId.get(id) || id;
+        const requestedDefault = resolveCategoryId(data.defaultCategory || "");
+        const defaultCategory = requestedDefault !== LEGACY_STARRED_CATEGORY_ID && categories.some((category) => category.id === requestedDefault) ? requestedDefault : categories[0]?.id || "";
+        const resolveTaskCategory = (id) => {
+          const resolved = resolveCategoryId(id);
+          return resolved === LEGACY_STARRED_CATEGORY_ID ? defaultCategory : resolved;
+        };
         return {
           ...data,
-          tasks: Array.isArray(data.tasks) ? data.tasks.map((task) => ({ ...task, category: resolveCategoryId(task.category || "") })) : [],
+          tasks: Array.isArray(data.tasks) ? data.tasks.map((task) => ({
+            ...task,
+            category: resolveTaskCategory(task.category || ""),
+            hardDeadline: typeof task.hardDeadline === "string" && task.hardDeadline ? task.hardDeadline : void 0,
+            focusDate: typeof task.focusDate === "string" && task.focusDate ? task.focusDate : void 0,
+            parentId: typeof task.parentId === "string" && task.parentId ? task.parentId : void 0,
+            isParent: task.isParent === true || void 0,
+            duration: task.isParent === true ? 0 : task.duration,
+            noTimeLimit: task.isParent === true ? true : task.noTimeLimit
+          })) : [],
           categories,
-          defaultCategory: resolveCategoryId(data.defaultCategory || "")
+          defaultCategory
         };
       };
       INCREMENTAL_CURSOR_KEY = "tm_incremental_sync_cursor";
@@ -235,6 +254,7 @@ var TaskManager = (() => {
       OUTGOING_SYNC_BATCH = 400;
       lastSyncTimestamp = 0;
       syncQueue = Promise.resolve();
+      getNextLocalSettingsUpdatedAt = (current = 0, now = Date.now()) => Math.max(now, current + 1);
       recordKey = (type, id) => `${type}:${id}`;
       nextSyncTimestamp = () => {
         lastSyncTimestamp = Math.max(Date.now(), lastSyncTimestamp + 1);
@@ -721,14 +741,13 @@ var TaskManager = (() => {
       toast.remove();
     }, 3e3);
   }
-  var syncStatus, statusChangeCallback, statusTimeoutId, reRenderFn, getSyncStatus, setSyncStatus, onSyncStatusChange, markLocalSave, markSaveComplete, markCloudSynced, initSyncMonitor, markSyncError, markRemoteUpdated;
+  var syncStatus, statusChangeCallback, statusTimeoutId, getSyncStatus, setSyncStatus, onSyncStatusChange, shouldRefreshAppForSyncStatus, markLocalSave, markSaveComplete, markCloudSynced, markSyncError, markRemoteUpdated;
   var init_sync = __esm({
     "shared/sync.ts"() {
       "use strict";
       syncStatus = "idle";
       statusChangeCallback = null;
       statusTimeoutId = null;
-      reRenderFn = null;
       getSyncStatus = () => syncStatus;
       setSyncStatus = (status) => {
         syncStatus = status;
@@ -737,6 +756,7 @@ var TaskManager = (() => {
       onSyncStatusChange = (cb) => {
         statusChangeCallback = cb;
       };
+      shouldRefreshAppForSyncStatus = (status, isTaskModalOpen) => status === "remote-updated" && !isTaskModalOpen;
       markLocalSave = () => {
         setSyncStatus("saving");
       };
@@ -750,12 +770,8 @@ var TaskManager = (() => {
         statusTimeoutId = setTimeout(() => {
           if (syncStatus === "synced") {
             setSyncStatus("idle");
-            reRenderFn?.();
           }
         }, 3e3);
-      };
-      initSyncMonitor = (reRender2) => {
-        reRenderFn = reRender2;
       };
       markSyncError = () => {
         setSyncStatus("error");
@@ -772,6 +788,120 @@ var TaskManager = (() => {
     }
   });
 
+  // shared/calendar.ts
+  var parseLocalDate, formatLocalDate, isTaskDueOnDate, isTaskCompletedOnDate, summarizeTaskDurationsForDates, getWeekDates, shiftMonth;
+  var init_calendar = __esm({
+    "shared/calendar.ts"() {
+      "use strict";
+      parseLocalDate = (date) => /* @__PURE__ */ new Date(`${date}T00:00:00`);
+      formatLocalDate = (date) => {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const day = String(date.getDate()).padStart(2, "0");
+        return `${year}-${month}-${day}`;
+      };
+      isTaskDueOnDate = (task, dateString) => {
+        if (task.noTimeLimit || task.isParent)
+          return false;
+        if (!task.repeatType || task.repeatType === "none")
+          return task.dueDate === dateString;
+        const anchor = task.repeatStartDate || task.dueDate;
+        if (anchor === dateString)
+          return true;
+        const date = parseLocalDate(dateString);
+        const anchorDate = parseLocalDate(anchor);
+        switch (task.repeatType) {
+          case "daily":
+            return date >= anchorDate;
+          case "weekly":
+            return date >= anchorDate && (task.repeatDays || []).includes(date.getDay());
+          case "monthly":
+            return date >= anchorDate && date.getDate() === anchorDate.getDate();
+          case "workdays":
+            return date >= anchorDate && date.getDay() >= 1 && date.getDay() <= 5;
+          case "custom": {
+            if (date < anchorDate)
+              return false;
+            const daysDiff = Math.floor((date.getTime() - anchorDate.getTime()) / 864e5);
+            return daysDiff % (task.repeatInterval || 1) === 0;
+          }
+          default:
+            return anchor === dateString;
+        }
+      };
+      isTaskCompletedOnDate = (task, date) => {
+        if (task.repeatType && task.repeatType !== "none") {
+          return (task.completedDates || []).includes(date);
+        }
+        return task.completed;
+      };
+      summarizeTaskDurationsForDates = (tasks, dates) => {
+        const uniqueDates = [...new Set(dates)];
+        return uniqueDates.reduce((summary, date) => {
+          for (const task of tasks) {
+            if (!isTaskDueOnDate(task, date))
+              continue;
+            if (isTaskCompletedOnDate(task, date))
+              summary.done += task.duration;
+            else
+              summary.pending += task.duration;
+          }
+          return summary;
+        }, { pending: 0, done: 0 });
+      };
+      getWeekDates = (anchorDate) => {
+        const anchor = parseLocalDate(anchorDate);
+        const monday = new Date(anchor);
+        const weekday = anchor.getDay();
+        monday.setDate(anchor.getDate() + (weekday === 0 ? -6 : 1 - weekday));
+        return Array.from({ length: 7 }, (_, index) => {
+          const date = new Date(monday);
+          date.setDate(monday.getDate() + index);
+          return formatLocalDate(date);
+        });
+      };
+      shiftMonth = (currentDate, offset) => {
+        const date = parseLocalDate(currentDate);
+        date.setDate(1);
+        date.setMonth(date.getMonth() + offset);
+        return formatLocalDate(date);
+      };
+    }
+  });
+
+  // shared/planning.ts
+  var isExecutableTask, getTaskPoolTasks, getHistoricalOverdueTasks, getTaskProgress;
+  var init_planning = __esm({
+    "shared/planning.ts"() {
+      "use strict";
+      isExecutableTask = (task) => !task.isParent;
+      getTaskPoolTasks = (tasks) => tasks.filter((task) => task.noTimeLimit && isExecutableTask(task));
+      getHistoricalOverdueTasks = (tasks, weekStart, filters) => tasks.filter((task) => {
+        if (!isExecutableTask(task) || task.completed || task.noTimeLimit || !task.dueDate || task.repeatType !== "none" || task.dueDate >= weekStart)
+          return false;
+        if (filters.showNoTimeLimitOnly || filters.hideOverdue)
+          return false;
+        if (filters.priority !== "all" && task.priority !== filters.priority)
+          return false;
+        if (filters.category !== "all" && task.category !== filters.category)
+          return false;
+        return true;
+      }).sort((first, second) => first.dueDate.localeCompare(second.dueDate));
+      getTaskProgress = (task, tasks) => {
+        if (!task.isParent) {
+          return { completed: task.completed ? 1 : 0, total: 1, percent: task.completed ? 100 : 0 };
+        }
+        const children = tasks.filter((child) => child.parentId === task.id);
+        const completed = children.filter((child) => child.completed).length;
+        return {
+          completed,
+          total: children.length,
+          percent: children.length > 0 ? Math.round(completed / children.length * 100) : 0
+        };
+      };
+    }
+  });
+
   // shared/task.ts
   var task_exports = {};
   __export(task_exports, {
@@ -780,36 +910,52 @@ var TaskManager = (() => {
     deleteCategory: () => deleteCategory,
     deleteTask: () => deleteTask,
     escapeHtml: () => escapeHtml,
+    focusTaskToday: () => focusTaskToday,
     formatDate: () => formatDate,
     formatHours: () => formatHours,
     getCatColor: () => getCatColor,
     getCatName: () => getCatName,
     getDateLabel: () => getDateLabel,
     getFilteredTasks: () => getFilteredTasks,
+    getParentTaskProgress: () => getParentTaskProgress,
     getPriorityColor: () => getPriorityColor,
     getRemainingTime: () => getRemainingTime,
     getState: () => getState,
     getStats: () => getStats,
+    getTaskProgress: () => getTaskProgress,
     getTodayStr: () => getTodayStr,
+    getWeekDates: () => getWeekDates,
     getWeeklyGoalStats: () => getWeeklyGoalStats,
     isOverdue: () => isOverdue,
+    isTaskCompletedOnDate: () => isTaskCompletedOnDate,
     isTaskDueOnDate: () => isTaskDueOnDate,
     loadState: () => loadState,
     moveTaskToDate: () => moveTaskToDate,
+    moveTaskToPool: () => moveTaskToPool,
     parseDate: () => parseDate,
     persistState: () => persistState,
+    replanTask: () => replanTask,
     resetEditingTask: () => resetEditingTask,
+    setLocalSettings: () => setLocalSettings,
     setState: () => setState,
+    shiftMonth: () => shiftMonth,
+    splitTask: () => splitTask,
+    summarizeTaskDurationsForDates: () => summarizeTaskDurationsForDates,
     toggleTask: () => toggleTask,
+    toggleTaskOnDate: () => toggleTaskOnDate,
     updateCategory: () => updateCategory,
     updateTask: () => updateTask
   });
-  var escapeHtml, formatDate, parseDate, formatHours, getDateLabel, getTodayStr, state, getState, setState, resetEditingTask, getRemainingTime, isOverdue, isTaskDueOnDate, getPriorityColor, getCatColor, getCatName, applyStorageData, loadState, persistState, getFilteredTasks, addTask, updateTask, deleteTask, toggleThrottleMap, toggleTask, moveTaskToDate, getNextUncompletedDate, addCategory, updateCategory, deleteCategory, getWeeklyGoalStats, getStats;
+  var escapeHtml, formatDate, parseDate, formatHours, getDateLabel, getTodayStr, state, getState, setState, setLocalSettings, resetEditingTask, getRemainingTime, isOverdue, getPriorityColor, getCatColor, getCatName, applyStorageData, loadState, persistState, getFilteredTasks, addTask, updateTask, deleteTask, toggleThrottleMap, toggleTask, moveTaskToDate, getNextUncompletedDate, addCategory, updateCategory, toggleTaskOnDate, focusTaskToday, replanTask, moveTaskToPool, splitTask, deleteCategory, getWeeklyGoalStats, getStats, getParentTaskProgress;
   var init_task = __esm({
     "shared/task.ts"() {
       "use strict";
       init_storage();
       init_sync();
+      init_calendar();
+      init_planning();
+      init_calendar();
+      init_planning();
       escapeHtml = (str) => {
         const div = document.createElement("div");
         div.textContent = str;
@@ -847,15 +993,27 @@ var TaskManager = (() => {
         showNoTimeLimitOnly: false,
         darkMode: false,
         editingTask: null,
-        currentView: "list",
+        currentView: "focus",
         currentDate: getTodayStr(),
         filterPriority: "all",
         filterCategory: "all",
-        draggedTaskId: null
+        draggedTaskId: null,
+        replanningTaskId: null,
+        splittingTaskId: null,
+        overdueCollapsed: true
       };
       getState = () => state;
       setState = (newState) => {
         state = { ...state, ...newState };
+      };
+      setLocalSettings = (updates) => {
+        const changed = Object.entries(updates).some(
+          ([key, value]) => state[key] !== value
+        );
+        state = { ...state, ...updates };
+        if (changed) {
+          state.syncSettingsUpdatedAt = getNextLocalSettingsUpdatedAt(state.syncSettingsUpdatedAt);
+        }
       };
       resetEditingTask = () => {
         state.editingTask = null;
@@ -885,35 +1043,6 @@ var TaskManager = (() => {
         const todayStr = getTodayStr();
         return d < todayStr;
       };
-      isTaskDueOnDate = (t, d) => {
-        if (t.noTimeLimit)
-          return false;
-        if (!t.repeatType || t.repeatType === "none") {
-          return t.dueDate === d;
-        }
-        const anchor = t.repeatStartDate || t.dueDate;
-        if (anchor === d)
-          return true;
-        const date = parseDate(d);
-        const anchorDate = parseDate(anchor);
-        switch (t.repeatType) {
-          case "daily":
-            return date >= anchorDate;
-          case "weekly":
-            return date >= anchorDate && (t.repeatDays || []).includes(date.getDay());
-          case "monthly":
-            return date >= anchorDate && date.getDate() === anchorDate.getDate();
-          case "workdays":
-            return date >= anchorDate && date.getDay() >= 1 && date.getDay() <= 5;
-          case "custom":
-            if (date < anchorDate)
-              return false;
-            const daysDiff = Math.floor((date.getTime() - anchorDate.getTime()) / 864e5);
-            return daysDiff % (t.repeatInterval || 1) === 0;
-          default:
-            return anchor === d;
-        }
-      };
       getPriorityColor = (p) => {
         switch (p) {
           case "high":
@@ -933,6 +1062,7 @@ var TaskManager = (() => {
         return c ? c.name : "";
       };
       applyStorageData = (data) => {
+        const activeEditingTask = state.editingTask;
         const catMap = /* @__PURE__ */ new Map();
         const cats = data.categories || defaultCategories;
         for (const c of cats) {
@@ -947,9 +1077,12 @@ var TaskManager = (() => {
         state = {
           ...state,
           ...data,
+          showNoTimeLimitOnly: false,
           categories: [...catMap.values()],
-          editingTask: null,
-          draggedTaskId: null
+          editingTask: activeEditingTask,
+          draggedTaskId: null,
+          replanningTaskId: null,
+          splittingTaskId: null
         };
       };
       loadState = async () => {
@@ -992,8 +1125,6 @@ var TaskManager = (() => {
       };
       getFilteredTasks = () => {
         return state.tasks.filter((t) => {
-          if (state.showNoTimeLimitOnly && !t.noTimeLimit)
-            return false;
           if (state.hideCompleted && t.completed)
             return false;
           if (state.hideOverdue && !t.noTimeLimit && t.dueDate < getTodayStr())
@@ -1035,13 +1166,30 @@ var TaskManager = (() => {
         }
       };
       deleteTask = (id) => {
-        state.tasks = state.tasks.filter((t) => t.id !== id);
+        const task = state.tasks.find((t) => t.id === id);
+        state.tasks = task?.isParent ? state.tasks.filter((t) => t.id !== id && t.parentId !== id) : state.tasks.filter((t) => t.id !== id);
       };
       toggleThrottleMap = /* @__PURE__ */ new Map();
       toggleTask = (id) => {
         const task = state.tasks.find((t) => t.id === id);
         if (!task)
           return;
+        if (task.isParent) {
+          task.completed = !task.completed;
+          task.completedAt = task.completed ? Date.now() : void 0;
+          task.updatedAt = Date.now();
+          if (task.completed) {
+            const now = Date.now();
+            for (const child of state.tasks) {
+              if (child.parentId !== id || child.completed || child.repeatType !== "none")
+                continue;
+              child.completed = true;
+              child.completedAt = now;
+              child.updatedAt = now;
+            }
+          }
+          return;
+        }
         if (!task.completed && task.repeatType && task.repeatType !== "none") {
           const last = toggleThrottleMap.get(id) || 0;
           if (Date.now() - last < 500)
@@ -1066,7 +1214,7 @@ var TaskManager = (() => {
       };
       moveTaskToDate = (id, date) => {
         const task = state.tasks.find((t) => t.id === id);
-        if (task) {
+        if (task && !task.isParent) {
           task.dueDate = date;
           task.noTimeLimit = false;
           task.updatedAt = Date.now();
@@ -1103,6 +1251,135 @@ var TaskManager = (() => {
           cat.updatedAt = Date.now();
         }
       };
+      toggleTaskOnDate = (id, date) => {
+        const task = state.tasks.find((t) => t.id === id);
+        if (!task || task.isParent)
+          return;
+        if (!task.repeatType || task.repeatType === "none") {
+          toggleTask(id);
+          return;
+        }
+        if (!task.repeatStartDate)
+          task.repeatStartDate = task.dueDate || date;
+        const completedDates = task.completedDates || [];
+        if (completedDates.includes(date)) {
+          task.completedDates = completedDates.filter((completedDate) => completedDate !== date);
+          if (!task.dueDate || date < task.dueDate)
+            task.dueDate = date;
+        } else {
+          task.completedDates = [...completedDates, date];
+          if (task.dueDate === date)
+            task.dueDate = getNextUncompletedDate(task, date);
+        }
+        task.updatedAt = Date.now();
+      };
+      focusTaskToday = (id) => {
+        const task = state.tasks.find((t) => t.id === id);
+        if (!task || task.isParent)
+          return;
+        const today = getTodayStr();
+        task.dueDate = today;
+        task.noTimeLimit = false;
+        task.focusDate = today;
+        task.updatedAt = Date.now();
+      };
+      replanTask = (id, date) => {
+        const task = state.tasks.find((t) => t.id === id);
+        if (!task || task.isParent)
+          return;
+        task.dueDate = date;
+        task.noTimeLimit = false;
+        task.focusDate = date === getTodayStr() ? date : void 0;
+        task.updatedAt = Date.now();
+      };
+      moveTaskToPool = (id) => {
+        const task = state.tasks.find((t) => t.id === id);
+        if (!task || task.isParent)
+          return;
+        task.dueDate = "";
+        task.noTimeLimit = true;
+        task.focusDate = void 0;
+        task.updatedAt = Date.now();
+      };
+      splitTask = (id, children) => {
+        const task = state.tasks.find((t) => t.id === id);
+        const validChildren = children.filter((child) => child.title.trim() && child.duration > 0 && child.dueDate);
+        if (!task || task.repeatType !== "none" || validChildren.length < 2)
+          return false;
+        const now = Date.now();
+        if (task.isParent) {
+          const existingChildren = state.tasks.filter((t) => t.parentId === id);
+          for (const child of validChildren) {
+            const match = child.id ? existingChildren.find((t) => t.id === child.id) : void 0;
+            if (match) {
+              match.title = child.title.trim();
+              match.duration = child.duration;
+              match.dueDate = child.dueDate;
+              match.focusDate = child.dueDate === getTodayStr() ? getTodayStr() : void 0;
+              match.updatedAt = now;
+            } else {
+              state.tasks.push({
+                id: generateId(),
+                title: child.title.trim(),
+                description: "",
+                priority: task.priority,
+                category: task.category,
+                dueDate: child.dueDate,
+                hardDeadline: task.hardDeadline,
+                focusDate: child.dueDate === getTodayStr() ? getTodayStr() : void 0,
+                duration: child.duration,
+                repeatType: "none",
+                repeatDays: [],
+                repeatInterval: 1,
+                completed: false,
+                completedDates: [],
+                createdAt: now,
+                updatedAt: now,
+                noTimeLimit: false,
+                parentId: task.id
+              });
+            }
+          }
+          return true;
+        }
+        task.isParent = true;
+        task.duration = 0;
+        task.completed = false;
+        task.completedAt = void 0;
+        task.completedDates = [];
+        task.repeatType = "none";
+        task.repeatDays = [];
+        task.repeatInterval = 1;
+        task.repeatStartDate = void 0;
+        task.noTimeLimit = true;
+        task.dueDate = "";
+        task.focusDate = void 0;
+        task.updatedAt = now;
+        for (const child of validChildren) {
+          const childDate = child.dueDate;
+          state.tasks.push({
+            id: generateId(),
+            title: child.title.trim(),
+            description: "",
+            priority: task.priority,
+            category: task.category,
+            dueDate: childDate,
+            hardDeadline: task.hardDeadline,
+            focusDate: childDate === getTodayStr() ? getTodayStr() : void 0,
+            duration: child.duration,
+            repeatType: "none",
+            repeatDays: [],
+            repeatInterval: 1,
+            completed: false,
+            completedDates: [],
+            createdAt: now,
+            updatedAt: now,
+            noTimeLimit: false,
+            parentId: task.id
+          });
+        }
+        return true;
+      };
       deleteCategory = (id) => {
         if (state.categories.length > 1) {
           const fallback = state.categories.find((category) => category.id !== id);
@@ -1123,6 +1400,8 @@ var TaskManager = (() => {
         if (!anchor) {
           let earliest = Infinity;
           for (const t of state.tasks) {
+            if (!isExecutableTask(t))
+              continue;
             if (t.completed && (!t.repeatType || t.repeatType === "none")) {
               const date = t.completedAt || parseDate(t.dueDate).getTime();
               if (date < earliest)
@@ -1144,6 +1423,8 @@ var TaskManager = (() => {
         let totalMinutes = 0;
         let completedCount = 0;
         for (const t of state.tasks) {
+          if (!isExecutableTask(t))
+            continue;
           if (t.completed && (!t.repeatType || t.repeatType === "none")) {
             totalMinutes += t.duration;
             completedCount++;
@@ -1172,7 +1453,7 @@ var TaskManager = (() => {
         };
       };
       getStats = () => {
-        const tasks = getFilteredTasks();
+        const tasks = getFilteredTasks().filter(isExecutableTask);
         const pending = tasks.filter((t) => !t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
         const done = tasks.filter((t) => t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
         const overdueCount = tasks.filter((t) => !t.completed && !t.noTimeLimit && isOverdue(t.dueDate, false)).length;
@@ -1181,6 +1462,7 @@ var TaskManager = (() => {
         const todayDone = todayTasks.filter((t) => t.completed).length;
         return { pending, done, overdueCount, todayTotal: todayTasks.length, todayDone };
       };
+      getParentTaskProgress = (task) => getTaskProgress(task, state.tasks);
     }
   });
 
@@ -1220,6 +1502,7 @@ var TaskManager = (() => {
     renderMobileSyncPanel: () => renderMobileSyncPanel,
     renderModal: () => renderModal,
     renderMonthView: () => renderMonthView,
+    renderPoolView: () => renderPoolView,
     renderStats: () => renderStats,
     renderSyncModal: () => renderSyncModal,
     renderTaskItem: () => renderTaskItem,
@@ -1236,6 +1519,7 @@ var TaskManager = (() => {
   // shared/render.ts
   init_task();
   init_sync();
+  init_planning();
   var renderSyncIndicator = () => {
     const status = getSyncStatus();
     if (status === "idle")
@@ -1294,7 +1578,7 @@ var TaskManager = (() => {
         </div>
         <span class="goal-card-target">\u76EE\u6807 ${formatH(stats.weeklyGoalMinutes)} / \u5468</span>
       </div>
-      <div class="goal-card-anchor"><strong>\u951A\u70B9\uFF1A</strong>${stats.anchorDate} \u7B2C 1 \u5468</div>
+      <div class="goal-card-start"><strong>\u7EDF\u8BA1\u8D77\u70B9</strong><span>${stats.anchorDate}</span><span>\u4ECE\u8FD9\u4E00\u5929\u5F00\u59CB\u8BA1\u7B97\u76EE\u6807\u8FDB\u5EA6</span></div>
       <div class="goal-card-row">
         <div class="goal-card-stat">
           <div class="stat-label">\u671F\u671B\u5DE5\u65F6</div>
@@ -1350,32 +1634,63 @@ var TaskManager = (() => {
             <div class="desc">\u603B\u5DE5\u65F6 \xF7 \u4EFB\u52A1\u6570</div>
           </div>
         </div>
-        <button id="adjustGoalAnchorBtn" class="goal-adjust-btn">\u8C03\u6574\u8D77\u59CB\u951A\u70B9</button>
+        <button id="adjustGoalAnchorBtn" class="goal-adjust-btn">\u4FEE\u6539\u76EE\u6807\u8BBE\u7F6E</button>
       </div>
     </div>
   `;
   };
   var renderGoalSettingsModal = () => {
     const { weeklyGoalMinutes = 600, weeklyGoalAnchor } = getState();
-    const anchorDate = weeklyGoalAnchor || formatDate(/* @__PURE__ */ new Date());
+    const today = formatDate(/* @__PURE__ */ new Date());
+    const currentStats = getWeeklyGoalStats();
+    const startDate = weeklyGoalAnchor || currentStats?.anchorDate || today;
+    const startDateHint = weeklyGoalAnchor ? "\u5F53\u524D\u4F7F\u7528\u4F60\u8BBE\u7F6E\u7684\u65E5\u671F" : currentStats ? "\u5F53\u524D\u65E5\u671F\u7531\u6700\u65E9\u5B8C\u6210\u4EFB\u52A1\u81EA\u52A8\u786E\u5B9A" : "\u5C1A\u65E0\u5B8C\u6210\u8BB0\u5F55\uFF0C\u6682\u4ECE\u4ECA\u5929\u5F00\u59CB";
     return `
-    <div id="goalSettingsModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
-      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[90%] max-w-sm p-6">
-        <h3 class="text-lg font-semibold mb-4">\u6BCF\u5468\u76EE\u6807\u8BBE\u7F6E</h3>
-        <div class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium mb-1">\u6BCF\u5468\u76EE\u6807\u65F6\u957F\uFF08\u5C0F\u65F6\uFF09</label>
-            <input type="number" id="goalWeeklyHours" value="${(weeklyGoalMinutes / 60).toFixed(1)}" min="0.5" step="0.5" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
+    <div id="goalSettingsModal" class="fixed inset-0 flex items-center justify-center z-50 hidden goal-settings-overlay" role="dialog" aria-modal="true" aria-labelledby="goalSettingsTitle">
+      <div class="goal-settings-panel">
+        <div class="goal-settings-header">
+          <div class="goal-settings-heading">
+            <span class="goal-settings-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke-width="2"/><path d="M12 2v2M22 12h-2M12 22v-2M2 12h2" stroke-width="2" stroke-linecap="round"/></svg>
+            </span>
+            <div>
+              <h3 id="goalSettingsTitle">\u8BBE\u7F6E\u6BCF\u5468\u76EE\u6807</h3>
+              <p>\u5B9A\u4E49\u6BCF\u5468\u6295\u5165\uFF0C\u5E76\u9009\u62E9\u4ECE\u54EA\u4E00\u5929\u5F00\u59CB\u7EDF\u8BA1</p>
+            </div>
           </div>
-          <div>
-            <label class="block text-sm font-medium mb-1">\u8D77\u59CB\u951A\u70B9\u65E5\u671F</label>
-            <input type="date" id="goalAnchorDate" value="${anchorDate}" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
-          </div>
-          <p class="text-xs text-gray-400">\u951A\u70B9\u7528\u4E8E\u8BA1\u7B97\u5DF2\u8FC7\u5468\u6570\u3002\u4FEE\u6539\u540E\u91CD\u65B0\u8BA1\u7B97\u671F\u671B\u503C\u3002</p>
+          <button id="closeGoalSettingsBtn" class="goal-settings-close" type="button" title="\u5173\u95ED" aria-label="\u5173\u95ED">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 6l12 12M18 6L6 18" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
         </div>
-        <div class="flex gap-3 mt-6">
-          <button id="closeGoalSettingsBtn" class="flex-1 px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition text-sm">\u53D6\u6D88</button>
-          <button id="saveGoalSettingsBtn" class="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm">\u4FDD\u5B58</button>
+
+        <div class="goal-settings-body">
+          <div class="goal-settings-field">
+            <label for="goalWeeklyHours">\u6BCF\u5468\u76EE\u6807</label>
+            <p>\u4F60\u8BA1\u5212\u6BCF\u5468\u6295\u5165\u591A\u5C11\u65F6\u95F4</p>
+            <div class="goal-settings-input-unit">
+              <input type="number" id="goalWeeklyHours" value="${(weeklyGoalMinutes / 60).toFixed(1)}" min="0.5" max="168" step="0.5" inputmode="decimal" aria-describedby="goalWeeklyHoursHint">
+              <span>\u5C0F\u65F6 / \u5468</span>
+            </div>
+            <span id="goalWeeklyHoursHint" class="goal-settings-field-hint">\u53EF\u8BBE\u7F6E 0.5 \u81F3 168 \u5C0F\u65F6</span>
+          </div>
+
+          <div class="goal-settings-field">
+            <label for="goalAnchorDate">\u7EDF\u8BA1\u8D77\u59CB\u65E5\u671F</label>
+            <p>\u4ECE\u8FD9\u4E00\u5929\u5F00\u59CB\u7D2F\u8BA1\u5468\u6570\u5E76\u8BA1\u7B97\u76EE\u6807\u5DEE\u8DDD</p>
+            <input type="date" id="goalAnchorDate" value="${startDate}" max="${today}" aria-describedby="goalAnchorDateHint">
+            <span id="goalAnchorDateHint" class="goal-settings-field-hint">${startDateHint}</span>
+          </div>
+
+          <div class="goal-settings-note">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke-width="2"/><path d="M12 11v5M12 8h.01" stroke-width="2" stroke-linecap="round"/></svg>
+            <span>\u4FEE\u6539\u8D77\u59CB\u65E5\u671F\u4F1A\u91CD\u65B0\u8BA1\u7B97\u8FDB\u5EA6\u4E0E\u5DEE\u8DDD\uFF0C\u4E0D\u4F1A\u4FEE\u6539\u6216\u5220\u9664\u4EFB\u52A1\u3002</span>
+          </div>
+          <p id="goalSettingsError" class="goal-settings-error hidden" role="alert"></p>
+        </div>
+
+        <div class="goal-settings-footer">
+          <button id="cancelGoalSettingsBtn" class="goal-settings-secondary" type="button">\u53D6\u6D88</button>
+          <button id="saveGoalSettingsBtn" class="goal-settings-primary" type="button">\u4FDD\u5B58\u8BBE\u7F6E</button>
         </div>
       </div>
     </div>
@@ -1388,8 +1703,6 @@ var TaskManager = (() => {
       <div class="stats-row-bar">
         <div class="stats-row-items">
           <span class="text-gray-500">\u5F85\u5B8C\u6210\uFF1A</span><span class="font-medium text-orange-500">${formatHours(stats.pending)}</span>
-          <span class="text-gray-300 dark:text-gray-600">|</span>
-          <span class="text-gray-500">\u5DF2\u5B8C\u6210\uFF1A</span><span class="font-medium text-green-500">${formatHours(stats.done)}</span>
           <span class="text-gray-300 dark:text-gray-600">|</span>
           <span class="text-gray-500">\u4ECA\u65E5\uFF1A</span><span class="font-medium">${stats.todayDone}/${stats.todayTotal}</span>
           ${stats.overdueCount > 0 ? `<span class="text-red-500 font-medium">${stats.overdueCount}\u9879\u8FC7\u671F</span>` : ""}
@@ -1408,24 +1721,27 @@ var TaskManager = (() => {
     const { currentView, darkMode } = getState();
     const isNewTab = window.location.pathname.includes("newtab");
     return `
-    <header class="flex items-center justify-between mb-4 flex-wrap gap-3">
+    <header class="flex items-start justify-between mb-4 flex-wrap gap-3">
       <div class="flex items-center gap-3">
         <h1 class="text-xl font-semibold">\u4EFB\u52A1\u7BA1\u7406</h1>
         <button id="openFullPage" class="px-2 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition text-sm" title="\u65B0\u6807\u7B7E\u9875\u6253\u5F00">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
         </button>
       </div>
-      <div class="flex items-center gap-2">
-        <div class="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
-          <button data-view="list" class="px-3 py-1 rounded text-sm transition ${currentView === "list" ? "bg-white dark:bg-gray-700 shadow" : ""}">\u5217\u8868</button>
-          <button data-view="day" class="px-3 py-1 rounded text-sm transition ${currentView === "day" ? "bg-white dark:bg-gray-700 shadow" : ""}">\u65E5</button>
-          <button data-view="week" class="px-3 py-1 rounded text-sm transition ${currentView === "week" ? "bg-white dark:bg-gray-700 shadow" : ""}">\u5468</button>
-          <button data-view="month" class="px-3 py-1 rounded text-sm transition ${currentView === "month" ? "bg-white dark:bg-gray-700 shadow" : ""}">\u6708</button>
+      <div class="app-header-actions ml-auto flex flex-col items-end gap-2 min-w-0 max-w-full">
+        <div class="view-nav order-last md:order-none w-full md:w-auto flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1 overflow-x-auto">
+          <button data-view="focus" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === "focus" ? "bg-white dark:bg-gray-700 shadow" : ""}">\u4ECA\u65E5\u805A\u7126</button>
+          <button data-view="pool" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === "pool" ? "bg-white dark:bg-gray-700 shadow" : ""}">\u4EFB\u52A1\u6C60</button>
+          <button data-view="list" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === "list" ? "bg-white dark:bg-gray-700 shadow" : ""}">\u5168\u90E8\u4EFB\u52A1</button>
+          <button data-view="day" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === "day" ? "bg-white dark:bg-gray-700 shadow" : ""}">\u65E5</button>
+          <button data-view="week" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === "week" ? "bg-white dark:bg-gray-700 shadow" : ""}">\u5468</button>
+          <button data-view="month" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === "month" ? "bg-white dark:bg-gray-700 shadow" : ""}">\u6708</button>
         </div>
+        <div class="header-utility-actions w-full flex items-center justify-end gap-2 flex-wrap">
         <button id="darkModeBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="\u5207\u6362\u6DF1\u8272\u6A21\u5F0F">
           ${darkMode ? '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>' : '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>'}
         </button>
-        ${renderSyncIndicator()}
+        <span id="syncIndicatorSlot" aria-live="polite">${renderSyncIndicator()}</span>
         ${isNewTab ? `
         <button id="syncDataBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="\u6570\u636E\u540C\u6B65">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
@@ -1436,12 +1752,13 @@ var TaskManager = (() => {
         </button>
         ` : ""}
         <button id="addTaskBtn" class="px-4 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm font-medium">+ \u6DFB\u52A0</button>
+        </div>
       </div>
     </header>
   `;
   };
   var renderFilters = () => {
-    const { hideCompleted, hideOverdue, showNoTimeLimitOnly, filterPriority, filterCategory, categories = [] } = getState();
+    const { hideCompleted, hideOverdue, filterPriority, filterCategory, categories = [] } = getState();
     return `
     <div class="flex flex-wrap gap-3 p-3 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 mb-4 items-center text-sm">
       <div class="flex items-center gap-1">
@@ -1468,36 +1785,74 @@ var TaskManager = (() => {
         <input type="checkbox" id="hideOverdue" class="rounded" ${hideOverdue ? "checked" : ""}> 
         <span>\u9690\u85CF\u4ECA\u65E5\u4E4B\u524D</span>
       </label>
-      <label class="flex items-center gap-1 cursor-pointer">
-        <input type="checkbox" id="showNoTimeLimitOnly" class="rounded" ${showNoTimeLimitOnly ? "checked" : ""}> 
-        <span>\u4EFB\u52A1\u6C60\uFF08\u65E0\u622A\u6B62\u65E5\u671F\uFF09</span>
-      </label>
     </div>
   `;
   };
   var renderTaskItem = (task) => {
     const category = getState().categories.find((c) => c.id === task.category);
     const overdue = !task.noTimeLimit && isOverdue(task.dueDate, task.completed);
+    const today = formatDate(/* @__PURE__ */ new Date());
+    const parent = task.parentId ? getState().tasks.find((item) => item.id === task.parentId) : void 0;
+    if (task.isParent) {
+      const progress = getParentTaskProgress(task);
+      const children = getFilteredTasks().filter((child) => child.parentId === task.id);
+      return `
+      <div class="p-4 bg-white dark:bg-gray-800${task.completed ? " opacity-60" : ""}" data-task-id="${task.id}">
+        <div class="flex items-start gap-3">
+          <button class="task-toggle flex-shrink-0 w-5 h-5 mt-1.5 rounded-full border-2 ${task.completed ? "bg-green-500 border-green-500" : "border-gray-300 dark:border-gray-500"} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" title="${task.completed ? "\u6807\u8BB0\u4E3A\u672A\u5B8C\u6210" : "\u6807\u8BB0\u4E3A\u5DF2\u5B8C\u6210\uFF08\u5B50\u4EFB\u52A1\u4E00\u5E76\u5B8C\u6210\uFF09"}">
+            ${task.completed ? '<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ""}
+          </button>
+          <div class="w-2 h-8 rounded ${getPriorityColor(task.priority)} flex-shrink-0${task.completed ? " opacity-50" : ""}"></div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-semibold${task.completed ? " line-through text-gray-400" : ""}">${escapeHtml(task.title)}</span>
+              <span class="text-xs px-2 py-0.5 rounded bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-300">\u7236\u4EFB\u52A1</span>
+              ${task.completed ? '<span class="text-xs px-2 py-0.5 rounded bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-300">\u5DF2\u5B8C\u6210</span>' : ""}
+              ${task.hardDeadline ? `<span class="text-xs text-red-500">\u786C\u622A\u6B62 ${task.hardDeadline}</span>` : ""}
+            </div>
+            <div class="flex items-center gap-3 mt-2">
+              <div class="h-2 flex-1 max-w-xs rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden"><div class="h-full bg-blue-500 rounded-full" style="width:${progress.percent}%"></div></div>
+              <span class="text-xs font-medium text-gray-500">${progress.completed}/${progress.total} \xB7 ${progress.percent}%</span>
+            </div>
+          </div>
+          <button class="task-split p-2 hover:bg-violet-50 dark:hover:bg-violet-900/20 rounded transition text-violet-500" data-id="${task.id}" title="\u7EE7\u7EED\u6DFB\u52A0\u5B50\u4EFB\u52A1">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          </button>
+          <button class="task-edit p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition" data-id="${task.id}" title="\u7F16\u8F91\u7236\u4EFB\u52A1">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+          </button>
+          <button class="task-delete p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition text-red-500" data-id="${task.id}" title="\u5220\u9664\u7236\u4EFB\u52A1\u53CA\u5B50\u4EFB\u52A1">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+          </button>
+        </div>
+        ${children.length > 0 ? `<div class="mt-3 ml-5 border-l-2 border-violet-100 dark:border-violet-900/40">${children.map((child) => renderTaskItem(child)).join("")}</div>` : '<p class="mt-3 ml-5 text-xs text-gray-400">\u6682\u65E0\u5B50\u4EFB\u52A1</p>'}
+      </div>
+    `;
+    }
     return `
-    <div class="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${task.completed ? "opacity-60" : ""} ${task.noTimeLimit ? "border-l-[3px] border-dashed border-gray-300 dark:border-gray-600 pl-3 -ml-3" : ""} ${overdue && !task.completed ? "bg-red-50/50 dark:bg-red-900/10" : ""}" data-task-id="${task.id}" draggable="true">
+    <div class="task-row flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${task.completed ? "opacity-60" : ""} ${task.noTimeLimit ? "border-l-[3px] border-dashed border-gray-300 dark:border-gray-600 pl-3 -ml-3" : ""} ${overdue && !task.completed ? "bg-red-50/50 dark:bg-red-900/10" : ""}" data-task-id="${task.id}" draggable="true">
       <div class="w-2 h-8 rounded ${getPriorityColor(task.priority)} flex-shrink-0"></div>
       <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${task.completed ? "bg-green-500 border-green-500" : task.noTimeLimit ? "border-dashed border-gray-400" : "border-gray-300 dark:border-gray-500"} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}">
         ${task.completed ? '<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ""}
       </button>
-      <div class="flex-1 min-w-0">
+      <div class="task-main flex-1 min-w-0">
         <div class="flex items-center gap-2">
           <span class="font-medium truncate ${task.completed ? "line-through text-gray-400" : ""}">${escapeHtml(task.title)}</span>
           ${category ? `<span class="text-xs px-2 py-0.5 rounded flex-shrink-0" style="background-color: ${category.color}20; color: ${category.color}">${escapeHtml(category.name)}</span>` : ""}
           ${task.noTimeLimit ? `<span class="text-xs px-2 py-0.5 rounded flex-shrink-0 bg-gray-100 dark:bg-gray-700 text-gray-500">\u65E0\u671F\u9650</span>` : ""}
+          ${parent ? `<span class="text-xs px-2 py-0.5 rounded flex-shrink-0 bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-300">\u5C5E\u4E8E ${escapeHtml(parent.title)}</span>` : ""}
         </div>
         <div class="flex items-center gap-3 mt-1 text-xs text-gray-400">
           ${task.duration > 0 ? `<span>${formatHours(task.duration)}</span>` : ""}
           ${!task.noTimeLimit ? `<span class="${overdue ? "text-red-500 font-medium" : ""}">${getRemainingTime(task.dueDate, task.completed)}</span>` : ""}
           ${task.repeatType !== "none" ? `<span class="text-blue-500">\u{1F504}</span>` : ""}
+          ${task.hardDeadline ? `<span class="${task.hardDeadline < today && !task.completed ? "text-red-600 font-medium" : "text-red-400"}">\u786C\u622A\u6B62 ${task.hardDeadline}</span>` : ""}
         </div>
         ${task.description ? `<p class="text-sm text-gray-500 mt-1 truncate dark:text-gray-400">${escapeHtml(task.description)}</p>` : ""}
       </div>
-      <div class="flex items-center gap-1 flex-shrink-0">
+      <div class="task-actions flex items-center gap-1 flex-shrink-0">
+        ${task.repeatType === "none" && !isTaskDueOnDate(task, today) ? `<button class="task-focus-toggle px-2 py-1 text-xs rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 text-gray-500 transition" data-id="${task.id}" title="\u628A\u8BA1\u5212\u65E5\u671F\u6539\u4E3A\u4ECA\u5929">\u4ECA\u5929</button>` : ""}
+        ${task.repeatType === "none" ? `<button class="task-split px-2 py-1 text-xs rounded hover:bg-violet-50 dark:hover:bg-violet-900/20 text-gray-500 hover:text-violet-600 transition" data-id="${task.id}" title="\u62C6\u6210\u53EF\u72EC\u7ACB\u6392\u671F\u7684\u5B50\u4EFB\u52A1">\u62C6\u5206</button>` : ""}
         <button class="task-edit p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition" data-id="${task.id}">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
         </button>
@@ -1508,13 +1863,121 @@ var TaskManager = (() => {
     </div>
   `;
   };
+  var renderOverdueTaskItem = (task) => {
+    const canSplit = task.repeatType === "none";
+    return `
+    <div class="overdue-item">
+      <div class="overdue-item-priority ${getPriorityColor(task.priority)}" aria-hidden="true"></div>
+      <div class="overdue-item-content">
+        <div class="overdue-item-copy">
+          <div class="overdue-item-title">${escapeHtml(task.title)}</div>
+          <div class="overdue-item-meta">${getRemainingTime(task.dueDate, false)} \xB7 \u539F\u8BA1\u5212 ${task.dueDate}${task.hardDeadline ? ` \xB7 \u786C\u622A\u6B62 ${task.hardDeadline}` : ""}</div>
+        </div>
+        <div class="overdue-item-actions">
+          ${task.repeatType === "none" ? `<button class="overdue-item-action overdue-focus" data-id="${task.id}">\u52A0\u5165\u4ECA\u5929</button>` : ""}
+          <button class="overdue-item-action overdue-complete" data-id="${task.id}">\u6807\u8BB0\u5B8C\u6210</button>
+          <button class="overdue-item-action overdue-replan" data-id="${task.id}">\u91CD\u65B0\u6392\u671F</button>
+          ${canSplit ? `<button class="overdue-item-action overdue-split" data-id="${task.id}">\u62C6\u5206\u4EFB\u52A1</button>` : ""}
+          <button class="overdue-item-action task-edit overdue-edit" data-id="${task.id}">\u7F16\u8F91</button>
+          <button class="overdue-item-action overdue-pool" data-id="${task.id}">\u653E\u56DE\u4EFB\u52A1\u6C60</button>
+        </div>
+      </div>
+    </div>
+  `;
+  };
+  var renderFocusView = () => {
+    const state2 = getState();
+    const today = formatDate(/* @__PURE__ */ new Date());
+    const visibleFocused = getFilteredTasks().filter((task) => !task.isParent && isTaskDueOnDate(task, today)).filter((task) => {
+      return task.repeatType === "none" || !isTaskCompletedOnDate(task, today);
+    });
+    const overdue = state2.tasks.filter((task) => {
+      if (task.isParent || task.completed || task.noTimeLimit || !task.dueDate || task.dueDate >= today)
+        return false;
+      if (state2.filterPriority !== "all" && task.priority !== state2.filterPriority)
+        return false;
+      if (state2.filterCategory !== "all" && task.category !== state2.filterCategory)
+        return false;
+      return true;
+    });
+    return `
+    <div class="focus-view">
+      ${overdue.length > 0 ? `
+        <section class="overdue-panel">
+          <div class="overdue-panel-header">
+            <div><h3 class="font-semibold text-red-700 dark:text-red-300">\u6628\u5929\u53CA\u66F4\u65E9\u672A\u5B8C\u6210</h3><p class="text-xs text-gray-500 mt-0.5">\u4ECD\u7136\u4FDD\u7559\u903E\u671F\u72B6\u6001\uFF0C\u8BF7\u4E3A\u6BCF\u9879\u9009\u62E9\u4E0B\u4E00\u6B65\u3002</p></div>
+            <button id="toggleOverdueSection" class="overdue-panel-toggle" aria-expanded="${!state2.overdueCollapsed}">
+              <span>${overdue.length} \u9879</span><span>${state2.overdueCollapsed ? "\u5C55\u5F00 \u25BE" : "\u6536\u8D77 \u25B4"}</span>
+            </button>
+          </div>
+          ${state2.overdueCollapsed ? "" : `<div class="overdue-panel-list">${overdue.map(renderOverdueTaskItem).join("")}</div>`}
+        </section>
+      ` : ""}
+
+      <section class="focus-panel">
+        <div class="focus-panel-header">
+          <div class="focus-panel-copy"><h3>\u4ECA\u65E5\u805A\u7126</h3><p>\u81EA\u52A8\u663E\u793A\u8BA1\u5212\u65E5\u671F\u4E3A\u4ECA\u5929\u7684\u4EFB\u52A1\u3002</p></div>
+          <span class="focus-panel-count">${visibleFocused.length} \u9879</span>
+        </div>
+        ${visibleFocused.length > 0 ? `<div class="focus-panel-list">${visibleFocused.map((task) => renderTaskItem(task)).join("")}</div>` : '<div class="focus-panel-empty"><p>\u4ECA\u5929\u6CA1\u6709\u8BA1\u5212\u4EFB\u52A1</p><p>\u4E3A\u4EFB\u52A1\u8BBE\u7F6E\u4ECA\u5929\u7684\u8BA1\u5212\u65E5\u671F\u540E\u4F1A\u81EA\u52A8\u51FA\u73B0\u5728\u8FD9\u91CC\u3002</p></div>'}
+      </section>
+    </div>
+  `;
+  };
+  var renderPoolTaskItem = (task) => {
+    const category = getState().categories.find((item) => item.id === task.category);
+    const parent = task.parentId ? getState().tasks.find((item) => item.id === task.parentId) : void 0;
+    return `
+    <div class="task-row pool-task-row flex items-center gap-3 px-4 py-3 border-b last:border-b-0 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${task.completed ? "opacity-60" : ""}" data-task-id="${task.id}">
+      <div class="w-2 h-8 rounded ${getPriorityColor(task.priority)} flex-shrink-0"></div>
+      <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${task.completed ? "bg-green-500 border-green-500" : "border-dashed border-gray-400"} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" aria-label="${task.completed ? "\u6062\u590D" : "\u5B8C\u6210"} ${escapeHtml(task.title)}">
+        ${task.completed ? '<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ""}
+      </button>
+      <div class="task-main flex-1 min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="font-medium truncate ${task.completed ? "line-through text-gray-400" : ""}">${escapeHtml(task.title)}</span>
+          ${category ? `<span class="text-xs px-2 py-0.5 rounded flex-shrink-0" style="background-color:${category.color}20;color:${category.color}">${escapeHtml(category.name)}</span>` : ""}
+          ${parent ? `<span class="text-xs px-2 py-0.5 rounded flex-shrink-0 bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-300">\u5C5E\u4E8E ${escapeHtml(parent.title)}</span>` : ""}
+        </div>
+        <div class="flex items-center gap-3 mt-1 text-xs text-gray-400 flex-wrap">
+          <span>${formatHours(task.duration)}</span>
+          <span>\u5C1A\u672A\u5B89\u6392\u65E5\u671F</span>
+          ${task.hardDeadline ? `<span class="text-red-500">\u786C\u622A\u6B62 ${task.hardDeadline}</span>` : ""}
+        </div>
+        ${task.description ? `<p class="text-sm text-gray-500 mt-1 truncate dark:text-gray-400">${escapeHtml(task.description)}</p>` : ""}
+      </div>
+      <div class="task-actions pool-task-actions flex items-center flex-wrap justify-end flex-shrink-0">
+        <button class="pool-focus px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-xs font-medium transition" data-id="${task.id}">\u5B89\u6392\u5230\u4ECA\u5929</button>
+        <button class="overdue-replan px-3 py-1.5 rounded-lg border dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-xs transition" data-id="${task.id}">\u9009\u62E9\u65E5\u671F</button>
+        <button class="task-split px-3 py-1.5 rounded-lg border dark:border-gray-600 hover:bg-violet-50 dark:hover:bg-violet-900/20 hover:text-violet-600 text-xs transition" data-id="${task.id}">\u62C6\u5206</button>
+        <button class="task-edit px-3 py-1.5 rounded-lg border dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-xs transition" data-id="${task.id}">\u7F16\u8F91</button>
+        <button class="task-delete px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 text-xs transition" data-id="${task.id}">\u5220\u9664</button>
+      </div>
+    </div>
+  `;
+  };
+  var renderPoolView = () => {
+    const tasks = getTaskPoolTasks(getFilteredTasks());
+    return `
+    <section class="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl overflow-hidden">
+      <div class="px-4 py-3 border-b dark:border-gray-700 flex items-center justify-between gap-3">
+        <div><h3 class="font-semibold">\u4EFB\u52A1\u6C60</h3><p class="text-xs text-gray-500 mt-0.5">\u96C6\u4E2D\u6574\u7406\u5C1A\u672A\u5B89\u6392\u65E5\u671F\u7684\u4EFB\u52A1\u3002</p></div>
+        <span class="text-xs text-gray-400">${tasks.length} \u9879</span>
+      </div>
+      ${tasks.length > 0 ? tasks.map(renderPoolTaskItem).join("") : '<div class="text-center py-10 text-gray-400"><p>\u4EFB\u52A1\u6C60\u5DF2\u6E05\u7A7A</p><p class="text-sm mt-1">\u672A\u6392\u671F\u4EFB\u52A1\u4F1A\u81EA\u52A8\u51FA\u73B0\u5728\u8FD9\u91CC\u3002</p></div>'}
+    </section>
+  `;
+  };
   var renderListView = () => {
     const tasks = getFilteredTasks();
     if (tasks.length === 0) {
       return `<div class="text-center py-12 text-gray-400"><p class="text-lg">\u6682\u65E0\u4EFB\u52A1</p><p class="text-sm mt-2">\u70B9\u51FB\u53F3\u4E0A\u89D2"\u6DFB\u52A0"\u5F00\u59CB</p></div>`;
     }
+    const parents = tasks.filter((task) => task.isParent);
+    const visibleParentIds = new Set(parents.map((parent) => parent.id));
+    const schedulableTasks = tasks.filter((task) => !task.isParent && (!task.parentId || !visibleParentIds.has(task.parentId)));
     const groups = /* @__PURE__ */ new Map();
-    tasks.forEach((t) => {
+    schedulableTasks.forEach((t) => {
       const key = t.noTimeLimit ? "no-date" : t.dueDate;
       if (!groups.has(key))
         groups.set(key, []);
@@ -1527,7 +1990,13 @@ var TaskManager = (() => {
         return -1;
       return a.localeCompare(b);
     });
-    return dates.map((d) => `
+    const parentSection = parents.length > 0 ? `
+    <div class="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 overflow-hidden mb-4">
+      <div class="px-4 py-2 bg-violet-50 dark:bg-violet-900/20 font-medium text-sm text-violet-700 dark:text-violet-300">\u5927\u4EFB\u52A1\u4E0E\u62C6\u5206\u8FDB\u5EA6</div>
+      ${parents.map((parent) => renderTaskItem(parent)).join("")}
+    </div>
+  ` : "";
+    return parentSection + dates.map((d) => `
     <div class="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 overflow-hidden mb-4">
       <div class="px-4 py-2 bg-gray-50 dark:bg-gray-900 font-medium text-sm text-gray-600 dark:text-gray-400 drop-zone" data-date="${d}">
         ${d === "no-date" ? "\u4EFB\u52A1\u6C60\uFF08\u65E0\u622A\u6B62\u65E5\u671F\uFF09" : getDateLabel(d)}
@@ -1562,67 +2031,117 @@ var TaskManager = (() => {
   `;
   };
   var renderWeekView = () => {
-    const { currentDate } = getState();
-    const today = parseDate(currentDate);
-    const monday = new Date(today);
-    monday.setDate(today.getDate() - today.getDay() + 1);
-    const days = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + i);
-      days.push(formatDate(d));
-    }
+    const state2 = getState();
+    const { currentDate } = state2;
+    const days = getWeekDates(currentDate);
+    const weekStart = days[0];
     const todayStr = formatDate(/* @__PURE__ */ new Date());
-    const todayMonday = new Date(todayStr);
-    todayMonday.setDate(new Date(todayStr).getDate() - new Date(todayStr).getDay() + 1);
-    const isCurrentWeek = formatDate(todayMonday) === formatDate(monday);
+    const isCurrentWeek = getWeekDates(todayStr)[0] === weekStart;
+    const visibleTasks = getFilteredTasks().filter((task) => !task.isParent);
+    const tasksByDay = days.map((date) => visibleTasks.filter((task) => {
+      if (!isTaskDueOnDate(task, date))
+        return false;
+      return !(state2.hideCompleted && isTaskCompletedOnDate(task, date));
+    }));
+    const weekTaskCount = tasksByDay.reduce((sum, tasks) => sum + tasks.length, 0);
+    const weekMinutes = tasksByDay.reduce((sum, tasks) => sum + tasks.reduce((daySum, task) => daySum + task.duration, 0), 0);
+    const historicalOverdue = getHistoricalOverdueTasks(state2.tasks, weekStart, {
+      hideOverdue: state2.hideOverdue,
+      showNoTimeLimitOnly: state2.showNoTimeLimitOnly,
+      priority: state2.filterPriority,
+      category: state2.filterCategory
+    });
     return `
-    <div class="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
-      <div class="flex items-center justify-between mb-4 pb-2 border-b dark:border-gray-700">
+    <div class="space-y-4">
+      <section class="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 overflow-hidden">
+      <div class="flex items-center justify-between p-4 border-b dark:border-gray-700">
         <button id="prevWeek" class="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
         </button>
         <div class="flex flex-col items-center">
           <span class="font-medium">${days[0].slice(5)} ~ ${days[6].slice(5)}</span>
+          <span class="text-xs text-gray-400 mt-1">\u8BA1\u5212\u65E5\u671F\u843D\u5728\u672C\u5468\u7684\u4EFB\u52A1\u4F1A\u81EA\u52A8\u51FA\u73B0</span>
           ${!isCurrentWeek ? `<button id="goTodayWeek" class="text-xs text-blue-500 hover:underline mt-1">\u56DE\u5230\u672C\u5468</button>` : ""}
         </div>
         <button id="nextWeek" class="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
         </button>
       </div>
+
+      ${historicalOverdue.length > 0 ? `
+        <div class="overdue-panel overdue-panel-embedded">
+          <div class="overdue-panel-header">
+            <div><h3 class="font-semibold text-sm text-red-700 dark:text-red-300">\u672C\u5468\u5F00\u59CB\u524D\u672A\u5B8C\u6210</h3><p class="text-xs text-gray-500 mt-0.5">\u4FDD\u7559\u903E\u671F\u72B6\u6001\uFF0C\u9700\u8981\u65F6\u518D\u5C55\u5F00\u5904\u7406\u3002</p></div>
+            <button id="toggleOverdueSection" class="overdue-panel-toggle" aria-expanded="${!state2.overdueCollapsed}">
+              <span>${historicalOverdue.length} \u9879</span><span>${state2.overdueCollapsed ? "\u5C55\u5F00 \u25BE" : "\u6536\u8D77 \u25B4"}</span>
+            </button>
+          </div>
+          ${state2.overdueCollapsed ? "" : `<div class="overdue-panel-list">${historicalOverdue.map((task) => renderWeekOverdueTaskItem(task, days)).join("")}</div>`}
+        </div>
+      ` : ""}
+
+      <div class="px-4 py-3 border-b dark:border-gray-700 flex items-center justify-between gap-3">
+        <div><h3 class="font-semibold">\u672C\u5468\u805A\u7126</h3><p class="text-xs text-gray-500 mt-0.5">\u62D6\u52A8\u4EFB\u52A1\u53EF\u8C03\u6574\u5230\u672C\u5468\u5176\u4ED6\u65E5\u671F\u3002</p></div>
+        <span class="text-xs text-gray-400">${weekTaskCount} \u9879 \xB7 ${formatHours(weekMinutes)}</span>
+      </div>
       <div>
-        ${days.map((d) => {
-      const dayTasks = getState().tasks.filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, d));
+        ${days.map((d, index) => {
+      const dayTasks = tasksByDay[index];
       const isToday = d === todayStr;
-      const pendingMin = dayTasks.filter((t) => !t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
-      const completedMin = dayTasks.filter((t) => t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
+      const pendingMin = dayTasks.filter((task) => !isTaskCompletedOnDate(task, d)).reduce((sum, task) => sum + task.duration, 0);
+      const completedMin = dayTasks.filter((task) => isTaskCompletedOnDate(task, d)).reduce((sum, task) => sum + task.duration, 0);
       return `
-            <div class="flex border-b dark:border-gray-700 hover:bg-gray-50/50 dark:hover:bg-gray-700/30 transition drop-zone" data-date="${d}">
-              <div class="w-24 flex-shrink-0 p-3 ${isToday ? "bg-blue-50/50 dark:bg-blue-900/20" : ""}">
+            <div class="week-day-row grid border-b last:border-b-0 dark:border-gray-700 hover:bg-gray-50/50 dark:hover:bg-gray-700/30 transition drop-zone ${isToday ? "bg-blue-50/40 dark:bg-blue-900/10" : ""}" style="grid-template-columns:7rem minmax(0,1fr)" data-date="${d}">
+              <div class="week-day-label p-3 border-r dark:border-gray-700 ${isToday ? "bg-blue-50/50 dark:bg-blue-900/20" : ""}">
                 <div class="text-sm font-medium ${isToday ? "text-blue-500" : ""}">${getDateLabel(d)}</div>
                 <div class="text-xs text-gray-400 mt-1">
-                  ${pendingMin > 0 ? `<span class="text-orange-500">${formatHours(pendingMin)}</span>` : ""}
-                  ${completedMin > 0 ? `<br><span class="text-green-500">${formatHours(completedMin)}</span>` : ""}
+                  <span>${dayTasks.length} \u9879</span>
+                  ${pendingMin > 0 ? `<br><span class="text-orange-500">\u5F85\u5B8C\u6210 ${formatHours(pendingMin)}</span>` : ""}
+                  ${completedMin > 0 ? `<br><span class="text-green-500">\u5DF2\u5B8C\u6210 ${formatHours(completedMin)}</span>` : ""}
                 </div>
               </div>
-              <div class="flex-1 p-2 min-h-[80px] flex flex-wrap content-start gap-2">
-                ${dayTasks.length === 0 ? '<span class="text-xs text-gray-300 dark:text-gray-600">\u65E0</span>' : dayTasks.map((t) => renderWeekTaskCard(t, d)).join("")}
+              <div class="p-2 min-h-[80px] flex flex-wrap content-start gap-2 min-w-0">
+                ${dayTasks.length === 0 ? '<span class="text-xs text-gray-300 dark:text-gray-600 self-center">\u6682\u65E0\u4EFB\u52A1\uFF0C\u53EF\u62D6\u5230\u8FD9\u91CC</span>' : dayTasks.map((task) => renderWeekTaskCard(task, d, d < todayStr)).join("")}
               </div>
             </div>
           `;
     }).join("")}
       </div>
+      </section>
     </div>
   `;
   };
-  var renderWeekTaskCard = (task, date) => {
+  var renderWeekOverdueTaskItem = (task, days) => `
+  <div class="overdue-item week-overdue-item">
+    <div class="overdue-item-priority ${getPriorityColor(task.priority)}" aria-hidden="true"></div>
+    <div class="overdue-item-content">
+      <div class="overdue-item-copy">
+        <div class="overdue-item-title">${escapeHtml(task.title)}</div>
+        <div class="overdue-item-meta">${getRemainingTime(task.dueDate, false)} \xB7 \u539F\u8BA1\u5212 ${task.dueDate}${task.hardDeadline ? ` \xB7 \u786C\u622A\u6B62 ${task.hardDeadline}` : ""}</div>
+      </div>
+      <div class="overdue-item-actions">
+        <button class="overdue-item-action week-plan-toggle" data-id="${escapeHtml(task.id)}" aria-expanded="false">\u5B89\u6392\u5230\u672C\u5468</button>
+        <button class="overdue-item-action overdue-complete" data-id="${escapeHtml(task.id)}">\u6807\u8BB0\u5B8C\u6210</button>
+        <button class="overdue-item-action overdue-replan" data-id="${escapeHtml(task.id)}">\u91CD\u65B0\u6392\u671F</button>
+        <button class="overdue-item-action overdue-split" data-id="${escapeHtml(task.id)}">\u62C6\u5206\u4EFB\u52A1</button>
+        <button class="overdue-item-action overdue-pool" data-id="${escapeHtml(task.id)}">\u653E\u56DE\u4EFB\u52A1\u6C60</button>
+      </div>
+      <div class="week-day-picker hidden" data-id="${escapeHtml(task.id)}">
+        ${days.map((date) => `<button class="week-plan-date" data-id="${escapeHtml(task.id)}" data-date="${date}">${getDateLabel(date)}</button>`).join("")}
+      </div>
+    </div>
+  </div>
+`;
+  var renderWeekTaskCard = (task, date, isPastDate) => {
     const cat = getState().categories.find((c) => c.id === task.category);
-    const isRecurringDone = task.repeatType && task.repeatType !== "none" && date && (task.completedDates || []).includes(date);
-    const done = task.completed || isRecurringDone;
+    const done = isTaskCompletedOnDate(task, date);
     return `
-    <div class="week-task-item p-2 rounded border dark:border-gray-600 ${done ? "opacity-50 bg-gray-50 dark:bg-gray-800" : "bg-white dark:bg-gray-700 hover:shadow-md"} transition cursor-move flex-shrink-0" style="min-width:140px" draggable="true" data-task-id="${task.id}" title="\u53CC\u51FB\u7F16\u8F91">
+    <div class="week-task-item p-2 rounded border dark:border-gray-600 ${done ? "opacity-50 bg-gray-50 dark:bg-gray-800" : "bg-white dark:bg-gray-700 hover:shadow-md"} transition cursor-move flex-1" style="min-width:min(100%,168px);max-width:280px" draggable="true" data-task-id="${task.id}" title="\u53CC\u51FB\u7F16\u8F91">
       <div class="flex items-start gap-2">
         <div class="w-1 h-full min-h-[32px] rounded ${getPriorityColor(task.priority)}"></div>
+        <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${done ? "bg-green-500 border-green-500" : "border-gray-300 dark:border-gray-500"} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" data-task-date="${date}" aria-label="${done ? "\u6062\u590D" : "\u5B8C\u6210"} ${escapeHtml(task.title)}">
+          ${done ? '<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ""}
+        </button>
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-1 mb-1">
             <span class="text-sm font-medium truncate ${done ? "line-through" : ""}">${escapeHtml(task.title)}</span>
@@ -1631,6 +2150,7 @@ var TaskManager = (() => {
           <div class="flex items-center gap-2 text-xs text-gray-400">
             <span>${formatHours(task.duration)}</span>
             ${cat ? `<span class="px-1 py-0.5 rounded text-white" style="background-color:${cat.color}">${escapeHtml(cat.name)}</span>` : ""}
+            ${isPastDate && !done ? '<span class="text-red-500 font-medium">\u672C\u5468\u5185\u903E\u671F</span>' : ""}
           </div>
         </div>
       </div>
@@ -1658,22 +2178,18 @@ var TaskManager = (() => {
       current.setDate(current.getDate() + 1);
     }
     const todayStr = formatDate(/* @__PURE__ */ new Date());
-    const weekSummaries = weeks.map((week) => {
-      const weekDays = week.filter((d) => {
-        const dd = parseDate(d);
-        return dd.getMonth() === month;
-      });
-      const weekPending = weekDays.reduce((s, d) => {
-        return s + getState().tasks.filter((t) => !t.noTimeLimit && !t.completed && isTaskDueOnDate(t, d)).reduce((a, t) => a + t.duration, 0);
-      }, 0);
-      const weekDone = weekDays.reduce((s, d) => {
-        return s + getState().tasks.filter((t) => !t.noTimeLimit && t.completed && t.repeatType === "none" && isTaskDueOnDate(t, d)).reduce((a, t) => a + t.duration, 0);
-      }, 0);
-      return { pending: weekPending, done: weekDone };
-    });
-    const monthTasks = getState().tasks.filter((t) => !t.noTimeLimit);
-    const monthPending = monthTasks.filter((t) => !t.completed).reduce((s, t) => s + t.duration, 0);
-    const monthDone = monthTasks.filter((t) => t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
+    const tasks = getState().tasks;
+    const isDateInDisplayedMonth = (date) => {
+      const parsed = parseDate(date);
+      return parsed.getFullYear() === year && parsed.getMonth() === month;
+    };
+    const weekSummaries = weeks.map(
+      (week) => summarizeTaskDurationsForDates(tasks, week.filter(isDateInDisplayedMonth))
+    );
+    const monthDates = weeks.flat().filter(isDateInDisplayedMonth);
+    const monthSummary = summarizeTaskDurationsForDates(tasks, monthDates);
+    const monthPending = monthSummary.pending;
+    const monthDone = monthSummary.done;
     const renderWeekSummary = (week, ws) => {
       const hasToday = week.some((dd) => dd === todayStr);
       const bgClass = hasToday ? "bg-blue-50/30 dark:bg-blue-900/10" : "";
@@ -1689,13 +2205,13 @@ var TaskManager = (() => {
         const isCurrentMonth = dayDate.getMonth() === month;
         const isToday = d === todayStr;
         const dayTasks = getState().tasks.filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, d));
-        const pendingMin = dayTasks.filter((t) => !t.completed).reduce((s, t) => s + t.duration, 0);
-        const completedMin = dayTasks.filter((t) => t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
+        const daySummary = summarizeTaskDurationsForDates(dayTasks, [d]);
+        const pendingMin = daySummary.pending;
+        const completedMin = daySummary.done;
         const miniPending = pendingMin > 0 ? `<span class="text-[9px] text-orange-500 bg-orange-50 dark:bg-orange-900/20 px-1 rounded leading-tight font-medium">${formatHours(pendingMin)}</span>` : "";
         const miniDone = completedMin > 0 ? `<span class="text-[9px] text-green-500 bg-green-50 dark:bg-green-900/20 px-1 rounded leading-tight font-medium">\u2713${formatHours(completedMin)}</span>` : "";
         const taskCards = dayTasks.slice(0, 2).map((t) => {
-          const isRecurringDone = t.repeatType && t.repeatType !== "none" && (t.completedDates || []).includes(d);
-          const done = t.completed || isRecurringDone;
+          const done = isTaskCompletedOnDate(t, d);
           return `<div class="month-task-item text-xs p-1 rounded mb-1 truncate ${done ? "line-through opacity-40 bg-gray-100 dark:bg-gray-700" : "bg-blue-100/50 dark:bg-blue-900/30"}" draggable="true" data-task-id="${t.id}" title="\u53CC\u51FB\u7F16\u8F91">${escapeHtml(t.title)}</div>`;
         }).join("");
         const moreHtml = dayTasks.length > 2 ? `<div class="text-xs text-gray-400">+${dayTasks.length - 2}</div>` : "";
@@ -1733,6 +2249,10 @@ var TaskManager = (() => {
   var renderTaskList = () => {
     const { currentView } = getState();
     switch (currentView) {
+      case "focus":
+        return renderFocusView();
+      case "pool":
+        return renderPoolView();
       case "list":
         return renderListView();
       case "day":
@@ -1743,7 +2263,7 @@ var TaskManager = (() => {
         return renderMonthView();
     }
   };
-  var renderQuickDates = (selectedDate) => {
+  var renderQuickDates = (selectedDate, excludeTaskId) => {
     const today = /* @__PURE__ */ new Date();
     const dayNames = ["\u5468\u65E5", "\u5468\u4E00", "\u5468\u4E8C", "\u5468\u4E09", "\u5468\u56DB", "\u5468\u4E94", "\u5468\u516D"];
     const todayStr = formatDate(today);
@@ -1755,15 +2275,23 @@ var TaskManager = (() => {
       const dayNum = d.getDate();
       const isToday = dateStr === todayStr;
       const isSelected = dateStr === selectedDate;
+      const dayLoadMinutes = getState().tasks.reduce((sum, t) => {
+        if (t.id === excludeTaskId || !isTaskDueOnDate(t, dateStr))
+          return sum;
+        return sum + t.duration;
+      }, 0);
+      const loadHours = (dayLoadMinutes / 60).toFixed(1).replace(/\.0$/, "");
+      const overloaded = dayLoadMinutes > 480;
       const label = isToday ? "\u4ECA\u5929" : i === 1 ? "\u660E\u5929" : dayNames[d.getDay()];
       const classes = [
         "quick-date-btn",
         isToday ? "today" : "",
         isSelected ? "selected" : ""
       ].filter(Boolean).join(" ");
-      html += `<button type="button" class="${classes}" data-date="${dateStr}">
+      html += `<button type="button" class="${classes}" data-date="${dateStr}" aria-pressed="${isSelected}" aria-label="${label} ${dateStr}">
       <span class="quick-day-name">${label}</span>
       <span class="quick-day-num">${dayNum}</span>
+      <span class="quick-date-load${overloaded ? " overloaded" : ""}">${dayLoadMinutes > 0 ? loadHours + "h" : "\xB7"}</span>
       ${isToday ? '<span class="quick-date-badge">\u4ECA\u5929</span>' : ""}
     </button>`;
     }
@@ -1779,12 +2307,15 @@ var TaskManager = (() => {
       priority: "medium",
       category: defaultCategory || categories[0]?.id || "",
       dueDate: formatDate(/* @__PURE__ */ new Date()),
+      hardDeadline: "",
+      focusDate: "",
       duration: 60,
       repeatType: "none",
       repeatDays: [],
       repeatInterval: 1,
       noTimeLimit: false,
-      completed: false
+      completed: false,
+      isParent: false
     };
     const weekdays = ["\u5468\u65E5", "\u5468\u4E00", "\u5468\u4E8C", "\u5468\u4E09", "\u5468\u56DB", "\u5468\u4E94", "\u5468\u516D"];
     return `
@@ -1829,17 +2360,30 @@ var TaskManager = (() => {
               </select>
             </div>
           </div>
+          ${task.isParent ? `
+          <div class="border-t dark:border-gray-700 pt-4 space-y-4">
+            <div class="rounded-lg bg-violet-50 dark:bg-violet-900/20 p-3 text-sm text-violet-700 dark:text-violet-300">\u8FD9\u662F\u7236\u4EFB\u52A1\uFF0C\u53EF\u72EC\u7ACB\u6807\u8BB0\u5B8C\u6210\u72B6\u6001\uFF1B\u4E0B\u65B9\u8FDB\u5EA6\u6761\u4EC5\u53CD\u6620\u5B50\u4EFB\u52A1\u8FDB\u5EA6\u3002\u8BA1\u5212\u65E5\u671F\u548C\u9884\u8BA1\u65F6\u957F\u7531\u5B50\u4EFB\u52A1\u5206\u522B\u7BA1\u7406\u3002</div>
+            <div>
+              <label class="block text-sm font-medium mb-1">\u786C\u622A\u6B62\u65E5\u671F\uFF08\u53EF\u9009\uFF09</label>
+              <input type="date" name="hardDeadline" value="${task.hardDeadline || ""}" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
+            </div>
+          </div>
+          ` : `
           <div class="border-t dark:border-gray-700 pt-4">
             <label class="flex items-center gap-2 cursor-pointer mb-3">
               <input type="checkbox" id="noTimeLimit" name="noTimeLimit" ${task.noTimeLimit ? "checked" : ""} class="rounded"> 
-              <span class="text-sm font-medium">\u65E0\u65F6\u95F4\u9650\u5236\uFF08\u4EFB\u52A1\u6C60\uFF09</span>
+              <span class="text-sm font-medium">\u65E0\u8BA1\u5212\u65E5\u671F\uFF08\u4EFB\u52A1\u6C60\uFF09</span>
             </label>
             <div id="dueDateField" style="${task.noTimeLimit ? "opacity:0.5;pointer-events:none" : ""}">
               <div>
-                <label class="block text-sm font-medium mb-1">\u622A\u6B62\u65E5\u671F</label>
-                ${renderQuickDates(task.dueDate)}
+                <label class="block text-sm font-medium mb-1">\u8BA1\u5212\u65E5\u671F</label>
+                ${renderQuickDates(task.dueDate, isEditing ? task.id : void 0)}
                 <input type="date" name="dueDate" value="${task.dueDate}" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
               </div>
+            </div>
+            <div class="mt-4">
+              <label class="block text-sm font-medium mb-1">\u786C\u622A\u6B62\u65E5\u671F\uFF08\u53EF\u9009\uFF09</label>
+              <input type="date" name="hardDeadline" value="${task.hardDeadline || ""}" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
             </div>
             <div class="mt-4">
               <label class="block text-sm font-medium mb-1">\u9884\u8BA1\u65F6\u957F (\u5C0F\u65F6)</label>
@@ -1876,11 +2420,90 @@ var TaskManager = (() => {
             <label class="block text-sm font-medium mb-1">\u95F4\u9694\u5929\u6570</label>
             <input type="number" name="repeatInterval" value="${task.repeatInterval}" min="1" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
           </div>
+          `}
           <div class="flex gap-3 pt-4">
             ${isEditing ? `<button type="button" id="deleteTaskBtn" class="px-4 py-2 border border-red-500 text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition">\u5220\u9664</button>` : ""}
             <div class="flex-1"></div>
             <button type="button" id="cancelBtn" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition">\u53D6\u6D88</button>
             <button type="submit" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">${isEditing ? "\u4FDD\u5B58" : "\u6DFB\u52A0"}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  };
+  var renderSplitChildRow = (index, child, dueDate) => `
+  <div class="split-child-row grid gap-2 p-3 rounded-lg border dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30"${child?.id ? ` data-child-id="${child.id}"` : ""}>
+    <input type="text" class="split-child-title px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${child ? escapeHtml(child.title) : ""}" placeholder="\u5B50\u4EFB\u52A1 ${index + 1}" required aria-label="\u5B50\u4EFB\u52A1\u6807\u9898">
+    <button type="button" class="remove-split-child p-2 text-gray-400 hover:text-red-500 rounded" title="\u5220\u9664\u6B64\u5B50\u4EFB\u52A1" aria-label="\u5220\u9664\u6B64\u5B50\u4EFB\u52A1">\xD7</button>
+    <div class="split-child-schedule">
+      <div class="split-child-field split-child-duration-field">
+        <span class="split-child-field-label">\u9884\u8BA1\u65F6\u95F4</span>
+        <div class="flex items-center gap-1">
+          <button type="button" class="split-duration-decrease px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="\u51CF\u5C11 0.5 \u5C0F\u65F6">\u2212</button>
+          <input type="number" class="split-child-duration w-14 text-center px-1 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${child ? (child.duration / 60).toFixed(2).replace(/\.?0+$/, "") : "1"}" min="0.5" step="0.5" aria-label="\u9884\u8BA1\u5C0F\u65F6">
+          <button type="button" class="split-duration-increase px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="\u589E\u52A0 0.5 \u5C0F\u65F6">+</button>
+        </div>
+      </div>
+      <div class="split-quick-dates">${renderQuickDates(dueDate ?? "")}</div>
+      <div class="split-child-field split-child-date-field">
+        <label class="split-child-field-label">\u81EA\u5B9A\u4E49\u65E5\u671F</label>
+        <input type="date" class="split-child-date w-full px-2 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${dueDate ?? ""}" required aria-label="\u8BA1\u5212\u65E5\u671F">
+      </div>
+    </div>
+  </div>
+`;
+  var renderReplanModal = () => {
+    const { replanningTaskId, tasks } = getState();
+    const task = tasks.find((item) => item.id === replanningTaskId);
+    const today = formatDate(/* @__PURE__ */ new Date());
+    return `
+    <div id="replanModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 ${task ? "" : "hidden"}">
+      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[90%] max-w-md p-5">
+        <h2 class="text-lg font-semibold">\u91CD\u65B0\u5B89\u6392\u8BA1\u5212\u65E5\u671F</h2>
+        <p class="mt-1 text-sm text-gray-500 truncate">${task ? escapeHtml(task.title) : ""}</p>
+        <form id="replanForm" class="mt-5 space-y-4">
+          <div>
+            <label class="block text-sm font-medium mb-1">\u65B0\u7684\u8BA1\u5212\u65E5\u671F</label>
+            <input type="date" name="replanDate" value="${today}" min="${today}" required class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700">
+            ${task?.hardDeadline ? `<p class="mt-1 text-xs text-red-500">\u786C\u622A\u6B62\u4ECD\u4E3A ${task.hardDeadline}\uFF0C\u4E0D\u4F1A\u88AB\u4FEE\u6539\u3002</p>` : ""}
+          </div>
+          <div class="flex justify-end gap-2">
+            <button type="button" id="cancelReplanBtn" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg">\u53D6\u6D88</button>
+            <button type="submit" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg">\u4FDD\u5B58\u6392\u671F</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  };
+  var renderSplitModal = () => {
+    const { splittingTaskId, tasks } = getState();
+    const task = tasks.find((item) => item.id === splittingTaskId);
+    const today = formatDate(/* @__PURE__ */ new Date());
+    const existingChildren = task?.isParent ? tasks.filter((child) => child.parentId === task.id).sort((a, b) => a.createdAt - b.createdAt).map((child) => ({ id: child.id, title: child.title, duration: child.duration, dueDate: child.dueDate })) : [];
+    const rowsToRender = task?.isParent && existingChildren.length >= 2 ? existingChildren : [void 0, void 0];
+    return `
+    <div id="splitTaskModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 sm:p-6 ${task ? "" : "hidden"}" role="dialog" aria-modal="true" aria-labelledby="splitTaskTitle" tabindex="-1">
+      <div class="split-task-panel bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-4xl" style="max-height:calc(100svh - 32px)">
+        <div class="split-task-header border-b dark:border-gray-700">
+          <div class="min-w-0">
+            <h2 id="splitTaskTitle" class="text-lg font-semibold">${task?.isParent ? "\u7EE7\u7EED\u7F16\u8F91\u5B50\u4EFB\u52A1" : "\u628A\u4EFB\u52A1\u62C6\u6210\u53EF\u6267\u884C\u6B65\u9AA4"}</h2>
+            <p class="mt-1 text-sm text-gray-500 truncate">${task ? escapeHtml(task.title) : ""}</p>
+          </div>
+          <button type="button" id="closeSplitTaskBtn" class="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition flex-shrink-0" title="\u5173\u95ED\u62C6\u5206\u5F39\u7A97" aria-label="\u5173\u95ED\u62C6\u5206\u5F39\u7A97">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <form id="splitTaskForm" class="split-task-form space-y-4">
+          <div id="splitChildren" class="split-children space-y-2" style="max-height:min(48svh,460px)">
+            ${rowsToRender.map((child, index) => renderSplitChildRow(index, child, child ? child.dueDate : today)).join("")}
+          </div>
+          <button type="button" id="addSplitChildBtn" class="split-add-button text-sm text-blue-600 hover:underline">+ \u6DFB\u52A0\u4E00\u4E2A\u6B65\u9AA4</button>
+          <p id="splitTaskError" class="hidden text-sm text-red-500"></p>
+          <div class="split-task-footer">
+            <button type="button" id="cancelSplitTaskBtn" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg">\u53D6\u6D88</button>
+            <button type="submit" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg">\u5B8C\u6210\u62C6\u5206</button>
           </div>
         </form>
       </div>
@@ -2195,8 +2818,10 @@ var TaskManager = (() => {
         background: rgba(99,102,241,0.1);
         padding: 3px 10px; border-radius: 6px; font-weight: 500;
       }
-      .goal-card-anchor { font-size: 12px; color: #64748b; margin-bottom: 12px; }
-      .goal-card-anchor strong { color: #475569; }
+      .goal-card-start { display: flex; align-items: center; gap: 7px; font-size: 12px; color: #64748b; margin-bottom: 12px; }
+      .goal-card-start strong { color: #475569; font-weight: 600; }
+      .goal-card-start span:last-child { color: #94a3b8; }
+      .dark .goal-card-start strong { color: #cbd5e1; }
       .goal-card-row { display: flex; gap: 16px; margin-bottom: 12px; }
       .goal-card-stat {
         flex: 1; background: rgba(255,255,255,0.7);
@@ -2254,6 +2879,546 @@ var TaskManager = (() => {
       }
       .goal-adjust-btn:hover { background: rgba(99,102,241,0.06); }
 
+      .goal-settings-overlay {
+        padding: 16px;
+        background: rgba(15,23,42,0.48);
+      }
+      .goal-settings-panel {
+        width: min(100%, 440px);
+        max-height: min(680px, calc(100svh - 32px));
+        overflow-y: auto;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        box-shadow: 0 20px 50px rgba(15,23,42,0.22);
+      }
+      .dark .goal-settings-panel {
+        background: #1f2937;
+        border-color: #374151;
+      }
+      .goal-settings-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 20px 22px 18px;
+        border-bottom: 1px solid #e2e8f0;
+      }
+      .dark .goal-settings-header { border-color: #374151; }
+      .goal-settings-heading { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+      .goal-settings-icon {
+        width: 34px;
+        height: 34px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        border-radius: 8px;
+        color: #2563eb;
+        background: #eff6ff;
+      }
+      .dark .goal-settings-icon { color: #93c5fd; background: rgba(37,99,235,0.16); }
+      .goal-settings-icon svg { width: 19px; height: 19px; }
+      .goal-settings-heading h3 {
+        margin: 0;
+        color: #0f172a;
+        font-size: 16px;
+        line-height: 1.4;
+        font-weight: 650;
+      }
+      .dark .goal-settings-heading h3 { color: #f8fafc; }
+      .goal-settings-heading p {
+        margin: 3px 0 0;
+        color: #64748b;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .dark .goal-settings-heading p { color: #94a3b8; }
+      .goal-settings-close {
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: #64748b;
+        cursor: pointer;
+      }
+      .goal-settings-close:hover { background: #f1f5f9; color: #0f172a; }
+      .dark .goal-settings-close:hover { background: #374151; color: #f8fafc; }
+      .goal-settings-close svg { width: 18px; height: 18px; }
+      .goal-settings-body { display: grid; gap: 20px; padding: 20px 22px; }
+      .goal-settings-field label {
+        display: block;
+        color: #1e293b;
+        font-size: 13px;
+        line-height: 1.4;
+        font-weight: 600;
+      }
+      .dark .goal-settings-field label { color: #e2e8f0; }
+      .goal-settings-field > p {
+        margin: 3px 0 9px;
+        color: #64748b;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .dark .goal-settings-field > p { color: #94a3b8; }
+      .goal-settings-field input {
+        width: 100%;
+        height: 42px;
+        padding: 0 12px;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        background: #ffffff;
+        color: #0f172a;
+        font: inherit;
+        font-size: 14px;
+        outline: none;
+        transition: border-color 0.15s, box-shadow 0.15s;
+      }
+      .goal-settings-field input:focus {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59,130,246,0.14);
+      }
+      .dark .goal-settings-field input {
+        background: #111827;
+        border-color: #4b5563;
+        color: #f8fafc;
+      }
+      .goal-settings-input-unit { position: relative; }
+      .goal-settings-input-unit input { padding-right: 92px; }
+      .goal-settings-input-unit > span {
+        position: absolute;
+        top: 50%;
+        right: 12px;
+        transform: translateY(-50%);
+        color: #64748b;
+        font-size: 12px;
+        pointer-events: none;
+      }
+      .goal-settings-field-hint {
+        display: block;
+        margin-top: 6px;
+        color: #94a3b8;
+        font-size: 11px;
+        line-height: 1.4;
+      }
+      .goal-settings-note {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 10px 12px;
+        border-left: 3px solid #3b82f6;
+        background: #f8fafc;
+        color: #475569;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .dark .goal-settings-note { background: #111827; color: #cbd5e1; }
+      .goal-settings-note svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; color: #2563eb; }
+      .goal-settings-error {
+        margin: -8px 0 0;
+        color: #dc2626;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .goal-settings-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        padding: 14px 22px;
+        border-top: 1px solid #e2e8f0;
+        background: #f8fafc;
+      }
+      .dark .goal-settings-footer { border-color: #374151; background: #111827; }
+      .goal-settings-footer button {
+        min-width: 92px;
+        height: 38px;
+        padding: 0 16px;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s, border-color 0.15s;
+      }
+      .goal-settings-secondary {
+        border: 1px solid #cbd5e1;
+        background: #ffffff;
+        color: #334155;
+      }
+      .goal-settings-secondary:hover { background: #f1f5f9; }
+      .dark .goal-settings-secondary { border-color: #4b5563; background: #1f2937; color: #e2e8f0; }
+      .goal-settings-primary { border: 1px solid #2563eb; background: #2563eb; color: #ffffff; }
+      .goal-settings-primary:hover { border-color: #1d4ed8; background: #1d4ed8; }
+      .goal-settings-primary:disabled { cursor: wait; opacity: 0.65; }
+
+      .focus-view {
+        display: grid;
+        gap: 18px;
+      }
+      .focus-panel {
+        overflow: hidden;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        background: #ffffff;
+      }
+      .dark .focus-panel {
+        border-color: #374151;
+        background: #1f2937;
+      }
+      .focus-panel-header {
+        display: flex;
+        min-height: 72px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 16px 20px;
+      }
+      .focus-panel-copy { min-width: 0; }
+      .focus-panel-copy h3 {
+        margin: 0;
+        color: #111827;
+        font-size: 16px;
+        line-height: 1.45;
+        font-weight: 650;
+      }
+      .dark .focus-panel-copy h3 { color: #f3f4f6; }
+      .focus-panel-copy p {
+        margin: 4px 0 0;
+        color: #64748b;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .dark .focus-panel-copy p { color: #94a3b8; }
+      .focus-panel-count {
+        display: inline-flex;
+        min-height: 28px;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        padding: 0 10px;
+        border-radius: 999px;
+        background: #f1f5f9;
+        color: #64748b;
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .dark .focus-panel-count { background: #374151; color: #cbd5e1; }
+      .focus-panel-list,
+      .focus-panel-empty { border-top: 1px solid #e2e8f0; }
+      .dark .focus-panel-list,
+      .dark .focus-panel-empty { border-color: #374151; }
+      .focus-panel-list .task-row + .task-row { border-top: 1px solid #f1f5f9; }
+      .dark .focus-panel-list .task-row + .task-row { border-color: #374151; }
+      .focus-panel-empty {
+        padding: 36px 20px 38px;
+        color: #94a3b8;
+        text-align: center;
+      }
+      .focus-panel-empty p { margin: 0; font-size: 14px; line-height: 1.5; }
+      .focus-panel-empty p + p { margin-top: 5px; font-size: 13px; }
+
+      .overdue-panel {
+        overflow: hidden;
+        border: 1px solid #fecaca;
+        border-radius: 12px;
+        background: #ffffff;
+      }
+      .dark .overdue-panel {
+        border-color: rgba(127,29,29,0.58);
+        background: #1f2937;
+      }
+      .overdue-panel-embedded {
+        border-width: 0 0 1px;
+        border-radius: 0;
+      }
+      .overdue-panel-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 14px 18px;
+        background: #ffffff;
+      }
+      .dark .overdue-panel-header { background: #1f2937; }
+      .overdue-panel-header h3 {
+        margin: 0;
+        color: #991b1b;
+        font-size: 14px;
+        line-height: 1.45;
+        font-weight: 650;
+      }
+      .dark .overdue-panel-header h3 { color: #fca5a5; }
+      .overdue-panel-header p {
+        margin: 2px 0 0;
+        color: #64748b;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .dark .overdue-panel-header p { color: #94a3b8; }
+      .overdue-panel-toggle {
+        display: flex;
+        align-items: center;
+        flex-shrink: 0;
+        gap: 7px;
+        min-height: 30px;
+        padding: 0 8px;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: #991b1b;
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .overdue-panel-toggle:hover { background: #fef2f2; }
+      .dark .overdue-panel-toggle { color: #fca5a5; }
+      .dark .overdue-panel-toggle:hover { background: rgba(127,29,29,0.2); }
+      .overdue-panel-list { border-top: 1px solid #fee2e2; }
+      .dark .overdue-panel-list { border-color: rgba(127,29,29,0.44); }
+      .overdue-item {
+        display: grid;
+        grid-template-columns: 4px minmax(0, 1fr);
+        gap: 12px;
+        padding: 14px 18px;
+        background: rgba(254,242,242,0.62);
+      }
+      .dark .overdue-item { background: rgba(127,29,29,0.1); }
+      .overdue-item + .overdue-item { border-top: 1px solid #fee2e2; }
+      .dark .overdue-item + .overdue-item { border-color: rgba(127,29,29,0.38); }
+      .overdue-item-priority {
+        width: 4px;
+        min-height: 44px;
+        border-radius: 999px;
+      }
+      .overdue-item-content { min-width: 0; }
+      .overdue-item-copy { min-width: 0; }
+      .overdue-item-title {
+        overflow-wrap: anywhere;
+        color: #1f2937;
+        font-size: 14px;
+        line-height: 1.5;
+        font-weight: 400;
+      }
+      .dark .overdue-item-title { color: #f3f4f6; }
+      .overdue-item-meta {
+        margin-top: 3px;
+        color: #b91c1c;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .dark .overdue-item-meta { color: #f87171; }
+      .overdue-item-actions {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 11px;
+      }
+      .overdue-item-action {
+        min-height: 34px;
+        padding: 0 12px;
+        border: 1px solid #dbe2ea;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #475569;
+        font-size: 12px;
+        line-height: 1;
+        font-weight: 500;
+        white-space: nowrap;
+        transition: background 0.15s, border-color 0.15s, color 0.15s;
+      }
+      .overdue-item-action:hover { border-color: #cbd5e1; background: #f8fafc; }
+      .dark .overdue-item-action { border-color: #4b5563; background: #374151; color: #e5e7eb; }
+      .dark .overdue-item-action:hover { border-color: #6b7280; background: #4b5563; }
+      .overdue-item-actions .overdue-focus,
+      .overdue-item-actions .week-plan-toggle {
+        border-color: #3b82f6;
+        background: #3b82f6;
+        color: #ffffff;
+        font-weight: 600;
+      }
+      .overdue-item-actions .overdue-focus:hover,
+      .overdue-item-actions .week-plan-toggle:hover { border-color: #2563eb; background: #2563eb; }
+      .overdue-item-actions .overdue-complete {
+        border-color: #86efac;
+        color: #15803d;
+        font-weight: 600;
+      }
+      .overdue-item-actions .overdue-complete:hover { border-color: #4ade80; background: #f0fdf4; }
+      .dark .overdue-item-actions .overdue-complete { border-color: #166534; color: #86efac; }
+      .dark .overdue-item-actions .overdue-complete:hover { background: rgba(20,83,45,0.3); }
+      .overdue-item-actions .overdue-edit { border-color: #bfdbfe; color: #2563eb; }
+      .overdue-item-actions .overdue-edit:hover { border-color: #93c5fd; background: #eff6ff; }
+      .dark .overdue-item-actions .overdue-edit { border-color: #1e3a8a; color: #93c5fd; }
+      .dark .overdue-item-actions .overdue-edit:hover { background: rgba(30,58,138,0.28); }
+      .week-day-picker {
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+        padding: 10px;
+        border-radius: 8px;
+        background: rgba(255,255,255,0.78);
+      }
+      .week-day-picker:not(.hidden) { display: flex; }
+      .week-day-picker.hidden { display: none; }
+      .dark .week-day-picker { background: rgba(17,24,39,0.5); }
+      .week-plan-date {
+        min-height: 32px;
+        padding: 0 10px;
+        border: 1px solid #dbe2ea;
+        border-radius: 7px;
+        background: #ffffff;
+        color: #475569;
+        font-size: 12px;
+      }
+      .week-plan-date:hover { border-color: #60a5fa; color: #2563eb; }
+      .dark .week-plan-date { border-color: #4b5563; background: #374151; color: #e5e7eb; }
+
+      @media (max-width: 520px) {
+        .focus-view { gap: 14px; }
+        .focus-panel-header { min-height: 66px; padding: 14px 16px; }
+        .focus-panel-copy h3 { font-size: 15px; }
+        .focus-panel-copy p { font-size: 12px; }
+        .focus-panel-empty { padding: 30px 16px 32px; }
+        .overdue-panel-header { padding: 12px 14px; }
+        .overdue-item { gap: 10px; padding: 13px 14px; }
+        .overdue-item-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .overdue-item-action { width: 100%; padding: 0 8px; }
+      }
+
+      .pool-task-actions {
+        gap: 8px;
+        margin-left: 12px;
+      }
+
+      .app-header-actions {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 8px;
+        min-width: 0;
+        max-width: 100%;
+        margin-left: auto;
+      }
+      .header-utility-actions {
+        display: flex;
+        width: 100%;
+        align-items: center;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .split-task-panel {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .split-task-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        flex-shrink: 0;
+        gap: 16px;
+        padding: 20px;
+      }
+      .split-task-form {
+        display: flex;
+        min-height: 0;
+        flex-direction: column;
+        overflow: hidden;
+        padding: 20px;
+      }
+      .split-children {
+        min-height: 100px;
+        flex: 1 1 0%;
+        overflow-y: auto;
+        padding-right: 4px;
+      }
+      .split-add-button {
+        align-self: flex-start;
+        flex-shrink: 0;
+      }
+      .split-task-footer {
+        display: flex;
+        width: 100%;
+        flex-shrink: 0;
+        justify-content: flex-end;
+        gap: 8px;
+        padding-top: 4px;
+      }
+      .split-child-row {
+        grid-template-columns: minmax(0, 1fr) 32px;
+        align-items: start;
+      }
+      .split-child-title {
+        min-width: 0;
+        grid-column: 1;
+      }
+      .remove-split-child {
+        grid-column: 2;
+        grid-row: 1;
+      }
+      .split-child-schedule {
+        display: grid;
+        min-width: 0;
+        grid-column: 1 / -1;
+        grid-template-columns: 132px minmax(0, 1fr) 126px;
+        align-items: end;
+        gap: 8px;
+      }
+      .split-child-field {
+        min-width: 0;
+      }
+      .split-child-field-label {
+        display: block;
+        margin-bottom: 4px;
+        color: #6b7280;
+        font-size: 10px;
+        line-height: 1.2;
+        font-weight: 500;
+      }
+      .split-child-date-field,
+      .split-quick-dates { min-width: 0; }
+      .dark .split-child-field-label { color: #9ca3af; }
+
+      @media (max-width: 520px) {
+        .task-row { flex-wrap: wrap; align-items: flex-start; }
+        .task-row .task-main { flex: 1 1 calc(100% - 52px); }
+        .task-row .task-actions {
+          width: 100%;
+          justify-content: flex-end;
+          padding-left: 40px;
+          margin-top: -2px;
+        }
+        .split-child-schedule { grid-template-columns: 124px minmax(0, 1fr); gap: 7px 8px; }
+        .split-child-duration-field { grid-column: 1; grid-row: 1; }
+        .split-child-date-field { grid-column: 2; grid-row: 1; }
+        .split-quick-dates { grid-column: 1 / -1; grid-row: 2; }
+      }
+
+      @media (max-width: 900px) {
+        .pool-task-row {
+          flex-wrap: wrap;
+          align-items: flex-start;
+        }
+        .pool-task-row .task-main {
+          flex: 1 1 calc(100% - 52px);
+        }
+        .pool-task-row .pool-task-actions {
+          width: 100%;
+          justify-content: flex-start;
+          gap: 8px;
+          margin: 8px 0 0;
+          padding-left: 52px;
+        }
+      }
+
       /* \u5FEB\u6377\u65E5\u671F\u9009\u62E9 */
       .quick-dates-row {
         display: flex;
@@ -2305,24 +3470,33 @@ var TaskManager = (() => {
         color: transparent;
       }
 
-      /* \u4ECA\u5929\u6807\u8BB0 */
-      .quick-date-btn.today {
-        border-color: #6366f1;
+            .quick-date-btn .quick-date-load {
+        font-size: 8px;
+        color: #6b7280;
+        line-height: 1;
+      }
+      .dark .quick-date-btn .quick-date-load { color: #9ca3af; }
+      .quick-date-btn .quick-date-load.overloaded { color: #dc2626; font-weight: 600; }
+      .dark .quick-date-btn .quick-date-load.overloaded { color: #f87171; }
+
+      .split-quick-dates .quick-dates-row { gap: 2px; margin-bottom: 0; }
+      .split-quick-dates .quick-date-btn { padding: 3px 1px; border-radius: 6px; }
+      .split-quick-dates .quick-day-name { font-size: 8px; }
+      .split-quick-dates .quick-day-num { font-size: 11px; }
+      .split-quick-dates .quick-date-load { font-size: 7px; }
+      .split-quick-dates .quick-date-badge { display: none; }
+
+/* \u4ECA\u5929\u4EC5\u4F5C\u4E3A\u65E5\u671F\u63D0\u793A\uFF1B\u9009\u4E2D\u9AD8\u4EAE\u53EA\u7531 selected \u8868\u793A */
+      .quick-date-btn.today:not(.selected) .quick-day-name { color: #6366f1; }
+      .dark .quick-date-btn.today:not(.selected) .quick-day-name { color: #a5b4fc; }
+      .quick-date-btn.today:not(.selected) .quick-date-badge {
         background: #eef2ff;
+        color: #6366f1;
       }
-      .dark .quick-date-btn.today {
-        background: rgba(99,102,241,0.15);
-        border-color: #818cf8;
+      .dark .quick-date-btn.today:not(.selected) .quick-date-badge {
+        background: rgba(129,140,248,0.16);
+        color: #a5b4fc;
       }
-      .quick-date-btn.today .quick-day-name { color: #6366f1; }
-      .quick-date-btn.today .quick-day-num { color: #6366f1; }
-      .dark .quick-date-btn.today .quick-day-name,
-      .dark .quick-date-btn.today .quick-day-num { color: #a5b4fc; }
-      .quick-date-btn.today .quick-date-badge {
-        background: #6366f1;
-        color: white;
-      }
-      .dark .quick-date-btn.today .quick-date-badge { background: #818cf8; }
 
       /* \u9009\u4E2D\u72B6\u6001 */
       .quick-date-btn.selected {
@@ -2336,10 +3510,36 @@ var TaskManager = (() => {
         color: white;
       }
       .dark .quick-date-btn.selected { border-color: #818cf8; background: #6366f1; }
+      .quick-date-btn.selected .quick-date-load { color: white; }
+      .quick-date-btn.selected .quick-date-load.overloaded { color: #fecaca; font-weight: 700; }
+
+
+      @media (max-width: 560px) {
+        .week-day-row { grid-template-columns: minmax(0, 1fr) !important; }
+        .week-day-label {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+          border-right: 0;
+          border-bottom: 1px solid #e5e7eb;
+        }
+        .dark .week-day-label { border-bottom-color: #374151; }
+        .week-day-label > div:last-child { margin-top: 0; text-align: right; }
+        .week-task-item { max-width: 100% !important; }
+      }
+
+      .view-nav { scrollbar-width: thin; }
+      @media (max-width: 767px) {
+        .app-header-actions { width: 100%; }
+        .view-nav { align-self: stretch; }
+      }
     `;
       document.head.appendChild(style);
     }
     const viewMaxWidth = {
+      focus: "max-w-4xl",
+      pool: "max-w-4xl",
       list: "max-w-4xl",
       day: "max-w-4xl",
       week: "max-w-6xl",
@@ -2353,6 +3553,8 @@ var TaskManager = (() => {
       ${renderFilters()}
       ${renderTaskList()}
       ${renderModal()}
+      ${renderReplanModal()}
+      ${renderSplitModal()}
       ${renderCategoryModal()}
       ${renderGoalSettingsModal()}
       ${renderSyncModal()}
@@ -2406,20 +3608,21 @@ var TaskManager = (() => {
       reRender();
       const modal = container.querySelector("#taskModal");
       modal?.classList.remove("hidden");
+      container.querySelector('input[name="title"]')?.focus();
     });
     container.querySelector("#openFullPage")?.addEventListener("click", () => {
       chrome.runtime.sendMessage({ action: "openNewTab" });
     });
     container.querySelector("#darkModeBtn")?.addEventListener("click", async () => {
       const { darkMode } = getState();
-      setState({ darkMode: !darkMode });
+      setLocalSettings({ darkMode: !darkMode });
       await persistState();
       reRender();
     });
     container.querySelectorAll("[data-view]").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         const view = e.currentTarget.dataset.view;
-        setState({ currentView: view });
+        setState({ currentView: view, showNoTimeLimitOnly: false });
         reRender();
       });
     });
@@ -2434,17 +3637,12 @@ var TaskManager = (() => {
       reRender();
     });
     container.querySelector("#hideCompleted")?.addEventListener("change", async (e) => {
-      setState({ hideCompleted: e.target.checked });
+      setLocalSettings({ hideCompleted: e.target.checked });
       await persistState();
       reRender();
     });
     container.querySelector("#hideOverdue")?.addEventListener("change", async (e) => {
-      setState({ hideOverdue: e.target.checked });
-      await persistState();
-      reRender();
-    });
-    container.querySelector("#showNoTimeLimitOnly")?.addEventListener("change", async (e) => {
-      setState({ showNoTimeLimitOnly: e.target.checked });
+      setLocalSettings({ hideOverdue: e.target.checked });
       await persistState();
       reRender();
     });
@@ -2486,16 +3684,16 @@ var TaskManager = (() => {
     });
     container.querySelector("#prevMonth")?.addEventListener("click", () => {
       const { currentDate } = getState();
-      const d = new Date(currentDate);
-      d.setMonth(d.getMonth() - 1);
-      setState({ currentDate: formatDate(d) });
+      setState({ currentDate: shiftMonth(currentDate, -1) });
+      reRender();
+    });
+    container.querySelector("#toggleOverdueSection")?.addEventListener("click", () => {
+      setState({ overdueCollapsed: !getState().overdueCollapsed });
       reRender();
     });
     container.querySelector("#nextMonth")?.addEventListener("click", () => {
       const { currentDate } = getState();
-      const d = new Date(currentDate);
-      d.setMonth(d.getMonth() + 1);
-      setState({ currentDate: formatDate(d) });
+      setState({ currentDate: shiftMonth(currentDate, 1) });
       reRender();
     });
     container.querySelectorAll(".task-toggle").forEach((btn) => {
@@ -2503,7 +3701,11 @@ var TaskManager = (() => {
         e.stopPropagation();
         const id = e.currentTarget.dataset.taskId;
         if (id) {
-          toggleTask(id);
+          const date = e.currentTarget.dataset.taskDate;
+          if (date)
+            toggleTaskOnDate(id, date);
+          else
+            toggleTask(id);
           await persistState();
           reRender();
         }
@@ -2528,7 +3730,9 @@ var TaskManager = (() => {
       btn.addEventListener("click", async (e) => {
         e.stopPropagation();
         const id = e.currentTarget.dataset.id;
-        if (id && confirm("\u786E\u5B9A\u5220\u9664\u6B64\u4EFB\u52A1\uFF1F")) {
+        const task = id ? getState().tasks.find((item) => item.id === id) : void 0;
+        const message = task?.isParent ? "\u786E\u5B9A\u5220\u9664\u6B64\u7236\u4EFB\u52A1\u53CA\u5176\u5168\u90E8\u5B50\u4EFB\u52A1\uFF1F" : "\u786E\u5B9A\u5220\u9664\u6B64\u4EFB\u52A1\uFF1F";
+        if (id && confirm(message)) {
           deleteTask(id);
           await persistState();
           reRender();
@@ -2541,6 +3745,35 @@ var TaskManager = (() => {
       const form = e.target;
       const formData = new FormData(form);
       const { editingTask } = getState();
+      const commonData = {
+        title: formData.get("title").trim(),
+        description: formData.get("description"),
+        priority: formData.get("priority"),
+        category: formData.get("category"),
+        hardDeadline: formData.get("hardDeadline") || void 0
+      };
+      if (editingTask?.isParent) {
+        const parentCompleted = form.querySelector("#taskCompleted")?.checked || false;
+        updateTask(editingTask.id, {
+          ...commonData,
+          completed: parentCompleted,
+          completedAt: parentCompleted ? editingTask.completedAt ?? Date.now() : void 0
+        });
+        if (parentCompleted && !editingTask.completed) {
+          const now = Date.now();
+          for (const child of getState().tasks) {
+            if (child.parentId !== editingTask.id || child.completed || child.repeatType !== "none")
+              continue;
+            child.completed = true;
+            child.completedAt = now;
+            child.updatedAt = now;
+          }
+        }
+        await persistState();
+        resetEditingTask();
+        reRender();
+        return;
+      }
       const noTimeLimit = form.querySelector("#noTimeLimit")?.checked || false;
       const repeatDays = [];
       form.querySelectorAll('[name="repeatDays"]:checked').forEach((cb) => {
@@ -2548,15 +3781,15 @@ var TaskManager = (() => {
       });
       const durationInput = form.querySelector("#durationInput");
       const duration = Math.round(parseFloat(durationInput?.value || "1") * 60) || 60;
+      const repeatType = formData.get("repeatType");
+      const dueDate = noTimeLimit ? "" : formData.get("dueDate");
       const taskData = {
-        title: formData.get("title"),
-        description: formData.get("description"),
-        priority: formData.get("priority"),
-        category: formData.get("category"),
-        dueDate: noTimeLimit ? "" : formData.get("dueDate"),
+        ...commonData,
+        dueDate,
+        focusDate: dueDate === formatDate(/* @__PURE__ */ new Date()) ? dueDate : void 0,
         duration,
         completed: form.querySelector("#taskCompleted")?.checked || false,
-        repeatType: formData.get("repeatType"),
+        repeatType,
         repeatDays,
         repeatInterval: parseInt(formData.get("repeatInterval")) || 1,
         noTimeLimit
@@ -2570,29 +3803,300 @@ var TaskManager = (() => {
       resetEditingTask();
       reRender();
     });
-    container.querySelector("#closeModal")?.addEventListener("click", () => {
+    let taskFormDirty = false;
+    taskForm?.addEventListener("input", () => {
+      taskFormDirty = true;
+    });
+    container.querySelectorAll(".task-focus-toggle").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const id = e.currentTarget.dataset.id;
+        if (!id)
+          return;
+        focusTaskToday(id);
+        await persistState();
+        reRender();
+      });
+    });
+    container.querySelectorAll(".overdue-focus").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.id;
+        if (!id)
+          return;
+        focusTaskToday(id);
+        await persistState();
+        reRender();
+        showToast(container, "\u5DF2\u52A0\u5165\u4ECA\u65E5\u805A\u7126", "success");
+      });
+    });
+    container.querySelectorAll(".overdue-complete").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.id;
+        if (!id)
+          return;
+        toggleTask(id);
+        await persistState();
+        reRender();
+        showToast(container, "\u4EFB\u52A1\u5DF2\u5B8C\u6210", "success");
+      });
+    });
+    container.querySelectorAll(".pool-focus").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.id;
+        if (!id)
+          return;
+        focusTaskToday(id);
+        await persistState();
+        reRender();
+        showToast(container, "\u5DF2\u5B89\u6392\u5230\u4ECA\u5929", "success");
+      });
+    });
+    container.querySelectorAll(".week-plan-toggle").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const taskId = btn.dataset.id;
+        if (!taskId)
+          return;
+        const picker = container.querySelector(`.week-day-picker[data-id="${taskId}"]`);
+        if (!picker)
+          return;
+        const willOpen = picker.classList.contains("hidden");
+        container.querySelectorAll(".week-day-picker").forEach((other) => other.classList.add("hidden"));
+        container.querySelectorAll(".week-plan-toggle").forEach((other) => other.setAttribute("aria-expanded", "false"));
+        picker.classList.toggle("hidden", !willOpen);
+        btn.setAttribute("aria-expanded", String(willOpen));
+      });
+    });
+    container.querySelectorAll(".week-plan-date").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const taskId = btn.dataset.id;
+        const date = btn.dataset.date;
+        if (!taskId || !date)
+          return;
+        replanTask(taskId, date);
+        await persistState();
+        reRender();
+        showToast(container, `\u5DF2\u5B89\u6392\u5230 ${date}`, "success");
+      });
+    });
+    container.querySelectorAll(".overdue-replan").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.id;
+        if (!id)
+          return;
+        setState({ replanningTaskId: id });
+        reRender();
+      });
+    });
+    container.querySelectorAll(".overdue-split").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.id;
+        if (!id)
+          return;
+        setState({ splittingTaskId: id });
+        reRender();
+      });
+    });
+    container.querySelectorAll(".task-split").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id;
+        if (!id)
+          return;
+        setState({ splittingTaskId: id });
+        reRender();
+      });
+    });
+    container.querySelectorAll(".overdue-pool").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.id;
+        if (!id)
+          return;
+        moveTaskToPool(id);
+        await persistState();
+        reRender();
+        showToast(container, "\u5DF2\u653E\u56DE\u4EFB\u52A1\u6C60", "success");
+      });
+    });
+    const closeReplanModal = () => {
+      setState({ replanningTaskId: null });
+      reRender();
+    };
+    container.querySelector("#cancelReplanBtn")?.addEventListener("click", closeReplanModal);
+    container.querySelector("#replanForm")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const { replanningTaskId } = getState();
+      if (!replanningTaskId)
+        return;
+      const date = new FormData(e.target).get("replanDate");
+      replanTask(replanningTaskId, date);
+      setState({ replanningTaskId: null });
+      await persistState();
+      reRender();
+      showToast(container, date === formatDate(/* @__PURE__ */ new Date()) ? "\u5DF2\u91CD\u65B0\u5B89\u6392\u5230\u4ECA\u5929\u5E76\u52A0\u5165\u805A\u7126" : "\u8BA1\u5212\u65E5\u671F\u5DF2\u66F4\u65B0", "success");
+    });
+    const splitError = container.querySelector("#splitTaskError");
+    const closeSplitModal = () => {
+      setState({ splittingTaskId: null });
+      reRender();
+    };
+    container.querySelector("#cancelSplitTaskBtn")?.addEventListener("click", closeSplitModal);
+    container.querySelector("#closeSplitTaskBtn")?.addEventListener("click", closeSplitModal);
+    const splitTaskModal = container.querySelector("#splitTaskModal");
+    splitTaskModal?.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeSplitModal();
+      }
+    });
+    if (getState().splittingTaskId) {
+      container.querySelector("#splitTaskModal .split-child-title")?.focus();
+    }
+    const showSplitError = (message) => {
+      if (!splitError)
+        return;
+      splitError.textContent = message;
+      splitError.classList.remove("hidden");
+    };
+    const bindSplitRemoveButtons = () => {
+      container.querySelectorAll(".remove-split-child").forEach((btn) => {
+        if (btn.dataset.bound === "true")
+          return;
+        btn.dataset.bound = "true";
+        btn.addEventListener("click", () => {
+          const rows = container.querySelectorAll(".split-child-row");
+          if (rows.length <= 2) {
+            showSplitError("\u81F3\u5C11\u4FDD\u7559\u4E24\u4E2A\u5B50\u4EFB\u52A1\u3002");
+            return;
+          }
+          btn.closest(".split-child-row")?.remove();
+        });
+      });
+    };
+    bindSplitRemoveButtons();
+    splitTaskModal?.addEventListener("click", (e) => {
+      const target = e.target;
+      const isDec = target.classList.contains("split-duration-decrease");
+      const isInc = target.classList.contains("split-duration-increase");
+      if (!isDec && !isInc)
+        return;
+      const input = target.closest(".split-child-row")?.querySelector(".split-child-duration");
+      if (!input)
+        return;
+      const current = Number.parseFloat(input.value) || 1;
+      const next = isDec ? Math.max(0.5, current - 0.5) : Math.min(24, current + 0.5);
+      input.value = next.toFixed(1);
+    });
+    splitTaskModal?.addEventListener("click", (e) => {
+      const target = e.target;
+      const btn = target.closest(".split-quick-dates .quick-date-btn");
+      if (!btn)
+        return;
+      const row = btn.closest(".split-child-row");
+      const date = btn.dataset.date;
+      const input = row?.querySelector(".split-child-date");
+      if (!row || !date || !input)
+        return;
+      input.value = date;
+      row.querySelectorAll(".quick-date-btn").forEach((b) => {
+        const selected = b.dataset.date === date;
+        b.classList.toggle("selected", selected);
+        b.setAttribute("aria-pressed", String(selected));
+      });
+    });
+    splitTaskModal?.addEventListener("change", (e) => {
+      const target = e.target;
+      if (!target.classList.contains("split-child-date"))
+        return;
+      const row = target.closest(".split-child-row");
+      if (!row)
+        return;
+      const val = target.value;
+      row.querySelectorAll(".quick-date-btn").forEach((b) => {
+        const selected = b.dataset.date === val;
+        b.classList.toggle("selected", selected);
+        b.setAttribute("aria-pressed", String(selected));
+      });
+    });
+    container.querySelector("#addSplitChildBtn")?.addEventListener("click", () => {
+      const list = container.querySelector("#splitChildren");
+      if (!list)
+        return;
+      const index = list.querySelectorAll(".split-child-row").length;
+      const row = document.createElement("div");
+      row.className = "split-child-row grid gap-2 p-3 rounded-lg border dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30";
+      row.innerHTML = `
+      <input type="text" class="split-child-title px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" placeholder="\u5B50\u4EFB\u52A1 ${index + 1}" required aria-label="\u5B50\u4EFB\u52A1\u6807\u9898">
+      <button type="button" class="remove-split-child p-2 text-gray-400 hover:text-red-500 rounded" title="\u5220\u9664\u6B64\u5B50\u4EFB\u52A1" aria-label="\u5220\u9664\u6B64\u5B50\u4EFB\u52A1">\xD7</button>
+      <div class="split-child-schedule">
+        <div class="split-child-field split-child-duration-field">
+          <span class="split-child-field-label">\u9884\u8BA1\u65F6\u95F4</span>
+          <div class="flex items-center gap-1">
+            <button type="button" class="split-duration-decrease px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="\u51CF\u5C11 0.5 \u5C0F\u65F6">\u2212</button>
+            <input type="number" class="split-child-duration w-14 text-center px-1 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="1" min="0.5" step="0.5" aria-label="\u9884\u8BA1\u5C0F\u65F6">
+            <button type="button" class="split-duration-increase px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="\u589E\u52A0 0.5 \u5C0F\u65F6">+</button>
+          </div>
+        </div>
+        <div class="split-quick-dates">${renderQuickDates(formatDate(/* @__PURE__ */ new Date()))}</div>
+        <div class="split-child-field split-child-date-field">
+          <label class="split-child-field-label">\u81EA\u5B9A\u4E49\u65E5\u671F</label>
+          <input type="date" class="split-child-date w-full px-2 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${formatDate(/* @__PURE__ */ new Date())}" required aria-label="\u8BA1\u5212\u65E5\u671F">
+        </div>
+      </div>`;
+      list.appendChild(row);
+      bindSplitRemoveButtons();
+      row.querySelector(".split-child-title")?.focus();
+    });
+    container.querySelector("#splitTaskForm")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const { splittingTaskId } = getState();
+      if (!splittingTaskId)
+        return;
+      const children = [...container.querySelectorAll(".split-child-row")].map((row) => ({
+        id: row.dataset.childId,
+        title: row.querySelector(".split-child-title").value.trim(),
+        duration: Math.round(Number.parseFloat(row.querySelector(".split-child-duration").value) * 60),
+        dueDate: row.querySelector(".split-child-date").value
+      }));
+      if (children.length < 2 || children.some((child) => !child.title || !child.dueDate || child.duration <= 0)) {
+        showSplitError("\u8BF7\u5B8C\u6574\u586B\u5199\u81F3\u5C11\u4E24\u4E2A\u5B50\u4EFB\u52A1\u3002");
+        return;
+      }
+      if (!splitTask(splittingTaskId, children)) {
+        showSplitError("\u8BE5\u4EFB\u52A1\u5F53\u524D\u65E0\u6CD5\u62C6\u5206\uFF0C\u8BF7\u786E\u8BA4\u5B83\u4E0D\u662F\u5FAA\u73AF\u4EFB\u52A1\u3002");
+        return;
+      }
+      setState({ splittingTaskId: null });
+      await persistState();
+      reRender();
+      showToast(container, `\u5DF2\u4FDD\u5B58 ${children.length} \u4E2A\u5B50\u4EFB\u52A1`, "success");
+    });
+    taskForm?.addEventListener("change", () => {
+      taskFormDirty = true;
+    });
+    const closeTaskModal = () => {
+      if (taskFormDirty && !confirm("\u5F53\u524D\u586B\u5199\u7684\u5185\u5BB9\u5C1A\u672A\u4FDD\u5B58\uFF0C\u786E\u5B9A\u5173\u95ED\u5417\uFF1F"))
+        return;
       const modal = container.querySelector("#taskModal");
       modal?.classList.add("hidden");
       resetEditingTask();
       reRender();
+    };
+    container.querySelector("#closeModal")?.addEventListener("click", () => {
+      closeTaskModal();
     });
     container.querySelector("#cancelBtn")?.addEventListener("click", () => {
-      const modal = container.querySelector("#taskModal");
-      modal?.classList.add("hidden");
-      resetEditingTask();
-      reRender();
+      closeTaskModal();
     });
-    container.querySelector("#taskModal")?.addEventListener("click", (e) => {
-      if (e.target === e.currentTarget) {
-        const modal = container.querySelector("#taskModal");
-        modal?.classList.add("hidden");
-        resetEditingTask();
-        reRender();
+    container.querySelector("#taskModal")?.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeTaskModal();
       }
     });
     container.querySelector("#deleteTaskBtn")?.addEventListener("click", async () => {
       const { editingTask } = getState();
-      if (editingTask && confirm("\u786E\u5B9A\u5220\u9664\u6B64\u4EFB\u52A1\uFF1F")) {
+      const message = editingTask?.isParent ? "\u786E\u5B9A\u5220\u9664\u6B64\u7236\u4EFB\u52A1\u53CA\u5176\u5168\u90E8\u5B50\u4EFB\u52A1\uFF1F" : "\u786E\u5B9A\u5220\u9664\u6B64\u4EFB\u52A1\uFF1F";
+      if (editingTask && confirm(message)) {
         deleteTask(editingTask.id);
         await persistState();
         const modal = container.querySelector("#taskModal");
@@ -2629,7 +4133,9 @@ var TaskManager = (() => {
       const val = dateInput.value;
       container.querySelectorAll(".quick-date-btn").forEach((btn) => {
         const date = btn.dataset.date;
-        btn.classList.toggle("selected", date === val);
+        const isSelected = date === val;
+        btn.classList.toggle("selected", isSelected);
+        btn.setAttribute("aria-pressed", String(isSelected));
       });
     };
     container.querySelectorAll(".quick-date-btn").forEach((btn) => {
@@ -2711,7 +4217,7 @@ var TaskManager = (() => {
             if (confirm("\u786E\u5B9A\u5220\u9664\u6B64\u5206\u7C7B\uFF1F")) {
               deleteCategory(id);
               if (getState().defaultCategory === id) {
-                setState({ defaultCategory: "" });
+                setLocalSettings({ defaultCategory: "" });
               }
               await persistState();
               reRender();
@@ -2728,7 +4234,7 @@ var TaskManager = (() => {
           e.stopPropagation();
           const id = e.currentTarget.dataset.id;
           if (id) {
-            setState({ defaultCategory: id });
+            setLocalSettings({ defaultCategory: id });
             await persistState();
             reRender();
             const modal = container.querySelector("#categoryModal");
@@ -3004,6 +4510,23 @@ var TaskManager = (() => {
     const wrapper = container.querySelector("#weeklyGoalWrapper");
     const card = container.querySelector("#weeklyGoalCard");
     const chevron = container.querySelector("#statsChevron");
+    const modal = container.querySelector("#goalSettingsModal");
+    const errorEl = container.querySelector("#goalSettingsError");
+    const closeGoalSettings = () => {
+      modal?.classList.add("hidden");
+    };
+    const showGoalSettingsError = (message) => {
+      if (!errorEl)
+        return;
+      errorEl.textContent = message;
+      errorEl.classList.remove("hidden");
+    };
+    const clearGoalSettingsError = () => {
+      if (!errorEl)
+        return;
+      errorEl.textContent = "";
+      errorEl.classList.add("hidden");
+    };
     toggleBtn?.addEventListener("click", () => {
       if (!wrapper)
         return;
@@ -3017,37 +4540,55 @@ var TaskManager = (() => {
     card?.addEventListener("click", (e) => {
       const target = e.target;
       if (target.id === "adjustGoalAnchorBtn" || target.closest("#adjustGoalAnchorBtn") || target.id === "openGoalSettingsBtn" || target.closest("#openGoalSettingsBtn")) {
-        const modal = container.querySelector("#goalSettingsModal");
-        if (modal)
-          modal.classList.remove("hidden");
+        modal?.classList.remove("hidden");
+        clearGoalSettingsError();
+        window.setTimeout(() => container.querySelector("#goalWeeklyHours")?.focus(), 0);
         return;
       }
       card.classList.toggle("expanded");
     });
     const closeBtn = container.querySelector("#closeGoalSettingsBtn");
-    closeBtn?.addEventListener("click", () => {
-      const modal = container.querySelector("#goalSettingsModal");
-      if (modal)
-        modal.classList.add("hidden");
-    });
+    const cancelBtn = container.querySelector("#cancelGoalSettingsBtn");
+    closeBtn?.addEventListener("click", closeGoalSettings);
+    cancelBtn?.addEventListener("click", closeGoalSettings);
+    container.querySelector("#goalWeeklyHours")?.addEventListener("input", clearGoalSettingsError);
+    container.querySelector("#goalAnchorDate")?.addEventListener("input", clearGoalSettingsError);
     const saveBtn = container.querySelector("#saveGoalSettingsBtn");
     saveBtn?.addEventListener("click", async () => {
       const hoursInput = container.querySelector("#goalWeeklyHours");
       const anchorInput = container.querySelector("#goalAnchorDate");
-      setState({
-        weeklyGoalMinutes: Math.round(parseFloat(hoursInput?.value || "10") * 60),
-        weeklyGoalAnchor: anchorInput?.value || void 0
+      const hours = Number.parseFloat(hoursInput?.value);
+      const startDate = anchorInput?.value;
+      if (!Number.isFinite(hours) || hours < 0.5 || hours > 168) {
+        showGoalSettingsError("\u6BCF\u5468\u76EE\u6807\u8BF7\u8F93\u5165 0.5 \u81F3 168 \u4E4B\u95F4\u7684\u5C0F\u65F6\u6570\u3002");
+        hoursInput?.focus();
+        return;
+      }
+      if (!startDate) {
+        showGoalSettingsError("\u8BF7\u9009\u62E9\u7EDF\u8BA1\u8D77\u59CB\u65E5\u671F\u3002");
+        anchorInput?.focus();
+        return;
+      }
+      if (startDate > formatDate(/* @__PURE__ */ new Date())) {
+        showGoalSettingsError("\u7EDF\u8BA1\u8D77\u59CB\u65E5\u671F\u4E0D\u80FD\u665A\u4E8E\u4ECA\u5929\u3002");
+        anchorInput?.focus();
+        return;
+      }
+      const saveButton = saveBtn;
+      saveButton.disabled = true;
+      saveButton.textContent = "\u4FDD\u5B58\u4E2D...";
+      setLocalSettings({
+        weeklyGoalMinutes: Math.round(hours * 60),
+        weeklyGoalAnchor: startDate
       });
       await persistState();
       reRender();
-      const modal = container.querySelector("#goalSettingsModal");
-      if (modal)
-        modal.classList.add("hidden");
+      showToast(container, "\u6BCF\u5468\u76EE\u6807\u5DF2\u66F4\u65B0", "success");
     });
-    const overlay = container.querySelector("#goalSettingsModal");
-    overlay?.addEventListener("click", (e) => {
-      if (e.target === overlay) {
-        overlay.classList.add("hidden");
+    modal?.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeGoalSettings();
       }
     });
   }
@@ -3170,10 +4711,14 @@ var TaskManager = (() => {
           syncActionToast(`\u5DF2\u4ECE\u624B\u673A\u540C\u6B65 ${result.synced} \u4E2A\u4EFB\u52A1`, "success");
         }
       });
-      initSyncMonitor(reRender2);
-      onSyncStatusChange(() => {
-        const indicator = container.querySelector("#syncIndicator");
-        if (indicator) {
+      onSyncStatusChange((status) => {
+        const indicatorSlot = container.querySelector("#syncIndicatorSlot");
+        if (indicatorSlot) {
+          indicatorSlot.innerHTML = renderSyncIndicator();
+        }
+        const taskModal = container.querySelector("#taskModal");
+        const isTaskModalOpen = !!taskModal && !taskModal.classList.contains("hidden");
+        if (shouldRefreshAppForSyncStatus(status, isTaskModalOpen)) {
           reRender2();
         }
       });

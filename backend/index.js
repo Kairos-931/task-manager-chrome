@@ -208,8 +208,8 @@ async function handleGetCategories(env) {
     ).first();
     categories = row ? JSON.parse(row.value) : [];
   }
+  categories = categories.filter(category => category?.id !== 'default-starred');
   const defaults = [
-    { id: 'default-starred', name: '星标', color: '#f59e0b' },
     { id: 'default-work', name: '工作', color: '#3b82f6' },
     { id: 'default-life', name: '生活', color: '#10b981' },
     { id: 'default-learning', name: '学习', color: '#8b5cf6' },
@@ -219,7 +219,18 @@ async function handleGetCategories(env) {
       categories.unshift(category);
     }
   }
-  return jsonResp({ categories });
+  const settingsRow = await env.DB.prepare(
+    `SELECT payload FROM sync_records
+     WHERE record_type = 'settings' AND record_id = 'app' AND deleted = 0`
+  ).first();
+  let defaultCategory = '';
+  try {
+    defaultCategory = JSON.parse(settingsRow?.payload || '{}').defaultCategory || '';
+  } catch {}
+  if (!categories.some(category => category.id === defaultCategory)) {
+    defaultCategory = categories[0]?.id || '';
+  }
+  return jsonResp({ categories, defaultCategory });
 }
 
 async function handleSaveCategories(request, env) {
@@ -815,9 +826,61 @@ const MOBILE_HTML = `<!DOCTYPE html>
   .no-date label { margin: 0; font-size: 13px; color: #475569; }
   .date-group { transition: opacity 0.2s; }
   .date-group.hidden { opacity: 0.3; pointer-events: none; }
-  .completed-toggle { display: flex; align-items: center; gap: 8px; margin: 2px 0 14px; }
-  .completed-toggle input { width: 18px; height: 18px; accent-color: #3b82f6; }
-  .completed-toggle label { font-size: 14px; color: #475569; }
+  .completed-toggle {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    position: relative;
+    margin: 2px 0 14px;
+    padding: 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #f8fafc;
+    cursor: pointer;
+    user-select: none;
+    transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  }
+  .completed-toggle:hover { border-color: #93c5fd; background: #eff6ff; }
+  .completed-toggle:focus-within { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.14); }
+  .completed-toggle.is-completed { border-color: #34d399; background: #ecfdf5; }
+  .completed-toggle input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .completed-check {
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid #94a3b8;
+    border-radius: 50%;
+    color: white;
+    background: white;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .completed-check svg { width: 14px; height: 14px; opacity: 0; transform: scale(0.7); transition: opacity 0.15s, transform 0.15s; }
+  .completed-toggle.is-completed .completed-check { border-color: #10b981; background: #10b981; }
+  .completed-toggle.is-completed .completed-check svg { opacity: 1; transform: scale(1); }
+  .completed-copy { min-width: 0; display: grid; gap: 2px; }
+  .completed-copy strong { color: #334155; font-size: 14px; line-height: 1.35; }
+  .completed-copy span { color: #64748b; font-size: 12px; line-height: 1.35; }
+  .completed-toggle.is-completed .completed-copy strong { color: #047857; }
+  .completed-toggle.is-completed .completed-copy span { color: #059669; }
+  .completed-state {
+    padding: 3px 7px;
+    border-radius: 6px;
+    color: #64748b;
+    background: #e2e8f0;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .completed-toggle.is-completed .completed-state { color: #047857; background: #bbf7d0; }
 </style>
 </head>
 <body>
@@ -859,10 +922,9 @@ const MOBILE_HTML = `<!DOCTYPE html>
       </select>
     </div>
 	    <div class="input-group">
-	      <label>分类</label>
+      <label>分类</label>
 	      <select id="category">
-        <option value="default-starred" selected>星标</option>
-        <option value="default-work">工作</option>
+        <option value="default-work" selected>工作</option>
         <option value="default-life">生活</option>
         <option value="default-learning">学习</option>
 	      </select>
@@ -880,10 +942,17 @@ const MOBILE_HTML = `<!DOCTYPE html>
     <label>预计时长 (小时)</label>
     <input type="number" id="duration" value="1" min="0.1" step="0.1" inputmode="decimal">
   </div>
-  <div class="completed-toggle">
-    <input type="checkbox" id="completed">
-    <label for="completed">已完成</label>
-  </div>
+  <label class="completed-toggle" id="completedToggle" for="completed">
+    <input type="checkbox" id="completed" aria-describedby="completedHint">
+    <span class="completed-check" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12l4 4L19 6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </span>
+    <span class="completed-copy">
+      <strong id="completedLabel">添加时标记为已完成</strong>
+      <span id="completedHint">未选中，将作为待办任务同步</span>
+    </span>
+    <span class="completed-state" id="completedState" aria-live="polite">未完成</span>
+  </label>
   <div class="input-group">
     <label>备注</label>
     <textarea id="description" placeholder="可选..." rows="2"></textarea>
@@ -918,6 +987,7 @@ const MOBILE_HTML = `<!DOCTYPE html>
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
     showToast('设置已保存', 'success');
     document.getElementById('settingsPanel').classList.remove('active');
+    loadCategories();
   }
 
   function showToast(msg, type) {
@@ -941,6 +1011,19 @@ const MOBILE_HTML = `<!DOCTYPE html>
   function toggleNoDate() {
     var checked = document.getElementById('noDate').checked;
     document.getElementById('dateGroup').classList.toggle('hidden', checked);
+  }
+
+  function updateCompletedToggle() {
+    var completed = document.getElementById('completed');
+    var toggle = document.getElementById('completedToggle');
+    var label = document.getElementById('completedLabel');
+    var hint = document.getElementById('completedHint');
+    var state = document.getElementById('completedState');
+    var isCompleted = completed.checked;
+    toggle.classList.toggle('is-completed', isCompleted);
+    label.textContent = isCompleted ? '已标记为完成' : '添加时标记为已完成';
+    hint.textContent = isCompleted ? '提交后会作为已完成任务同步到电脑端' : '未选中，将作为待办任务同步';
+    state.textContent = isCompleted ? '已完成' : '未完成';
   }
 
   function toggleSettings() {
@@ -993,6 +1076,7 @@ const MOBILE_HTML = `<!DOCTYPE html>
         document.getElementById('title').value = '';
         document.getElementById('description').value = '';
         document.getElementById('completed').checked = false;
+        updateCompletedToggle();
         document.getElementById('title').focus();
       } else {
         var err = await res.json().catch(function() { return {}; });
@@ -1010,6 +1094,7 @@ const MOBILE_HTML = `<!DOCTYPE html>
   document.getElementById('settingsBtn').addEventListener('click', toggleSettings);
   document.getElementById('saveSettings').addEventListener('click', saveSettings);
   document.getElementById('noDate').addEventListener('change', toggleNoDate);
+  document.getElementById('completed').addEventListener('change', updateCompletedToggle);
   document.getElementById('submitBtn').addEventListener('click', submitTask);
 
   // Submit on Enter in title field
@@ -1022,6 +1107,7 @@ const MOBILE_HTML = `<!DOCTYPE html>
 
   loadSettings();
   initDate();
+  updateCompletedToggle();
 
   function loadCategories() {
     var s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
@@ -1035,9 +1121,7 @@ const MOBILE_HTML = `<!DOCTYPE html>
       })
       .then(function(data) {
         var cats = Array.isArray(data.categories) ? data.categories.slice() : [];
-        if (!cats.some(function(c) { return c && c.name === '星标'; })) {
-          cats.unshift({ id: 'default-starred', name: '星标', color: '#f59e0b' });
-        }
+        var defaultCategory = data.defaultCategory || '';
         var sel = document.getElementById('category');
         if (cats.length === 0) return;
         sel.innerHTML = '';
@@ -1045,9 +1129,9 @@ const MOBILE_HTML = `<!DOCTYPE html>
         cats.forEach(function(c, i) {
           var opt = document.createElement('option');
           opt.value = c.id || c.name;
-          opt.textContent = c.name;
+          opt.textContent = c.name + (opt.value === defaultCategory ? '（默认）' : '');
           sel.appendChild(opt);
-          if (c.name === '星标') defaultIdx = i;
+          if (opt.value === defaultCategory) defaultIdx = i;
         });
         sel.selectedIndex = defaultIdx;
       })

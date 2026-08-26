@@ -1,0 +1,9 @@
+services:
+  taskmaster-demo:
+    image: taskmaster-demo:3.15.0
+    build:
+      context: ../..
+      dockerfile: deploy/demo/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${DEMO_PORT:-8080}:80"

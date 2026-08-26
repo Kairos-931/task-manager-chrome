@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <title>TaskMaster 公开演示</title>
+  <link rel="icon" href="/icons/icon128.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="分类导航">
+      <div class="brand-row">
+        <img src="/icons/icon128.svg" alt="" width="36" height="36">
+        <div>
+          <strong>TaskMaster</strong>
+          <span>公开演示</span>
+        </div>
+      </div>
+
+      <div class="demo-notice" role="status">
+        <span class="status-dot"></span>
+        <div><strong>演示数据</strong><small>不会保存或同步</small></div>
+      </div>
+
+      <nav class="category-nav" id="categoryNav" aria-label="任务分类"></nav>
+
+      <section class="goal-panel" aria-labelledby="goalTitle">
+        <div class="section-heading">
+          <span id="goalTitle">本周目标</span>
+          <strong id="goalPercent">0%</strong>
+        </div>
+        <progress class="goal-track" id="goalProgress" max="100" value="0" aria-label="本周目标完成进度"></progress>
+        <div class="goal-metrics">
+          <div><span>已完成</span><strong id="goalDone">0h</strong></div>
+          <div><span>目标</span><strong id="goalTarget">0h</strong></div>
+          <div><span>差距</span><strong id="goalGap">0h</strong></div>
+        </div>
+      </section>
+
+      <button class="reset-button" id="resetDemoBtn" type="button" title="恢复初始演示数据">
+        <span aria-hidden="true">↻</span> 恢复演示数据
+      </button>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div class="mobile-brand">
+          <img src="/icons/icon128.svg" alt="" width="32" height="32">
+          <strong>TaskMaster</strong>
+          <span>演示</span>
+          <small>数据不会同步</small>
+        </div>
+        <div>
+          <h1 id="pageTitle">任务总览</h1>
+          <p id="currentDateLabel"></p>
+        </div>
+        <div class="top-actions">
+          <div class="view-tabs" role="tablist" aria-label="任务视图">
+            <button type="button" role="tab" data-view="list" aria-selected="true">列表</button>
+            <button type="button" role="tab" data-view="today" aria-selected="false">今日</button>
+            <button type="button" role="tab" data-view="week" aria-selected="false">本周</button>
+          </div>
+          <button class="icon-button mobile-reset" id="resetDemoMobileBtn" type="button" aria-label="恢复演示数据" title="恢复演示数据">↻</button>
+          <button class="primary-button" id="addTaskBtn" type="button"><span aria-hidden="true">＋</span> 添加任务</button>
+        </div>
+      </header>
+
+      <section class="stats-band" aria-label="任务统计">
+        <div><span>待处理</span><strong id="pendingCount">0</strong></div>
+        <div><span>今日计划</span><strong id="todayHours">0h</strong></div>
+        <div><span>本周完成</span><strong id="weekDoneHours">0h</strong></div>
+        <div class="risk-stat"><span>已逾期</span><strong id="overdueCount">0</strong></div>
+      </section>
+
+      <section class="mobile-goal-summary" aria-label="本周目标">
+        <div><span>本周目标</span><strong id="mobileGoalPercent">0%</strong></div>
+        <progress id="mobileGoalProgress" max="100" value="0"></progress>
+        <small id="mobileGoalText">已完成 0h，目标 0h</small>
+      </section>
+
+      <section class="toolbar" aria-label="任务筛选">
+        <label class="search-field">
+          <span aria-hidden="true">⌕</span>
+          <input id="searchInput" type="search" placeholder="搜索演示任务" autocomplete="off">
+        </label>
+        <select id="priorityFilter" aria-label="按优先级筛选">
+          <option value="all">全部优先级</option>
+          <option value="high">高优先级</option>
+          <option value="medium">中优先级</option>
+          <option value="low">低优先级</option>
+        </select>
+        <label class="check-filter"><input id="hideCompleted" type="checkbox"> 隐藏已完成</label>
+        <div class="mobile-category-filter">
+          <select id="mobileCategoryFilter" aria-label="按分类筛选"></select>
+        </div>
+      </section>
+
+      <section id="taskContent" class="task-content" aria-live="polite"></section>
+    </main>
+  </div>
+
+  <dialog id="taskDialog" class="task-dialog">
+    <form id="taskForm" method="dialog">
+      <div class="dialog-heading">
+        <div><span>演示任务</span><h2>添加任务</h2></div>
+        <button type="button" class="icon-button" id="closeTaskDialog" aria-label="关闭" title="关闭">×</button>
+      </div>
+      <label>任务名称<input id="taskTitle" name="title" type="text" required maxlength="80" placeholder="例如：整理下周计划"></label>
+      <div class="form-grid">
+        <label>分类<select id="taskCategory" name="category"></select></label>
+        <label>优先级
+          <select id="taskPriority" name="priority">
+            <option value="medium">中</option>
+            <option value="high">高</option>
+            <option value="low">低</option>
+          </select>
+        </label>
+        <label>截止日期<input id="taskDueDate" name="dueDate" type="date"></label>
+        <label>预计时长（小时）<input id="taskDuration" name="duration" type="number" min="0.5" max="24" step="0.5" value="1"></label>
+      </div>
+      <label class="no-deadline"><input id="taskNoDeadline" type="checkbox"> 无截止日期</label>
+      <div class="dialog-actions">
+        <button type="button" class="secondary-button" id="cancelTaskBtn">取消</button>
+        <button type="submit" class="primary-button">添加到演示</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="./sample-data.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

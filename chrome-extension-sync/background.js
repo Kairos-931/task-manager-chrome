@@ -6,11 +6,11 @@ var Background = (() => {
     return Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
   };
   var DEFAULT_CATEGORY_DEFINITIONS = [
-    { id: "default-starred", name: "\u661F\u6807", color: "#f59e0b" },
     { id: "default-work", name: "\u5DE5\u4F5C", color: "#3b82f6" },
     { id: "default-life", name: "\u751F\u6D3B", color: "#10b981" },
     { id: "default-learning", name: "\u5B66\u4E60", color: "#8b5cf6" }
   ];
+  var LEGACY_STARRED_CATEGORY_ID = "default-starred";
   var defaultCategoryByName = new Map(
     DEFAULT_CATEGORY_DEFINITIONS.map((category) => [category.name, category])
   );
@@ -84,6 +84,8 @@ var Background = (() => {
     for (const category of sourceCategories) {
       if (!category?.id || !category.name)
         continue;
+      if (category.id === LEGACY_STARRED_CATEGORY_ID)
+        continue;
       const definition = defaultCategoryByName.get(category.name);
       const normalized = definition ? { ...category, id: definition.id, name: definition.name } : { ...category };
       if (normalized.id !== category.id)
@@ -96,11 +98,26 @@ var Background = (() => {
     const categories = dedupeCategories([...categoriesByName.values()]);
     const categoryNameToId = new Map(categories.map((category) => [category.name, category.id]));
     const resolveCategoryId = (id) => categoryIdMap.get(id) || categoryNameToId.get(id) || id;
+    const requestedDefault = resolveCategoryId(data.defaultCategory || "");
+    const defaultCategory = requestedDefault !== LEGACY_STARRED_CATEGORY_ID && categories.some((category) => category.id === requestedDefault) ? requestedDefault : categories[0]?.id || "";
+    const resolveTaskCategory = (id) => {
+      const resolved = resolveCategoryId(id);
+      return resolved === LEGACY_STARRED_CATEGORY_ID ? defaultCategory : resolved;
+    };
     return {
       ...data,
-      tasks: Array.isArray(data.tasks) ? data.tasks.map((task) => ({ ...task, category: resolveCategoryId(task.category || "") })) : [],
+      tasks: Array.isArray(data.tasks) ? data.tasks.map((task) => ({
+        ...task,
+        category: resolveTaskCategory(task.category || ""),
+        hardDeadline: typeof task.hardDeadline === "string" && task.hardDeadline ? task.hardDeadline : void 0,
+        focusDate: typeof task.focusDate === "string" && task.focusDate ? task.focusDate : void 0,
+        parentId: typeof task.parentId === "string" && task.parentId ? task.parentId : void 0,
+        isParent: task.isParent === true || void 0,
+        duration: task.isParent === true ? 0 : task.duration,
+        noTimeLimit: task.isParent === true ? true : task.noTimeLimit
+      })) : [],
       categories,
-      defaultCategory: resolveCategoryId(data.defaultCategory || "")
+      defaultCategory
     };
   };
   var INCREMENTAL_CURSOR_KEY = "tm_incremental_sync_cursor";

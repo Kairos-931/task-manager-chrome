@@ -3,7 +3,6 @@ export type SyncStatus = 'idle' | 'saving' | 'local-saved' | 'synced' | 'remote-
 let syncStatus: SyncStatus = 'idle'
 let statusChangeCallback: ((status: SyncStatus) => void) | null = null
 let statusTimeoutId: ReturnType<typeof setTimeout> | null = null
-let reRenderFn: (() => void) | null = null
 
 export const getSyncStatus = (): SyncStatus => syncStatus
 
@@ -15,6 +14,11 @@ const setSyncStatus = (status: SyncStatus) => {
 export const onSyncStatusChange = (cb: (status: SyncStatus) => void) => {
   statusChangeCallback = cb
 }
+
+export const shouldRefreshAppForSyncStatus = (
+  status: SyncStatus,
+  isTaskModalOpen: boolean
+): boolean => status === 'remote-updated' && !isTaskModalOpen
 
 export const markLocalSave = () => {
   setSyncStatus('saving')
@@ -30,13 +34,8 @@ export const markCloudSynced = () => {
   statusTimeoutId = setTimeout(() => {
     if (syncStatus === 'synced') {
       setSyncStatus('idle')
-      reRenderFn?.()
     }
   }, 3000)
-}
-
-export const initSyncMonitor = (reRender: () => void) => {
-  reRenderFn = reRender
 }
 
 export function showToast(container: HTMLElement, message: string, type: 'success' | 'error' = 'success') {

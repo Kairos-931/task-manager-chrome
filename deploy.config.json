@@ -1,0 +1,10 @@
+{
+  "project": "task-master",
+  "environment": "prod",
+  "bucket": "yanxu-task-master-prod",
+  "region": "cn-shenzhen",
+  "outputDir": "demo",
+  "profile": "codex-oss-deployer",
+  "websiteUrl": "",
+  "spaFallback": false
+}

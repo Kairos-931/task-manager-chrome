@@ -1,7 +1,7 @@
-import type { Priority, Task } from './types'
-import { getState, setState, resetEditingTask, formatDate, persistState, moveTaskToDate, loadState } from './task'
-import { toggleTask as toggleTaskAction, deleteTask as deleteTaskAction, addTask, updateTask, addCategory, updateCategory, deleteCategory as deleteCategoryAction } from './task'
-import { renderApp } from './render'
+import type { Priority, Task, ViewMode } from './types'
+import { getState, setState, setLocalSettings, resetEditingTask, formatDate, persistState, moveTaskToDate, loadState, shiftMonth } from './task'
+import { toggleTask as toggleTaskAction, toggleTaskOnDate, deleteTask as deleteTaskAction, addTask, updateTask, addCategory, updateCategory, deleteCategory as deleteCategoryAction, focusTaskToday, replanTask, moveTaskToPool, splitTask } from './task'
+import { renderApp, renderQuickDates } from './render'
 import { downloadExportFile, importDataFromFile } from './storage'
 import { showToast } from './sync'
 
@@ -52,6 +52,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
     reRender()
     const modal = container.querySelector('#taskModal') as HTMLElement
     modal?.classList.remove('hidden')
+    container.querySelector<HTMLInputElement>('input[name="title"]')?.focus()
   })
 
   // 新标签页打开
@@ -62,7 +63,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
   // 深色模式切换
   container.querySelector('#darkModeBtn')?.addEventListener('click', async () => {
     const { darkMode } = getState()
-    setState({ darkMode: !darkMode })
+    setLocalSettings({ darkMode: !darkMode })
     await persistState()
     reRender()
   })
@@ -70,8 +71,8 @@ export const attachEventListeners = (container: HTMLElement): void => {
   // 视图切换
   container.querySelectorAll('[data-view]').forEach(btn => {
     btn.addEventListener('click', (e) => {
-      const view = (e.currentTarget as HTMLElement).dataset.view as 'list' | 'day' | 'week' | 'month'
-      setState({ currentView: view })
+      const view = (e.currentTarget as HTMLElement).dataset.view as ViewMode
+      setState({ currentView: view, showNoTimeLimitOnly: false })
       reRender()
     })
   })
@@ -90,19 +91,13 @@ export const attachEventListeners = (container: HTMLElement): void => {
   })
 
   container.querySelector('#hideCompleted')?.addEventListener('change', async (e) => {
-    setState({ hideCompleted: (e.target as HTMLInputElement).checked })
+    setLocalSettings({ hideCompleted: (e.target as HTMLInputElement).checked })
     await persistState()
     reRender()
   })
 
   container.querySelector('#hideOverdue')?.addEventListener('change', async (e) => {
-    setState({ hideOverdue: (e.target as HTMLInputElement).checked })
-    await persistState()
-    reRender()
-  })
-
-  container.querySelector('#showNoTimeLimitOnly')?.addEventListener('change', async (e) => {
-    setState({ showNoTimeLimitOnly: (e.target as HTMLInputElement).checked })
+    setLocalSettings({ hideOverdue: (e.target as HTMLInputElement).checked })
     await persistState()
     reRender()
   })
@@ -154,17 +149,18 @@ export const attachEventListeners = (container: HTMLElement): void => {
   // 日期导航 - 月视图
   container.querySelector('#prevMonth')?.addEventListener('click', () => {
     const { currentDate } = getState()
-    const d = new Date(currentDate)
-    d.setMonth(d.getMonth() - 1)
-    setState({ currentDate: formatDate(d) })
+    setState({ currentDate: shiftMonth(currentDate, -1) })
+    reRender()
+  })
+
+  container.querySelector('#toggleOverdueSection')?.addEventListener('click', () => {
+    setState({ overdueCollapsed: !getState().overdueCollapsed })
     reRender()
   })
 
   container.querySelector('#nextMonth')?.addEventListener('click', () => {
     const { currentDate } = getState()
-    const d = new Date(currentDate)
-    d.setMonth(d.getMonth() + 1)
-    setState({ currentDate: formatDate(d) })
+    setState({ currentDate: shiftMonth(currentDate, 1) })
     reRender()
   })
 
@@ -174,7 +170,9 @@ export const attachEventListeners = (container: HTMLElement): void => {
       e.stopPropagation()
       const id = (e.currentTarget as HTMLElement).dataset.taskId
       if (id) {
-        toggleTaskAction(id)
+        const date = (e.currentTarget as HTMLElement).dataset.taskDate
+        if (date) toggleTaskOnDate(id, date)
+        else toggleTaskAction(id)
         await persistState()
         reRender()
       }
@@ -201,7 +199,9 @@ export const attachEventListeners = (container: HTMLElement): void => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation()
       const id = (e.currentTarget as HTMLElement).dataset.id
-      if (id && confirm('确定删除此任务？')) {
+      const task = id ? getState().tasks.find(item => item.id === id) : undefined
+      const message = task?.isParent ? '确定删除此父任务及其全部子任务？' : '确定删除此任务？'
+      if (id && confirm(message)) {
         deleteTaskAction(id)
         await persistState()
         reRender()
@@ -216,6 +216,38 @@ export const attachEventListeners = (container: HTMLElement): void => {
     const form = e.target as HTMLFormElement
     const formData = new FormData(form)
     const { editingTask } = getState()
+
+    const commonData = {
+      title: (formData.get('title') as string).trim(),
+      description: formData.get('description') as string,
+      priority: formData.get('priority') as Priority,
+      category: formData.get('category') as string,
+      hardDeadline: (formData.get('hardDeadline') as string) || undefined
+    }
+
+    if (editingTask?.isParent) {
+      const parentCompleted = (form.querySelector('#taskCompleted') as HTMLInputElement)?.checked || false
+      updateTask(editingTask.id, {
+        ...commonData,
+        completed: parentCompleted,
+        completedAt: parentCompleted ? (editingTask.completedAt ?? Date.now()) : undefined
+      })
+      // 勾选父任务完成时，同步把所有未完成的非循环子任务标记完成
+      if (parentCompleted && !editingTask.completed) {
+        const now = Date.now()
+        for (const child of getState().tasks) {
+          if (child.parentId !== editingTask.id || child.completed || child.repeatType !== 'none') continue
+          child.completed = true
+          child.completedAt = now
+          child.updatedAt = now
+        }
+      }
+      await persistState()
+      resetEditingTask()
+      reRender()
+      return
+    }
+
     const noTimeLimit = (form.querySelector('#noTimeLimit') as HTMLInputElement)?.checked || false
     const repeatDays: number[] = []
     form.querySelectorAll('[name="repeatDays"]:checked').forEach(cb => {
@@ -223,16 +255,16 @@ export const attachEventListeners = (container: HTMLElement): void => {
     })
     const durationInput = form.querySelector('#durationInput') as HTMLInputElement
     const duration = Math.round(parseFloat(durationInput?.value || '1') * 60) || 60
-    
+    const repeatType = formData.get('repeatType') as Task['repeatType']
+    const dueDate = noTimeLimit ? '' : (formData.get('dueDate') as string)
+
     const taskData = {
-      title: formData.get('title') as string,
-      description: formData.get('description') as string,
-      priority: formData.get('priority') as Priority,
-      category: formData.get('category') as string,
-      dueDate: noTimeLimit ? '' : (formData.get('dueDate') as string),
+      ...commonData,
+      dueDate,
+      focusDate: dueDate === formatDate(new Date()) ? dueDate : undefined,
       duration,
       completed: (form.querySelector('#taskCompleted') as HTMLInputElement)?.checked || false,
-      repeatType: formData.get('repeatType') as Task['repeatType'],
+      repeatType,
       repeatDays,
       repeatInterval: parseInt(formData.get('repeatInterval') as string) || 1,
       noTimeLimit,
@@ -249,33 +281,302 @@ export const attachEventListeners = (container: HTMLElement): void => {
   })
 
   // 模态框关闭
-  container.querySelector('#closeModal')?.addEventListener('click', () => {
+  let taskFormDirty = false
+  taskForm?.addEventListener('input', () => {
+    taskFormDirty = true
+  })
+
+  container.querySelectorAll('.task-focus-toggle').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation()
+      const id = (e.currentTarget as HTMLElement).dataset.id
+      if (!id) return
+      focusTaskToday(id)
+      await persistState()
+      reRender()
+    })
+  })
+
+  container.querySelectorAll('.overdue-focus').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = (btn as HTMLElement).dataset.id
+      if (!id) return
+      focusTaskToday(id)
+      await persistState()
+      reRender()
+      showToast(container, '已加入今日聚焦', 'success')
+    })
+  })
+
+  container.querySelectorAll('.overdue-complete').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = (btn as HTMLElement).dataset.id
+      if (!id) return
+      toggleTaskAction(id)
+      await persistState()
+      reRender()
+      showToast(container, '任务已完成', 'success')
+    })
+  })
+
+  container.querySelectorAll('.pool-focus').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = (btn as HTMLElement).dataset.id
+      if (!id) return
+      focusTaskToday(id)
+      await persistState()
+      reRender()
+      showToast(container, '已安排到今天', 'success')
+    })
+  })
+
+  container.querySelectorAll('.week-plan-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const taskId = (btn as HTMLElement).dataset.id
+      if (!taskId) return
+      const picker = container.querySelector(`.week-day-picker[data-id="${taskId}"]`) as HTMLElement | null
+      if (!picker) return
+      const willOpen = picker.classList.contains('hidden')
+      container.querySelectorAll('.week-day-picker').forEach(other => other.classList.add('hidden'))
+      container.querySelectorAll('.week-plan-toggle').forEach(other => other.setAttribute('aria-expanded', 'false'))
+      picker.classList.toggle('hidden', !willOpen)
+      btn.setAttribute('aria-expanded', String(willOpen))
+    })
+  })
+
+  container.querySelectorAll('.week-plan-date').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const taskId = (btn as HTMLElement).dataset.id
+      const date = (btn as HTMLElement).dataset.date
+      if (!taskId || !date) return
+      replanTask(taskId, date)
+      await persistState()
+      reRender()
+      showToast(container, `已安排到 ${date}`, 'success')
+    })
+  })
+
+  container.querySelectorAll('.overdue-replan').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = (btn as HTMLElement).dataset.id
+      if (!id) return
+      setState({ replanningTaskId: id })
+      reRender()
+    })
+  })
+
+  container.querySelectorAll('.overdue-split').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = (btn as HTMLElement).dataset.id
+      if (!id) return
+      setState({ splittingTaskId: id })
+      reRender()
+    })
+  })
+
+  container.querySelectorAll('.task-split').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const id = (btn as HTMLElement).dataset.id
+      if (!id) return
+      setState({ splittingTaskId: id })
+      reRender()
+    })
+  })
+
+  container.querySelectorAll('.overdue-pool').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = (btn as HTMLElement).dataset.id
+      if (!id) return
+      moveTaskToPool(id)
+      await persistState()
+      reRender()
+      showToast(container, '已放回任务池', 'success')
+    })
+  })
+
+  const closeReplanModal = () => {
+    setState({ replanningTaskId: null })
+    reRender()
+  }
+  container.querySelector('#cancelReplanBtn')?.addEventListener('click', closeReplanModal)
+  container.querySelector('#replanForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault()
+    const { replanningTaskId } = getState()
+    if (!replanningTaskId) return
+    const date = new FormData(e.target as HTMLFormElement).get('replanDate') as string
+    replanTask(replanningTaskId, date)
+    setState({ replanningTaskId: null })
+    await persistState()
+    reRender()
+    showToast(container, date === formatDate(new Date()) ? '已重新安排到今天并加入聚焦' : '计划日期已更新', 'success')
+  })
+
+  const splitError = container.querySelector('#splitTaskError') as HTMLElement
+  const closeSplitModal = () => {
+    setState({ splittingTaskId: null })
+    reRender()
+  }
+  container.querySelector('#cancelSplitTaskBtn')?.addEventListener('click', closeSplitModal)
+  container.querySelector('#closeSplitTaskBtn')?.addEventListener('click', closeSplitModal)
+  const splitTaskModal = container.querySelector('#splitTaskModal') as HTMLElement
+  splitTaskModal?.addEventListener('keydown', (e) => {
+    if ((e as KeyboardEvent).key === 'Escape') {
+      e.preventDefault()
+      closeSplitModal()
+    }
+  })
+  if (getState().splittingTaskId) {
+    container.querySelector<HTMLInputElement>('#splitTaskModal .split-child-title')?.focus()
+  }
+
+  const showSplitError = (message: string) => {
+    if (!splitError) return
+    splitError.textContent = message
+    splitError.classList.remove('hidden')
+  }
+  const bindSplitRemoveButtons = () => {
+    container.querySelectorAll('.remove-split-child').forEach(btn => {
+      if ((btn as HTMLElement).dataset.bound === 'true') return
+      ;(btn as HTMLElement).dataset.bound = 'true'
+      btn.addEventListener('click', () => {
+        const rows = container.querySelectorAll('.split-child-row')
+        if (rows.length <= 2) {
+          showSplitError('至少保留两个子任务。')
+          return
+        }
+        btn.closest('.split-child-row')?.remove()
+      })
+    })
+  }
+  bindSplitRemoveButtons()
+
+  // 子任务时长步进器（与主任务弹窗一致：每次 ±0.5h，范围 0.5-24）
+  splitTaskModal?.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement
+    const isDec = target.classList.contains('split-duration-decrease')
+    const isInc = target.classList.contains('split-duration-increase')
+    if (!isDec && !isInc) return
+    const input = target.closest('.split-child-row')?.querySelector('.split-child-duration') as HTMLInputElement | null
+    if (!input) return
+    const current = Number.parseFloat(input.value) || 1
+    const next = isDec ? Math.max(0.5, current - 0.5) : Math.min(24, current + 0.5)
+    input.value = next.toFixed(1)
+  })
+
+  // 子任务快捷日期：点击 7 天按钮设置日期；手动改日期同步高亮
+  splitTaskModal?.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement
+    const btn = target.closest('.split-quick-dates .quick-date-btn') as HTMLElement | null
+    if (!btn) return
+    const row = btn.closest('.split-child-row') as HTMLElement | null
+    const date = btn.dataset.date
+    const input = row?.querySelector('.split-child-date') as HTMLInputElement | null
+    if (!row || !date || !input) return
+    input.value = date
+    row.querySelectorAll('.quick-date-btn').forEach(b => {
+      const selected = (b as HTMLElement).dataset.date === date
+      b.classList.toggle('selected', selected)
+      b.setAttribute('aria-pressed', String(selected))
+    })
+  })
+  splitTaskModal?.addEventListener('change', (e) => {
+    const target = e.target as HTMLElement
+    if (!target.classList.contains('split-child-date')) return
+    const row = target.closest('.split-child-row') as HTMLElement | null
+    if (!row) return
+    const val = (target as HTMLInputElement).value
+    row.querySelectorAll('.quick-date-btn').forEach(b => {
+      const selected = (b as HTMLElement).dataset.date === val
+      b.classList.toggle('selected', selected)
+      b.setAttribute('aria-pressed', String(selected))
+    })
+  })
+
+  container.querySelector('#addSplitChildBtn')?.addEventListener('click', () => {
+    const list = container.querySelector('#splitChildren')
+    if (!list) return
+    const index = list.querySelectorAll('.split-child-row').length
+    const row = document.createElement('div')
+    row.className = 'split-child-row grid gap-2 p-3 rounded-lg border dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30'
+    row.innerHTML = `
+      <input type="text" class="split-child-title px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" placeholder="子任务 ${index + 1}" required aria-label="子任务标题">
+      <button type="button" class="remove-split-child p-2 text-gray-400 hover:text-red-500 rounded" title="删除此子任务" aria-label="删除此子任务">×</button>
+      <div class="split-child-schedule">
+        <div class="split-child-field split-child-duration-field">
+          <span class="split-child-field-label">预计时间</span>
+          <div class="flex items-center gap-1">
+            <button type="button" class="split-duration-decrease px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="减少 0.5 小时">−</button>
+            <input type="number" class="split-child-duration w-14 text-center px-1 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="1" min="0.5" step="0.5" aria-label="预计小时">
+            <button type="button" class="split-duration-increase px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="增加 0.5 小时">+</button>
+          </div>
+        </div>
+        <div class="split-quick-dates">${renderQuickDates(formatDate(new Date()))}</div>
+        <div class="split-child-field split-child-date-field">
+          <label class="split-child-field-label">自定义日期</label>
+          <input type="date" class="split-child-date w-full px-2 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${formatDate(new Date())}" required aria-label="计划日期">
+        </div>
+      </div>`
+    list.appendChild(row)
+    bindSplitRemoveButtons()
+    row.querySelector<HTMLInputElement>('.split-child-title')?.focus()
+  })
+
+  container.querySelector('#splitTaskForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault()
+    const { splittingTaskId } = getState()
+    if (!splittingTaskId) return
+    const children = [...container.querySelectorAll<HTMLDivElement>('.split-child-row')].map(row => ({
+      id: row.dataset.childId,
+      title: (row.querySelector('.split-child-title') as HTMLInputElement).value.trim(),
+      duration: Math.round(Number.parseFloat((row.querySelector('.split-child-duration') as HTMLInputElement).value) * 60),
+      dueDate: (row.querySelector('.split-child-date') as HTMLInputElement).value
+    }))
+    if (children.length < 2 || children.some(child => !child.title || !child.dueDate || child.duration <= 0)) {
+      showSplitError('请完整填写至少两个子任务。')
+      return
+    }
+    if (!splitTask(splittingTaskId, children)) {
+      showSplitError('该任务当前无法拆分，请确认它不是循环任务。')
+      return
+    }
+    setState({ splittingTaskId: null })
+    await persistState()
+    reRender()
+    showToast(container, `已保存 ${children.length} 个子任务`, 'success')
+  })
+  taskForm?.addEventListener('change', () => {
+    taskFormDirty = true
+  })
+
+  const closeTaskModal = () => {
+    if (taskFormDirty && !confirm('当前填写的内容尚未保存，确定关闭吗？')) return
     const modal = container.querySelector('#taskModal') as HTMLElement
     modal?.classList.add('hidden')
     resetEditingTask()
     reRender()
+  }
+
+  container.querySelector('#closeModal')?.addEventListener('click', () => {
+    closeTaskModal()
   })
 
   container.querySelector('#cancelBtn')?.addEventListener('click', () => {
-    const modal = container.querySelector('#taskModal') as HTMLElement
-    modal?.classList.add('hidden')
-    resetEditingTask()
-    reRender()
+    closeTaskModal()
   })
 
-  container.querySelector('#taskModal')?.addEventListener('click', (e) => {
-    if (e.target === e.currentTarget) {
-      const modal = container.querySelector('#taskModal') as HTMLElement
-      modal?.classList.add('hidden')
-      resetEditingTask()
-      reRender()
+  container.querySelector('#taskModal')?.addEventListener('keydown', (e) => {
+    if ((e as KeyboardEvent).key === 'Escape') {
+      e.preventDefault()
+      closeTaskModal()
     }
   })
 
   // 删除任务按钮（在表单内）
   container.querySelector('#deleteTaskBtn')?.addEventListener('click', async () => {
     const { editingTask } = getState()
-    if (editingTask && confirm('确定删除此任务？')) {
+    const message = editingTask?.isParent ? '确定删除此父任务及其全部子任务？' : '确定删除此任务？'
+    if (editingTask && confirm(message)) {
       deleteTaskAction(editingTask.id)
       await persistState()
       const modal = container.querySelector('#taskModal') as HTMLElement
@@ -318,7 +619,9 @@ export const attachEventListeners = (container: HTMLElement): void => {
     const val = dateInput.value
     container.querySelectorAll('.quick-date-btn').forEach(btn => {
       const date = (btn as HTMLElement).dataset.date
-      btn.classList.toggle('selected', date === val)
+      const isSelected = date === val
+      btn.classList.toggle('selected', isSelected)
+      btn.setAttribute('aria-pressed', String(isSelected))
     })
   }
 
@@ -417,7 +720,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
             deleteCategoryAction(id)
             // 如果删除的是默认分类，清除默认设置
             if (getState().defaultCategory === id) {
-              setState({ defaultCategory: '' })
+              setLocalSettings({ defaultCategory: '' })
             }
             await persistState()
             reRender()
@@ -436,7 +739,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
         e.stopPropagation()
         const id = (e.currentTarget as HTMLElement).dataset.id
         if (id) {
-          setState({ defaultCategory: id })
+          setLocalSettings({ defaultCategory: id })
           await persistState()
           reRender()
           const modal = container.querySelector('#categoryModal') as HTMLElement
@@ -740,6 +1043,24 @@ function setupWeeklyGoalEvents(container: HTMLElement): void {
   const wrapper = container.querySelector('#weeklyGoalWrapper') as HTMLElement
   const card = container.querySelector('#weeklyGoalCard') as HTMLElement
   const chevron = container.querySelector('#statsChevron')
+  const modal = container.querySelector('#goalSettingsModal') as HTMLElement
+  const errorEl = container.querySelector('#goalSettingsError') as HTMLElement
+
+  const closeGoalSettings = () => {
+    modal?.classList.add('hidden')
+  }
+
+  const showGoalSettingsError = (message: string) => {
+    if (!errorEl) return
+    errorEl.textContent = message
+    errorEl.classList.remove('hidden')
+  }
+
+  const clearGoalSettingsError = () => {
+    if (!errorEl) return
+    errorEl.textContent = ''
+    errorEl.classList.add('hidden')
+  }
 
   // 统计条右侧箭头展开/收起周目标卡片
   toggleBtn?.addEventListener('click', () => {
@@ -752,15 +1073,16 @@ function setupWeeklyGoalEvents(container: HTMLElement): void {
     }
   })
 
-  // 卡片内点击：调整锚点（阻止冒泡）、展开详情
+  // 卡片内点击：打开目标设置（阻止冒泡）、展开详情
   card?.addEventListener('click', (e) => {
     const target = e.target as HTMLElement
     if (
       target.id === 'adjustGoalAnchorBtn' || target.closest('#adjustGoalAnchorBtn') ||
       target.id === 'openGoalSettingsBtn' || target.closest('#openGoalSettingsBtn')
     ) {
-      const modal = container.querySelector('#goalSettingsModal') as HTMLElement
-      if (modal) modal.classList.remove('hidden')
+      modal?.classList.remove('hidden')
+      clearGoalSettingsError()
+      window.setTimeout(() => container.querySelector<HTMLInputElement>('#goalWeeklyHours')?.focus(), 0)
       return
     }
     card.classList.toggle('expanded')
@@ -768,32 +1090,53 @@ function setupWeeklyGoalEvents(container: HTMLElement): void {
 
   // 设置弹窗关闭
   const closeBtn = container.querySelector('#closeGoalSettingsBtn')
-  closeBtn?.addEventListener('click', () => {
-    const modal = container.querySelector('#goalSettingsModal') as HTMLElement
-    if (modal) modal.classList.add('hidden')
-  })
+  const cancelBtn = container.querySelector('#cancelGoalSettingsBtn')
+  closeBtn?.addEventListener('click', closeGoalSettings)
+  cancelBtn?.addEventListener('click', closeGoalSettings)
+
+  container.querySelector('#goalWeeklyHours')?.addEventListener('input', clearGoalSettingsError)
+  container.querySelector('#goalAnchorDate')?.addEventListener('input', clearGoalSettingsError)
 
   // 保存设置
   const saveBtn = container.querySelector('#saveGoalSettingsBtn')
   saveBtn?.addEventListener('click', async () => {
     const hoursInput = container.querySelector('#goalWeeklyHours') as HTMLInputElement
     const anchorInput = container.querySelector('#goalAnchorDate') as HTMLInputElement
-    setState({
-      weeklyGoalMinutes: Math.round(parseFloat(hoursInput?.value || '10') * 60),
-      weeklyGoalAnchor: anchorInput?.value || undefined
+    const hours = Number.parseFloat(hoursInput?.value)
+    const startDate = anchorInput?.value
+
+    if (!Number.isFinite(hours) || hours < 0.5 || hours > 168) {
+      showGoalSettingsError('每周目标请输入 0.5 至 168 之间的小时数。')
+      hoursInput?.focus()
+      return
+    }
+    if (!startDate) {
+      showGoalSettingsError('请选择统计起始日期。')
+      anchorInput?.focus()
+      return
+    }
+    if (startDate > formatDate(new Date())) {
+      showGoalSettingsError('统计起始日期不能晚于今天。')
+      anchorInput?.focus()
+      return
+    }
+
+    const saveButton = saveBtn as HTMLButtonElement
+    saveButton.disabled = true
+    saveButton.textContent = '保存中...'
+    setLocalSettings({
+      weeklyGoalMinutes: Math.round(hours * 60),
+      weeklyGoalAnchor: startDate
     })
     await persistState()
     reRender()
-
-    const modal = container.querySelector('#goalSettingsModal') as HTMLElement
-    if (modal) modal.classList.add('hidden')
+    showToast(container, '每周目标已更新', 'success')
   })
 
-  // 点击遮罩关闭
-  const overlay = container.querySelector('#goalSettingsModal')
-  overlay?.addEventListener('click', (e) => {
-    if (e.target === overlay) {
-      overlay.classList.add('hidden')
+  modal?.addEventListener('keydown', (e) => {
+    if ((e as KeyboardEvent).key === 'Escape') {
+      e.preventDefault()
+      closeGoalSettings()
     }
   })
 }
