@@ -1,6 +1,6 @@
 services:
   taskmaster-demo:
-    image: taskmaster-demo:3.15.0
+    image: taskmaster-demo:3.15.1
     build:
       context: ../..
       dockerfile: deploy/demo/Dockerfile

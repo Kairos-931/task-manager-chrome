@@ -505,7 +505,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
       <div class="split-child-schedule">
         <div class="split-child-field split-child-duration-field">
           <span class="split-child-field-label">预计时间</span>
-          <div class="flex items-center gap-1">
+          <div class="split-child-duration-control">
             <button type="button" class="split-duration-decrease px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="减少 0.5 小时">−</button>
             <input type="number" class="split-child-duration w-14 text-center px-1 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="1" min="0.5" step="0.5" aria-label="预计小时">
             <button type="button" class="split-duration-increase px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="增加 0.5 小时">+</button>

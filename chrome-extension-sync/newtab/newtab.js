@@ -2439,7 +2439,7 @@ var TaskManager = (() => {
     <div class="split-child-schedule">
       <div class="split-child-field split-child-duration-field">
         <span class="split-child-field-label">\u9884\u8BA1\u65F6\u95F4</span>
-        <div class="flex items-center gap-1">
+        <div class="split-child-duration-control">
           <button type="button" class="split-duration-decrease px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="\u51CF\u5C11 0.5 \u5C0F\u65F6">\u2212</button>
           <input type="number" class="split-child-duration w-14 text-center px-1 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${child ? (child.duration / 60).toFixed(2).replace(/\.?0+$/, "") : "1"}" min="0.5" step="0.5" aria-label="\u9884\u8BA1\u5C0F\u65F6">
           <button type="button" class="split-duration-increase px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="\u589E\u52A0 0.5 \u5C0F\u65F6">+</button>
@@ -3375,6 +3375,23 @@ var TaskManager = (() => {
       .split-child-field {
         min-width: 0;
       }
+      .split-child-duration-control {
+        display: grid;
+        width: 132px;
+        grid-template-columns: 34px 56px 34px;
+        align-items: center;
+        gap: 4px;
+      }
+      .split-child-duration-control .split-duration-decrease,
+      .split-child-duration-control .split-duration-increase {
+        width: 34px;
+        height: 38px;
+        padding: 0;
+      }
+      .split-child-duration-control .split-child-duration {
+        width: 56px;
+        min-width: 0;
+      }
       .split-child-field-label {
         display: block;
         margin-bottom: 4px;
@@ -3397,6 +3414,13 @@ var TaskManager = (() => {
           margin-top: -2px;
         }
         .split-child-schedule { grid-template-columns: 124px minmax(0, 1fr); gap: 7px 8px; }
+        .split-child-duration-control {
+          width: 124px;
+          grid-template-columns: 32px 52px 32px;
+        }
+        .split-child-duration-control .split-duration-decrease,
+        .split-child-duration-control .split-duration-increase { width: 32px; }
+        .split-child-duration-control .split-child-duration { width: 52px; }
         .split-child-duration-field { grid-column: 1; grid-row: 1; }
         .split-child-date-field { grid-column: 2; grid-row: 1; }
         .split-quick-dates { grid-column: 1 / -1; grid-row: 2; }
@@ -4030,7 +4054,7 @@ var TaskManager = (() => {
       <div class="split-child-schedule">
         <div class="split-child-field split-child-duration-field">
           <span class="split-child-field-label">\u9884\u8BA1\u65F6\u95F4</span>
-          <div class="flex items-center gap-1">
+          <div class="split-child-duration-control">
             <button type="button" class="split-duration-decrease px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="\u51CF\u5C11 0.5 \u5C0F\u65F6">\u2212</button>
             <input type="number" class="split-child-duration w-14 text-center px-1 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="1" min="0.5" step="0.5" aria-label="\u9884\u8BA1\u5C0F\u65F6">
             <button type="button" class="split-duration-increase px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="\u589E\u52A0 0.5 \u5C0F\u65F6">+</button>

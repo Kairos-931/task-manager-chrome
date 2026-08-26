@@ -1,6 +1,6 @@
 {
   "name": "task-manager-extension",
-  "version": "3.15.0",
+  "version": "3.15.1",
   "type": "module",
   "scripts": {
     "build": "tsc && node scripts/generate-icons.js && npx tailwindcss -i ./styles/main.css -o ./styles/main.css --minify && node scripts/bundle.mjs && node scripts/copy-assets.js && node scripts/check-release.mjs",
