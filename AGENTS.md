@@ -35,6 +35,14 @@ TaskMaster 是一个 Chrome 扩展任务管理项目，同时包含 Cloudflare W
 - 跨设备同步依赖一致的扩展 ID；`manifest.json` 必须保留稳定的 `key`。
 - 用户反馈修改未生效时，先检查浏览器/扩展缓存并引导硬刷新或重载，再继续定位根因。
 
+## 样式与构建约束
+
+- Tailwind 源文件与生成文件必须分离：`styles/tailwind.css` 是唯一输入，`styles/main.css` 是构建产物；禁止让同一个文件同时作为 `tailwindcss -i` 和 `-o`，也禁止手工修改生成后的 `styles/main.css`。
+- 新增或修改 Tailwind 工具类后，不能只检查源码中的 `class` 字符串；必须运行 CSS 构建，并确认最终 `styles/main.css` 与 `chrome-extension-sync/styles/main.css` 中存在所需规则。
+- 控件宽度、Grid 列宽、溢出边界等会直接决定布局正确性的关键尺寸，优先使用语义化组件类和明确 CSS 规则，不依赖可能被扫描或裁剪遗漏的工具类作为唯一约束。
+- CSS 构建必须可重复：连续执行两次应得到等价产物，第二次构建不能因为第一次覆盖源指令而丢失新工具类。
+- UI 验收必须覆盖 Chrome Popup 的真实约 `400px` 宽度和新标签页宽屏两种场景；不能只根据宽屏 Demo 判断响应式布局已经生效。
+
 ## 目录与文件约定
 
 - `shared/`：扩展共享 TypeScript 业务逻辑。

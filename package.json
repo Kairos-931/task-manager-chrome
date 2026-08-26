@@ -3,14 +3,14 @@
   "version": "3.15.1",
   "type": "module",
   "scripts": {
-    "build": "tsc && node scripts/generate-icons.js && npx tailwindcss -i ./styles/main.css -o ./styles/main.css --minify && node scripts/bundle.mjs && node scripts/copy-assets.js && node scripts/check-release.mjs",
+    "build": "tsc && node scripts/generate-icons.js && npx tailwindcss -i ./styles/tailwind.css -o ./styles/main.css --minify && node scripts/bundle.mjs && node scripts/copy-assets.js && node scripts/check-release.mjs",
     "test": "node tests/run.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint shared backend/index.js demo scripts/serve-demo.mjs tests",
     "check": "npm run typecheck && npm run lint && npm test",
     "watch": "tsc --watch",
     "demo": "node scripts/serve-demo.mjs",
-    "build:css": "npx tailwindcss -i ./styles/main.css -o ./styles/main.css --minify",
+    "build:css": "npx tailwindcss -i ./styles/tailwind.css -o ./styles/main.css --minify",
     "icons": "node scripts/generate-icons.js",
     "bundle": "node scripts/bundle.mjs",
     "copy": "node scripts/copy-assets.js"
