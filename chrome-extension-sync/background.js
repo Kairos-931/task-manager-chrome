@@ -153,14 +153,21 @@ var Background = (() => {
       });
     });
   };
-  var getSyncDeviceId = async () => {
+  var cachedDeviceId = null;
+  var getSyncDeviceIdAsync = async () => {
+    if (cachedDeviceId)
+      return cachedDeviceId;
     const existing = await getLocalValue(INCREMENTAL_DEVICE_KEY, "");
-    if (existing)
+    if (existing) {
+      cachedDeviceId = existing;
       return existing;
+    }
     const id = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : generateId();
     await setLocalValues({ [INCREMENTAL_DEVICE_KEY]: id });
+    cachedDeviceId = id;
     return id;
   };
+  var getSyncDeviceId = getSyncDeviceIdAsync;
   var getSyncShadow = async () => {
     const shadow = await getLocalValue(INCREMENTAL_SHADOW_KEY, null);
     return shadow && shadow.records ? shadow : { records: {} };
@@ -235,11 +242,12 @@ var Background = (() => {
     }
     return changes;
   };
-  var applyRemoteChanges = (data, changes) => {
+  var applyRemoteChanges = (data, changes, options = {}) => {
+    const applicableChanges = options.ignoreDeviceId ? changes.filter((change) => change.sourceDevice !== options.ignoreDeviceId) : changes;
     const tasks = new Map(data.tasks.map((task) => [task.id, task]));
     const categories = new Map(data.categories.map((category) => [category.id, category]));
     let settings = { ...data };
-    for (const change of changes) {
+    for (const change of applicableChanges) {
       if (change.type === "task") {
         const local = tasks.get(change.id);
         if (local && local.updatedAt > change.updatedAt)
@@ -295,6 +303,7 @@ var Background = (() => {
       const firstSync = initialCursor === 0 && Object.keys(shadow.records).length === 0;
       let pending = firstSync && isVirginDefaultData(mergedData) ? [] : buildLocalChanges(buildCurrentRecords(mergedData, shadow), shadow);
       let hasMore = true;
+      let sawForeignChanges = false;
       const receivedChanges = [];
       while (pending.length > 0 || hasMore) {
         const outgoing = pending.splice(0, OUTGOING_SYNC_BATCH);
@@ -313,8 +322,11 @@ var Background = (() => {
         const result = await resp.json();
         const remoteChanges = Array.isArray(result.changes) ? result.changes : [];
         const rejectedChanges = Array.isArray(result.rejectedChanges) ? result.rejectedChanges : [];
-        receivedChanges.push(...remoteChanges, ...rejectedChanges);
-        mergedData = applyRemoteChanges(mergedData, [...remoteChanges, ...rejectedChanges]);
+        const foreignChanges = remoteChanges.filter((change) => change.sourceDevice !== deviceId);
+        if (foreignChanges.length > 0)
+          sawForeignChanges = true;
+        receivedChanges.push(...foreignChanges, ...rejectedChanges);
+        mergedData = applyRemoteChanges(mergedData, [...foreignChanges, ...rejectedChanges]);
         cursor = Number.isInteger(result.cursor) ? result.cursor : cursor;
         hasMore = result.hasMore === true;
       }
@@ -329,12 +341,22 @@ var Background = (() => {
           [INCREMENTAL_CLOCK_KEY]: lastSyncTimestamp
         })
       ]);
-      return { success: true, data: finalData };
+      return { success: true, data: finalData, hasForeignChanges: sawForeignChanges };
     } catch (e) {
       return { success: false, error: String(e) };
     }
   };
   var syncIncrementally = (data) => enqueueSync(() => syncIncrementallyNow(cloneStorageData(data)));
+  var isRecoverableNetworkError = (error) => {
+    if (!error)
+      return false;
+    return /(?:TypeError:\s*)?Failed to fetch|NetworkError when attempting to fetch resource|Load failed/i.test(error);
+  };
+  var warnForSyncFailure = (error) => {
+    if (!error || error === "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" || isRecoverableNetworkError(error))
+      return;
+    console.warn("[TaskMaster] incremental sync failed:", error);
+  };
   var loadData = async () => {
     const localBackup = await loadFromLocal();
     if (localBackup) {
@@ -401,12 +423,14 @@ var Background = (() => {
     localData.tasks = fixRecurringTasks(localData.tasks);
     await saveToLocal(localData);
     syncIncrementally(localData).then((result) => {
-      if (result.success && result.data)
-        onRemoteData?.(result.data);
-      else if (result.error !== "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E")
-        console.warn("[TaskMaster] incremental sync failed:", result.error);
+      if (result.success && result.data) {
+        getSyncDeviceIdAsync().then((deviceId) => {
+          onRemoteData?.(result.data, { ignoreDeviceId: deviceId });
+        });
+      } else
+        warnForSyncFailure(result.error);
       onSyncResult?.(result);
-    }).catch((e) => console.warn("[TaskMaster] incremental sync failed:", e));
+    }).catch((e) => warnForSyncFailure(String(e)));
   };
   var BACKUP_PREFIX = "tm_auto_backup_";
   var MAX_BACKUPS = 3;

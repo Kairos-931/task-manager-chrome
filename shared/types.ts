@@ -47,6 +47,10 @@ interface StorageData {
   syncSettingsUpdatedAt?: number   // 设置记录的增量同步时间戳
 }
 
+interface RemoteApplyOptions {
+  ignoreDeviceId?: string
+}
+
 interface AppState extends StorageData {
   editingTask: Task | null
   currentView: ViewMode
@@ -59,4 +63,4 @@ interface AppState extends StorageData {
   overdueCollapsed: boolean
 }
 
-export type { Task, Category, StorageData, AppState, Priority, RepeatType, ViewMode }
+export type { Task, Category, StorageData, AppState, Priority, RepeatType, ViewMode, RemoteApplyOptions }

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
-const [popupSource, renderSource, eventSource, prdSource] = await Promise.all([
+const [popupSource, renderSource, eventSource, entrySource, prdSource] = await Promise.all([
   readFile(new URL('../popup/popup.html', import.meta.url), 'utf8'),
   readFile(new URL('../shared/render.ts', import.meta.url), 'utf8'),
   readFile(new URL('../shared/events.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../shared/entry.ts', import.meta.url), 'utf8'),
   readFile(new URL('../docs/PRD.md', import.meta.url), 'utf8'),
 ])
 
@@ -16,7 +17,7 @@ assert.match(renderSource, /\.pool-task-actions \{[\s\S]*gap: 8px;[\s\S]*margin-
 assert.match(renderSource, /@media \(max-width: 900px\)[\s\S]*\.pool-task-row \.pool-task-actions[\s\S]*padding-left: 52px/)
 assert.match(renderSource, /id="splitTaskModal"[^>]*p-4 sm:p-6/)
 assert.match(renderSource, /split-task-panel[^\n]*max-w-4xl/)
-assert.match(renderSource, /id="splitTaskForm" class="split-task-form space-y-4"/)
+assert.match(renderSource, /id="splitTaskForm" class="split-task-form space-y-4" novalidate/)
 assert.match(renderSource, /id="splitChildren"[^>]*max-height:min\(48svh,460px\)/)
 assert.match(renderSource, /split-child-row grid gap-2 p-3 rounded-lg/)
 assert.match(renderSource, /\.split-child-row \{[\s\S]*grid-template-columns: minmax\(0, 1fr\) 32px;/)
@@ -31,9 +32,36 @@ assert.match(renderSource, /@media \(max-width: 520px\)[\s\S]*\.split-child-dura
 assert.match(eventSource, /split-child-schedule[\s\S]*split-child-duration-field[\s\S]*split-quick-dates[\s\S]*split-child-date-field/)
 assert.match(renderSource, /id="splitTaskModal"[\s\S]*role="dialog"[\s\S]*aria-modal="true"/)
 assert.match(eventSource, /splitTaskModal[\s\S]*addEventListener\('keydown',[\s\S]*key === 'Escape'[\s\S]*closeSplitModal\(\)/)
+assert.match(eventSource, /const invalidChildIndex = children\.findIndex\([\s\S]*Number\.isFinite\(child\.durationHours\)/)
+assert.match(eventSource, /showSplitError\(message\)[\s\S]*invalidField\?\.scrollIntoView[\s\S]*invalidField\?\.focus\(\)/)
 assert.match(renderSource, /class="app-header-actions ml-auto flex flex-col items-end/)
 assert.match(renderSource, /class="header-utility-actions w-full flex items-center justify-end/)
 assert.match(renderSource, /\.header-utility-actions \{[\s\S]*justify-content: flex-end;/)
+assert.match(renderSource, /isNewTab \? `[\s\S]*data-view="day"[\s\S]*data-view="week"[\s\S]*data-view="month"/)
+assert.match(renderSource, /id="toggleFiltersBtn"[\s\S]*aria-controls="taskFilters"/)
+assert.match(renderSource, /class="\$\{isPopup \? 'popup-app-header ' : ''\}/)
+assert.match(renderSource, /\.popup-app-header \{[\s\S]*grid-template-columns: minmax\(0, 1fr\) auto;/)
+assert.match(renderSource, /\.popup-app-header \.header-utility-actions \{[\s\S]*grid-row: 1;[\s\S]*flex-wrap: nowrap;/)
+assert.match(renderSource, /\.popup-app-header \.view-nav \{[\s\S]*grid-row: 2;/)
+assert.match(renderSource, /id="taskFilters" class="\$\{isPopup \? 'hidden ' : ''\}/)
+assert.match(eventSource, /toggleFiltersBtn[\s\S]*classList\.toggle\('hidden'/)
+assert.match(renderSource, /isPopup \? '' : `<button id="statsToggleBtn"/)
+assert.match(renderSource, /class="task-row popup-task-row[\s\S]*task-more-menu[\s\S]*重新排期[\s\S]*拆分任务[\s\S]*task-edit[\s\S]*task-delete/)
+assert.match(renderSource, /\.task-more-popover \{[\s\S]*position: fixed;[\s\S]*max-height: calc\(100vh - 16px\);[\s\S]*visibility: hidden;/)
+assert.match(eventSource, /positionPopupTaskMenu[\s\S]*getBoundingClientRect\(\)[\s\S]*window\.innerWidth[\s\S]*window\.innerHeight/)
+assert.match(eventSource, /bindPopupTaskMenus[\s\S]*details\.task-more-menu[\s\S]*addEventListener\('toggle'/)
+assert.match(eventSource, /document\.addEventListener\('pointerdown', taskMenuDismissHandler\)/)
+assert.match(eventSource, /menus\.filter\(other => other !== menu\)\.forEach\(other => \{ other\.open = false \}\)/)
+assert.match(renderSource, /task\.noTimeLimit \? '安排时间' : '重新排期'/)
+assert.match(renderSource, /popup-replan-quick-dates[\s\S]*renderQuickDates\('\'\)/)
+assert.match(renderSource, /id="confirmReplanBtn" disabled[\s\S]*确认安排/)
+assert.match(eventSource, /syncReplanQuickDateSelection[\s\S]*popup-replan-quick-dates[\s\S]*replanDateInput\.addEventListener\('change'/)
+assert.match(eventSource, /replanSubmitting[\s\S]*不能安排到过去日期/)
+assert.match(renderSource, /id="closeReplanBtn"[\s\S]*关闭安排时间/)
+assert.match(renderSource, /id="replanModal"[^>]*tabindex="-1"/)
+assert.match(eventSource, /closeReplanBtn[\s\S]*replanModal[\s\S]*key === 'Escape'[\s\S]*closeReplanModal\(\)/)
+assert.match(entrySource, /pathname\.includes\('popup'\)[\s\S]*setState\(\{ currentView: 'focus' \}\)/)
+assert.match(prdSource, /Popup 精简验收标准/)
 assert.match(renderSource, /\.split-task-footer \{[\s\S]*justify-content: flex-end;/)
 assert.doesNotMatch(renderSource, /class="app-shell/)
 assert.doesNotMatch(renderSource, /class="filter-bar/)

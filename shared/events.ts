@@ -4,9 +4,73 @@ import { toggleTask as toggleTaskAction, toggleTaskOnDate, deleteTask as deleteT
 import { renderApp, renderQuickDates } from './render'
 import { downloadExportFile, importDataFromFile } from './storage'
 import { showToast } from './sync'
+import { bindTaskQuickDates, bindSplitQuickDates, createSubmissionGuard } from './quick-dates'
 
 let draggedTaskId: string | null = null
 let currentContainer: HTMLElement | null = null
+let taskMenuDismissHandler: ((event: PointerEvent) => void) | null = null
+
+const closePopupTaskMenus = (container: HTMLElement): void => {
+  container.querySelectorAll<HTMLDetailsElement>('details.task-more-menu[open]').forEach(menu => {
+    menu.open = false
+    const popover = menu.querySelector<HTMLElement>('.task-more-popover')
+    if (popover) popover.style.visibility = 'hidden'
+  })
+}
+
+const positionPopupTaskMenu = (menu: HTMLDetailsElement): void => {
+  const trigger = menu.querySelector<HTMLElement>('.task-more-trigger')
+  const popover = menu.querySelector<HTMLElement>('.task-more-popover')
+  if (!trigger || !popover) return
+
+  // Fixed positioning lets the menu escape rounded list panels with
+  // overflow:hidden. Measure after opening, then keep it inside the Popup
+  // viewport for first, middle, last, and edge-adjacent rows.
+  popover.style.position = 'fixed'
+  popover.style.visibility = 'hidden'
+  popover.style.left = '0px'
+  popover.style.top = '0px'
+  const triggerRect = trigger.getBoundingClientRect()
+  const menuRect = popover.getBoundingClientRect()
+  const margin = 8
+  const gap = 4
+  const maxLeft = Math.max(margin, window.innerWidth - menuRect.width - margin)
+  const left = Math.min(Math.max(margin, triggerRect.right - menuRect.width), maxLeft)
+  const fitsBelow = triggerRect.bottom + gap + menuRect.height <= window.innerHeight - margin
+  const preferredTop = fitsBelow
+    ? triggerRect.bottom + gap
+    : triggerRect.top - menuRect.height - gap
+  const maxTop = Math.max(margin, window.innerHeight - menuRect.height - margin)
+  const top = Math.min(Math.max(margin, preferredTop), maxTop)
+  popover.style.left = `${Math.round(left)}px`
+  popover.style.top = `${Math.round(top)}px`
+  popover.style.visibility = 'visible'
+}
+
+const bindPopupTaskMenus = (container: HTMLElement): void => {
+  if (!window.location.pathname.includes('popup')) return
+
+  taskMenuDismissHandler && document.removeEventListener('pointerdown', taskMenuDismissHandler)
+  taskMenuDismissHandler = (event: PointerEvent) => {
+    const target = event.target as Node | null
+    if (target && (target as Element).closest?.('.task-more-menu')) return
+    closePopupTaskMenus(container)
+  }
+  document.addEventListener('pointerdown', taskMenuDismissHandler)
+
+  const menus = [...container.querySelectorAll<HTMLDetailsElement>('details.task-more-menu')]
+  menus.forEach(menu => {
+    menu.addEventListener('toggle', () => {
+      const popover = menu.querySelector<HTMLElement>('.task-more-popover')
+      if (!menu.open) {
+        if (popover) popover.style.visibility = 'hidden'
+        return
+      }
+      menus.filter(other => other !== menu).forEach(other => { other.open = false })
+      positionPopupTaskMenu(menu)
+    })
+  })
+}
 
 // 同步面板内联反馈
 function showSyncFeedback(container: HTMLElement, message: string, type: 'success' | 'error' | 'info' = 'success') {
@@ -45,6 +109,7 @@ function reRender() {
 
 export const attachEventListeners = (container: HTMLElement): void => {
   currentContainer = container
+  bindPopupTaskMenus(container)
   
   // 添加任务按钮
   container.querySelector('#addTaskBtn')?.addEventListener('click', () => {
@@ -66,6 +131,16 @@ export const attachEventListeners = (container: HTMLElement): void => {
     setLocalSettings({ darkMode: !darkMode })
     await persistState()
     reRender()
+  })
+
+  container.querySelector('#toggleFiltersBtn')?.addEventListener('click', (e) => {
+    const button = e.currentTarget as HTMLButtonElement
+    const filters = container.querySelector('#taskFilters') as HTMLElement | null
+    if (!filters) return
+    const expanded = filters.classList.contains('hidden')
+    filters.classList.toggle('hidden', !expanded)
+    button.setAttribute('aria-expanded', String(expanded))
+    button.title = expanded ? '收起筛选' : '展开筛选'
   })
 
   // 视图切换
@@ -400,11 +475,59 @@ export const attachEventListeners = (container: HTMLElement): void => {
     reRender()
   }
   container.querySelector('#cancelReplanBtn')?.addEventListener('click', closeReplanModal)
+  container.querySelector('#closeReplanBtn')?.addEventListener('click', closeReplanModal)
+  container.querySelector('#replanModal')?.addEventListener('keydown', (e) => {
+    if ((e as KeyboardEvent).key === 'Escape') {
+      e.preventDefault()
+      closeReplanModal()
+    }
+  })
+  const popupReplan = window.location.pathname.includes('popup')
+  let replanSubmitting = false
+  const replanDateInput = container.querySelector<HTMLInputElement>('#replanDate')
+  const replanConfirmButton = container.querySelector<HTMLButtonElement>('#confirmReplanBtn')
+  const replanError = container.querySelector<HTMLElement>('#replanError')
+  if (popupReplan && getState().replanningTaskId) {
+    container.querySelector<HTMLElement>('#replanModal')?.focus()
+  }
+  const setReplanError = (message: string) => {
+    if (replanError) replanError.textContent = message
+  }
+  const syncReplanQuickDateSelection = (date: string) => {
+    container.querySelectorAll<HTMLElement>('.popup-replan-quick-dates .quick-date-btn').forEach(button => {
+      const selected = button.dataset.date === date
+      button.classList.toggle('selected', selected)
+      button.setAttribute('aria-pressed', String(selected))
+    })
+    if (replanConfirmButton) replanConfirmButton.disabled = !date || date < formatDate(new Date())
+  }
+  if (popupReplan && replanDateInput) {
+    container.querySelectorAll<HTMLElement>('.popup-replan-quick-dates .quick-date-btn').forEach(button => {
+      button.addEventListener('click', () => {
+        const date = button.dataset.date || ''
+        replanDateInput.value = date
+        syncReplanQuickDateSelection(date)
+        setReplanError('')
+      })
+    })
+    replanDateInput.addEventListener('change', () => {
+      const date = replanDateInput.value
+      const today = formatDate(new Date())
+      syncReplanQuickDateSelection(date)
+      setReplanError(date && date < today ? '不能安排到过去日期。' : '')
+    })
+  }
   container.querySelector('#replanForm')?.addEventListener('submit', async (e) => {
     e.preventDefault()
     const { replanningTaskId } = getState()
-    if (!replanningTaskId) return
+    if (!replanningTaskId || replanSubmitting) return
     const date = new FormData(e.target as HTMLFormElement).get('replanDate') as string
+    if (popupReplan && (!date || date < formatDate(new Date()))) {
+      setReplanError(!date ? '请选择一个计划日期。' : '不能安排到过去日期。')
+      return
+    }
+    replanSubmitting = true
+    if (replanConfirmButton) replanConfirmButton.disabled = true
     replanTask(replanningTaskId, date)
     setState({ replanningTaskId: null })
     await persistState()
@@ -464,34 +587,8 @@ export const attachEventListeners = (container: HTMLElement): void => {
     input.value = next.toFixed(1)
   })
 
-  // 子任务快捷日期：点击 7 天按钮设置日期；手动改日期同步高亮
-  splitTaskModal?.addEventListener('click', (e) => {
-    const target = e.target as HTMLElement
-    const btn = target.closest('.split-quick-dates .quick-date-btn') as HTMLElement | null
-    if (!btn) return
-    const row = btn.closest('.split-child-row') as HTMLElement | null
-    const date = btn.dataset.date
-    const input = row?.querySelector('.split-child-date') as HTMLInputElement | null
-    if (!row || !date || !input) return
-    input.value = date
-    row.querySelectorAll('.quick-date-btn').forEach(b => {
-      const selected = (b as HTMLElement).dataset.date === date
-      b.classList.toggle('selected', selected)
-      b.setAttribute('aria-pressed', String(selected))
-    })
-  })
-  splitTaskModal?.addEventListener('change', (e) => {
-    const target = e.target as HTMLElement
-    if (!target.classList.contains('split-child-date')) return
-    const row = target.closest('.split-child-row') as HTMLElement | null
-    if (!row) return
-    const val = (target as HTMLInputElement).value
-    row.querySelectorAll('.quick-date-btn').forEach(b => {
-      const selected = (b as HTMLElement).dataset.date === val
-      b.classList.toggle('selected', selected)
-      b.setAttribute('aria-pressed', String(selected))
-    })
-  })
+  // 子任务快捷日期：严格限定在拆分弹窗及其各自行内
+  if (splitTaskModal) bindSplitQuickDates(splitTaskModal)
 
   container.querySelector('#addSplitChildBtn')?.addEventListener('click', () => {
     const list = container.querySelector('#splitChildren')
@@ -522,24 +619,59 @@ export const attachEventListeners = (container: HTMLElement): void => {
     row.querySelector<HTMLInputElement>('.split-child-title')?.focus()
   })
 
+  const canSubmitSplit = createSubmissionGuard()
   container.querySelector('#splitTaskForm')?.addEventListener('submit', async (e) => {
     e.preventDefault()
     const { splittingTaskId } = getState()
     if (!splittingTaskId) return
-    const children = [...container.querySelectorAll<HTMLDivElement>('.split-child-row')].map(row => ({
-      id: row.dataset.childId,
-      title: (row.querySelector('.split-child-title') as HTMLInputElement).value.trim(),
-      duration: Math.round(Number.parseFloat((row.querySelector('.split-child-duration') as HTMLInputElement).value) * 60),
-      dueDate: (row.querySelector('.split-child-date') as HTMLInputElement).value
-    }))
-    if (children.length < 2 || children.some(child => !child.title || !child.dueDate || child.duration <= 0)) {
-      showSplitError('请完整填写至少两个子任务。')
+    const rows = [...container.querySelectorAll<HTMLDivElement>('.split-child-row')]
+    const children = rows.map(row => {
+      const durationHours = Number.parseFloat((row.querySelector('.split-child-duration') as HTMLInputElement).value)
+      return {
+        id: row.dataset.childId,
+        title: (row.querySelector('.split-child-title') as HTMLInputElement).value.trim(),
+        durationHours,
+        duration: Math.round(durationHours * 60),
+        dueDate: (row.querySelector('.split-child-date') as HTMLInputElement).value
+      }
+    })
+    const invalidChildIndex = children.findIndex(child =>
+      !child.title ||
+      !child.dueDate ||
+      !Number.isFinite(child.durationHours) ||
+      child.durationHours < 0.5 ||
+      child.durationHours > 24 ||
+      Math.abs(child.durationHours * 2 - Math.round(child.durationHours * 2)) > Number.EPSILON
+    )
+    if (children.length < 2) {
+      showSplitError('至少保留两个子任务。')
       return
     }
+    if (invalidChildIndex !== -1) {
+      const invalidChild = children[invalidChildIndex]
+      const invalidRow = rows[invalidChildIndex]
+      const invalidField = !invalidChild?.title
+        ? invalidRow?.querySelector<HTMLInputElement>('.split-child-title')
+        : !invalidChild?.dueDate
+          ? invalidRow?.querySelector<HTMLInputElement>('.split-child-date')
+          : invalidRow?.querySelector<HTMLInputElement>('.split-child-duration')
+      const message = !invalidChild?.title
+        ? `请填写子任务 ${invalidChildIndex + 1} 的标题。`
+        : !invalidChild.dueDate
+          ? `请为子任务 ${invalidChildIndex + 1} 选择计划日期，或先在任务列表中安排它。`
+          : `子任务 ${invalidChildIndex + 1} 的预计时间需为 0.5 至 24 小时，并以 0.5 小时递增。`
+      showSplitError(message)
+      invalidField?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      invalidField?.focus()
+      return
+    }
+    if (!canSubmitSplit()) return
     if (!splitTask(splittingTaskId, children)) {
       showSplitError('该任务当前无法拆分，请确认它不是循环任务。')
       return
     }
+    const submitButton = (e.target as HTMLFormElement).querySelector<HTMLButtonElement>('button[type="submit"]')
+    if (submitButton) submitButton.disabled = true
     setState({ splittingTaskId: null })
     await persistState()
     reRender()
@@ -612,33 +744,9 @@ export const attachEventListeners = (container: HTMLElement): void => {
     }
   })
 
-  // 快捷日期选择
-  const refreshQuickDates = () => {
-    const dateInput = container.querySelector('input[name="dueDate"]') as HTMLInputElement
-    if (!dateInput) return
-    const val = dateInput.value
-    container.querySelectorAll('.quick-date-btn').forEach(btn => {
-      const date = (btn as HTMLElement).dataset.date
-      const isSelected = date === val
-      btn.classList.toggle('selected', isSelected)
-      btn.setAttribute('aria-pressed', String(isSelected))
-    })
-  }
-
-  container.querySelectorAll('.quick-date-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const date = (btn as HTMLElement).dataset.date
-      if (!date) return
-      const dateInput = container.querySelector('input[name="dueDate"]') as HTMLInputElement
-      if (dateInput) {
-        dateInput.value = date
-        refreshQuickDates()
-      }
-    })
-  })
-
-  // 手动改日期输入框 → 同步快捷按钮高亮
-  container.querySelector('input[name="dueDate"]')?.addEventListener('change', refreshQuickDates)
+  // 快捷日期选择（仅任务新增/编辑弹窗，避免与拆分、重新排期弹窗串扰）
+  const taskModal = container.querySelector('#taskModal') as HTMLElement | null
+  const refreshQuickDates = taskModal ? bindTaskQuickDates(taskModal) : () => {}
   // 任务弹窗打开时同步一次
   container.querySelector('#addTaskBtn')?.addEventListener('click', () => {
     setTimeout(refreshQuickDates, 0)

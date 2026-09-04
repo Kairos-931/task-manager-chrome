@@ -34,6 +34,8 @@ var TaskManager = (() => {
     getDefaultData: () => getDefaultData,
     getNextLocalSettingsUpdatedAt: () => getNextLocalSettingsUpdatedAt,
     getStorageUsage: () => getStorageUsage,
+    getSyncDeviceId: () => getSyncDeviceId,
+    getSyncDeviceIdAsync: () => getSyncDeviceIdAsync,
     importDataFromFile: () => importDataFromFile,
     isCloudConfigured: () => isCloudConfigured,
     listBackups: () => listBackups,
@@ -46,7 +48,7 @@ var TaskManager = (() => {
     syncToCloud: () => syncToCloud,
     validateImportData: () => validateImportData
   });
-  var STORAGE_KEY, LOCAL_BACKUP_KEY, generateId, DEFAULT_CATEGORY_DEFINITIONS, LEGACY_STARRED_CATEGORY_ID, defaultCategoryByName, createDefaultCategories, defaultCategories, getDefaultData, loadFromLocal, saveToLocal, dedupeCategories, CLOUD_SYNC_SETTINGS_KEY, getCloudSettings, CLOUD_BASE_AT_KEY, getCloudBaseAt, setCloudBaseAt, syncToCloud, syncFromCloud, normalizeStorageData, INCREMENTAL_CURSOR_KEY, INCREMENTAL_DEVICE_KEY, INCREMENTAL_SHADOW_KEY, INCREMENTAL_CLOCK_KEY, OUTGOING_SYNC_BATCH, lastSyncTimestamp, syncQueue, getNextLocalSettingsUpdatedAt, recordKey, nextSyncTimestamp, cloneStorageData, enqueueSync, getLocalValue, setLocalValues, getSyncDeviceId, getSyncShadow, getSettingsPayload, samePayload, buildCurrentRecords, buildLocalChanges, applyRemoteChanges, isVirginDefaultData, syncIncrementallyNow, syncIncrementally, isCloudConfigured, loadData, fixRecurringTasks, isTaskMatchRepeat, saveData, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
+  var STORAGE_KEY, LOCAL_BACKUP_KEY, generateId, DEFAULT_CATEGORY_DEFINITIONS, LEGACY_STARRED_CATEGORY_ID, defaultCategoryByName, createDefaultCategories, defaultCategories, getDefaultData, loadFromLocal, saveToLocal, dedupeCategories, CLOUD_SYNC_SETTINGS_KEY, getCloudSettings, CLOUD_BASE_AT_KEY, getCloudBaseAt, setCloudBaseAt, syncToCloud, syncFromCloud, normalizeStorageData, INCREMENTAL_CURSOR_KEY, INCREMENTAL_DEVICE_KEY, INCREMENTAL_SHADOW_KEY, INCREMENTAL_CLOCK_KEY, OUTGOING_SYNC_BATCH, lastSyncTimestamp, syncQueue, getNextLocalSettingsUpdatedAt, recordKey, nextSyncTimestamp, cloneStorageData, enqueueSync, getLocalValue, setLocalValues, cachedDeviceId, getSyncDeviceIdAsync, getSyncDeviceId, getSyncShadow, getSettingsPayload, samePayload, buildCurrentRecords, buildLocalChanges, applyRemoteChanges, isVirginDefaultData, syncIncrementallyNow, syncIncrementally, isCloudConfigured, isRecoverableNetworkError, warnForSyncFailure, loadData, fixRecurringTasks, isTaskMatchRepeat, saveData, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
   var init_storage = __esm({
     "shared/storage.ts"() {
       "use strict";
@@ -281,14 +283,21 @@ var TaskManager = (() => {
           });
         });
       };
-      getSyncDeviceId = async () => {
+      cachedDeviceId = null;
+      getSyncDeviceIdAsync = async () => {
+        if (cachedDeviceId)
+          return cachedDeviceId;
         const existing = await getLocalValue(INCREMENTAL_DEVICE_KEY, "");
-        if (existing)
+        if (existing) {
+          cachedDeviceId = existing;
           return existing;
+        }
         const id = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : generateId();
         await setLocalValues({ [INCREMENTAL_DEVICE_KEY]: id });
+        cachedDeviceId = id;
         return id;
       };
+      getSyncDeviceId = getSyncDeviceIdAsync;
       getSyncShadow = async () => {
         const shadow = await getLocalValue(INCREMENTAL_SHADOW_KEY, null);
         return shadow && shadow.records ? shadow : { records: {} };
@@ -363,11 +372,12 @@ var TaskManager = (() => {
         }
         return changes;
       };
-      applyRemoteChanges = (data, changes) => {
+      applyRemoteChanges = (data, changes, options = {}) => {
+        const applicableChanges = options.ignoreDeviceId ? changes.filter((change) => change.sourceDevice !== options.ignoreDeviceId) : changes;
         const tasks = new Map(data.tasks.map((task) => [task.id, task]));
         const categories = new Map(data.categories.map((category) => [category.id, category]));
         let settings = { ...data };
-        for (const change of changes) {
+        for (const change of applicableChanges) {
           if (change.type === "task") {
             const local = tasks.get(change.id);
             if (local && local.updatedAt > change.updatedAt)
@@ -423,6 +433,7 @@ var TaskManager = (() => {
           const firstSync = initialCursor === 0 && Object.keys(shadow.records).length === 0;
           let pending = firstSync && isVirginDefaultData(mergedData) ? [] : buildLocalChanges(buildCurrentRecords(mergedData, shadow), shadow);
           let hasMore = true;
+          let sawForeignChanges = false;
           const receivedChanges = [];
           while (pending.length > 0 || hasMore) {
             const outgoing = pending.splice(0, OUTGOING_SYNC_BATCH);
@@ -441,8 +452,11 @@ var TaskManager = (() => {
             const result = await resp.json();
             const remoteChanges = Array.isArray(result.changes) ? result.changes : [];
             const rejectedChanges = Array.isArray(result.rejectedChanges) ? result.rejectedChanges : [];
-            receivedChanges.push(...remoteChanges, ...rejectedChanges);
-            mergedData = applyRemoteChanges(mergedData, [...remoteChanges, ...rejectedChanges]);
+            const foreignChanges = remoteChanges.filter((change) => change.sourceDevice !== deviceId);
+            if (foreignChanges.length > 0)
+              sawForeignChanges = true;
+            receivedChanges.push(...foreignChanges, ...rejectedChanges);
+            mergedData = applyRemoteChanges(mergedData, [...foreignChanges, ...rejectedChanges]);
             cursor = Number.isInteger(result.cursor) ? result.cursor : cursor;
             hasMore = result.hasMore === true;
           }
@@ -457,7 +471,7 @@ var TaskManager = (() => {
               [INCREMENTAL_CLOCK_KEY]: lastSyncTimestamp
             })
           ]);
-          return { success: true, data: finalData };
+          return { success: true, data: finalData, hasForeignChanges: sawForeignChanges };
         } catch (e) {
           return { success: false, error: String(e) };
         }
@@ -466,6 +480,16 @@ var TaskManager = (() => {
       isCloudConfigured = async () => {
         const settings = await getCloudSettings();
         return !!(settings.apiUrl && settings.apiToken);
+      };
+      isRecoverableNetworkError = (error) => {
+        if (!error)
+          return false;
+        return /(?:TypeError:\s*)?Failed to fetch|NetworkError when attempting to fetch resource|Load failed/i.test(error);
+      };
+      warnForSyncFailure = (error) => {
+        if (!error || error === "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" || isRecoverableNetworkError(error))
+          return;
+        console.warn("[TaskMaster] incremental sync failed:", error);
       };
       loadData = async () => {
         const localBackup = await loadFromLocal();
@@ -533,12 +557,14 @@ var TaskManager = (() => {
         localData.tasks = fixRecurringTasks(localData.tasks);
         await saveToLocal(localData);
         syncIncrementally(localData).then((result) => {
-          if (result.success && result.data)
-            onRemoteData?.(result.data);
-          else if (result.error !== "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E")
-            console.warn("[TaskMaster] incremental sync failed:", result.error);
+          if (result.success && result.data) {
+            getSyncDeviceIdAsync().then((deviceId) => {
+              onRemoteData?.(result.data, { ignoreDeviceId: deviceId });
+            });
+          } else
+            warnForSyncFailure(result.error);
           onSyncResult?.(result);
-        }).catch((e) => console.warn("[TaskMaster] incremental sync failed:", e));
+        }).catch((e) => warnForSyncFailure(String(e)));
       };
       BACKUP_PREFIX = "tm_auto_backup_";
       MAX_BACKUPS = 3;
@@ -1061,7 +1087,7 @@ var TaskManager = (() => {
         const c = state.categories.find((x) => x.id === id);
         return c ? c.name : "";
       };
-      applyStorageData = (data) => {
+      applyStorageData = (data, _options) => {
         const activeEditingTask = state.editingTask;
         const catMap = /* @__PURE__ */ new Map();
         const cats = data.categories || defaultCategories;
@@ -1088,10 +1114,12 @@ var TaskManager = (() => {
       loadState = async () => {
         const data = await loadData();
         applyStorageData(data);
+        const deviceId = await getSyncDeviceIdAsync();
         syncIncrementally(data).then((result) => {
           if (result.success && result.data) {
-            applyStorageData(result.data);
-            markRemoteUpdated();
+            applyStorageData(result.data, { ignoreDeviceId: deviceId });
+            if (result.hasForeignChanges)
+              markRemoteUpdated();
           }
         }).catch(() => {
         });
@@ -1110,9 +1138,9 @@ var TaskManager = (() => {
             weeklyGoalMinutes: state.weeklyGoalMinutes,
             weeklyGoalAnchor: state.weeklyGoalAnchor,
             syncSettingsUpdatedAt: state.syncSettingsUpdatedAt
-          }, (remoteData) => {
-            applyStorageData(remoteData);
-            markRemoteUpdated();
+          }, async (remoteData, options) => {
+            const deviceId = options?.ignoreDeviceId ?? await getSyncDeviceIdAsync();
+            applyStorageData(remoteData, { ignoreDeviceId: deviceId });
           }, (result) => {
             if (result.success)
               markCloudSynced();
@@ -1698,31 +1726,34 @@ var TaskManager = (() => {
   };
   var renderStats = () => {
     const stats = getStats();
+    const isPopup = window.location.pathname.includes("popup");
     return `
     <div id="statsRow" class="stats-row">
       <div class="stats-row-bar">
         <div class="stats-row-items">
-          <span class="text-gray-500">\u5F85\u5B8C\u6210\uFF1A</span><span class="font-medium text-orange-500">${formatHours(stats.pending)}</span>
-          <span class="text-gray-300 dark:text-gray-600">|</span>
-          <span class="text-gray-500">\u4ECA\u65E5\uFF1A</span><span class="font-medium">${stats.todayDone}/${stats.todayTotal}</span>
-          ${stats.overdueCount > 0 ? `<span class="text-red-500 font-medium">${stats.overdueCount}\u9879\u8FC7\u671F</span>` : ""}
+          <span><span class="text-gray-500">\u5F85\u5B8C\u6210</span> <span class="font-medium text-orange-500">${formatHours(stats.pending)}</span></span>
+          <span class="text-gray-300 dark:text-gray-600">\xB7</span>
+          <span><span class="text-gray-500">\u4ECA\u65E5</span> <span class="font-medium">${stats.todayDone}/${stats.todayTotal}</span></span>
+          <span class="text-gray-300 dark:text-gray-600">\xB7</span>
+          <span class="${stats.overdueCount > 0 ? "text-red-500 font-medium" : "text-gray-500"}">${stats.overdueCount} \u9879\u8FC7\u671F</span>
         </div>
-        <button id="statsToggleBtn" class="stats-toggle-btn" title="\u6BCF\u5468\u8282\u594F">
+        ${isPopup ? "" : `<button id="statsToggleBtn" class="stats-toggle-btn" title="\u6BCF\u5468\u8282\u594F">
           <span id="statsChevron" class="stats-chevron">&#x25BE;</span>
-        </button>
+        </button>`}
       </div>
-      <div id="weeklyGoalWrapper" style="display:none;">
+      ${isPopup ? "" : `<div id="weeklyGoalWrapper" style="display:none;">
         ${renderWeeklyGoalCard()}
-      </div>
+      </div>`}
     </div>
   `;
   };
   var renderHeader = () => {
     const { currentView, darkMode } = getState();
     const isNewTab = window.location.pathname.includes("newtab");
+    const isPopup = !isNewTab;
     return `
-    <header class="flex items-start justify-between mb-4 flex-wrap gap-3">
-      <div class="flex items-center gap-3">
+    <header class="${isPopup ? "popup-app-header " : ""}flex items-start justify-between mb-4 flex-wrap gap-3">
+      <div class="header-brand flex items-center gap-3">
         <h1 class="text-xl font-semibold">\u4EFB\u52A1\u7BA1\u7406</h1>
         <button id="openFullPage" class="px-2 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition text-sm" title="\u65B0\u6807\u7B7E\u9875\u6253\u5F00">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
@@ -1733,11 +1764,16 @@ var TaskManager = (() => {
           <button data-view="focus" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === "focus" ? "bg-white dark:bg-gray-700 shadow" : ""}">\u4ECA\u65E5\u805A\u7126</button>
           <button data-view="pool" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === "pool" ? "bg-white dark:bg-gray-700 shadow" : ""}">\u4EFB\u52A1\u6C60</button>
           <button data-view="list" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === "list" ? "bg-white dark:bg-gray-700 shadow" : ""}">\u5168\u90E8\u4EFB\u52A1</button>
+          ${isNewTab ? `
           <button data-view="day" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === "day" ? "bg-white dark:bg-gray-700 shadow" : ""}">\u65E5</button>
           <button data-view="week" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === "week" ? "bg-white dark:bg-gray-700 shadow" : ""}">\u5468</button>
           <button data-view="month" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === "month" ? "bg-white dark:bg-gray-700 shadow" : ""}">\u6708</button>
+          ` : ""}
         </div>
         <div class="header-utility-actions w-full flex items-center justify-end gap-2 flex-wrap">
+        ${isNewTab ? "" : `<button id="toggleFiltersBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="\u5C55\u5F00\u7B5B\u9009" aria-expanded="false" aria-controls="taskFilters">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 01.8 1.6L14 13.67V19a1 1 0 01-.45.83l-4 2.67A1 1 0 018 21.67v-8L3.2 4.6A1 1 0 013 4z"/></svg>
+        </button>`}
         <button id="darkModeBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="\u5207\u6362\u6DF1\u8272\u6A21\u5F0F">
           ${darkMode ? '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>' : '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>'}
         </button>
@@ -1759,8 +1795,9 @@ var TaskManager = (() => {
   };
   var renderFilters = () => {
     const { hideCompleted, hideOverdue, filterPriority, filterCategory, categories = [] } = getState();
+    const isPopup = window.location.pathname.includes("popup");
     return `
-    <div class="flex flex-wrap gap-3 p-3 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 mb-4 items-center text-sm">
+    <div id="taskFilters" class="${isPopup ? "hidden " : ""}flex flex-wrap gap-3 p-3 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 mb-4 items-center text-sm">
       <div class="flex items-center gap-1">
         <span class="text-gray-500">\u4F18\u5148\u7EA7</span>
         <select id="filterPriority" class="px-2 py-1 border dark:border-gray-600 rounded bg-white dark:bg-gray-700 dark:text-white text-sm">
@@ -1793,6 +1830,32 @@ var TaskManager = (() => {
     const overdue = !task.noTimeLimit && isOverdue(task.dueDate, task.completed);
     const today = formatDate(/* @__PURE__ */ new Date());
     const parent = task.parentId ? getState().tasks.find((item) => item.id === task.parentId) : void 0;
+    const isPopup = window.location.pathname.includes("popup");
+    if (task.isParent && isPopup) {
+      const progress = getParentTaskProgress(task);
+      return `
+      <div class="task-row popup-task-row flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${task.completed ? "opacity-60" : ""}" data-task-id="${task.id}">
+        <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${task.completed ? "bg-green-500 border-green-500" : "border-gray-300 dark:border-gray-500"} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" title="${task.completed ? "\u6807\u8BB0\u4E3A\u672A\u5B8C\u6210" : "\u6807\u8BB0\u4E3A\u5DF2\u5B8C\u6210\uFF08\u5B50\u4EFB\u52A1\u4E00\u5E76\u5B8C\u6210\uFF09"}">
+          ${task.completed ? '<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ""}
+        </button>
+        <div class="w-1.5 h-8 rounded ${getPriorityColor(task.priority)} flex-shrink-0" aria-hidden="true"></div>
+        <div class="task-main flex-1 min-w-0">
+          <div class="font-medium truncate ${task.completed ? "line-through text-gray-400" : ""}">${escapeHtml(task.title)}</div>
+          <div class="mt-0.5 text-xs text-gray-400">\u7236\u4EFB\u52A1 \xB7 ${progress.completed}/${progress.total} \u4E2A\u5B50\u4EFB\u52A1\u5B8C\u6210</div>
+        </div>
+        <details class="task-more-menu flex-shrink-0">
+          <summary class="task-more-trigger" title="\u66F4\u591A\u64CD\u4F5C" aria-label="${escapeHtml(task.title)}\u7684\u66F4\u591A\u64CD\u4F5C">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+          </summary>
+          <div class="task-more-popover">
+            <button class="task-split" data-id="${task.id}">\u6DFB\u52A0\u5B50\u4EFB\u52A1</button>
+            <button class="task-edit" data-id="${task.id}">\u7F16\u8F91</button>
+            <button class="task-delete task-more-danger" data-id="${task.id}">\u5220\u9664</button>
+          </div>
+        </details>
+      </div>
+    `;
+    }
     if (task.isParent) {
       const progress = getParentTaskProgress(task);
       const children = getFilteredTasks().filter((child) => child.parentId === task.id);
@@ -1826,6 +1889,35 @@ var TaskManager = (() => {
           </button>
         </div>
         ${children.length > 0 ? `<div class="mt-3 ml-5 border-l-2 border-violet-100 dark:border-violet-900/40">${children.map((child) => renderTaskItem(child)).join("")}</div>` : '<p class="mt-3 ml-5 text-xs text-gray-400">\u6682\u65E0\u5B50\u4EFB\u52A1</p>'}
+      </div>
+    `;
+    }
+    if (isPopup) {
+      return `
+      <div class="task-row popup-task-row flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${task.completed ? "opacity-60" : ""} ${overdue && !task.completed ? "bg-red-50/50 dark:bg-red-900/10" : ""}" data-task-id="${task.id}" draggable="true">
+        <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${task.completed ? "bg-green-500 border-green-500" : task.noTimeLimit ? "border-dashed border-gray-400" : "border-gray-300 dark:border-gray-500"} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" title="${task.completed ? "\u6807\u8BB0\u4E3A\u672A\u5B8C\u6210" : "\u6807\u8BB0\u4E3A\u5DF2\u5B8C\u6210"}">
+          ${task.completed ? '<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ""}
+        </button>
+        <div class="w-1.5 h-8 rounded ${getPriorityColor(task.priority)} flex-shrink-0" aria-hidden="true"></div>
+        <div class="task-main flex-1 min-w-0">
+          <div class="font-medium truncate ${task.completed ? "line-through text-gray-400" : ""}">${escapeHtml(task.title)}</div>
+          <div class="flex items-center gap-2 mt-0.5 text-xs text-gray-400">
+            <span class="${overdue ? "text-red-500 font-medium" : ""}">${task.noTimeLimit ? "\u4EFB\u52A1\u6C60" : getDateLabel(task.dueDate)}</span>
+            ${task.duration > 0 ? `<span>\xB7 ${formatHours(task.duration)}</span>` : ""}
+          </div>
+        </div>
+        <details class="task-more-menu flex-shrink-0">
+          <summary class="task-more-trigger" title="\u66F4\u591A\u64CD\u4F5C" aria-label="${escapeHtml(task.title)}\u7684\u66F4\u591A\u64CD\u4F5C">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+          </summary>
+          <div class="task-more-popover">
+            ${task.repeatType === "none" && !task.noTimeLimit && !isTaskDueOnDate(task, today) ? `<button class="task-focus-toggle" data-id="${task.id}">\u52A0\u5165\u4ECA\u5929</button>` : ""}
+            ${task.repeatType === "none" ? `<button class="overdue-replan" data-id="${task.id}">${task.noTimeLimit ? "\u5B89\u6392\u65F6\u95F4" : "\u91CD\u65B0\u6392\u671F"}</button>` : ""}
+            ${task.repeatType === "none" ? `<button class="task-split" data-id="${task.id}">\u62C6\u5206\u4EFB\u52A1</button>` : ""}
+            <button class="task-edit" data-id="${task.id}">\u7F16\u8F91</button>
+            <button class="task-delete task-more-danger" data-id="${task.id}">\u5220\u9664</button>
+          </div>
+        </details>
       </div>
     `;
     }
@@ -1925,6 +2017,8 @@ var TaskManager = (() => {
   `;
   };
   var renderPoolTaskItem = (task) => {
+    if (window.location.pathname.includes("popup"))
+      return renderTaskItem(task);
     const category = getState().categories.find((item) => item.id === task.category);
     const parent = task.parentId ? getState().tasks.find((item) => item.id === task.parentId) : void 0;
     return `
@@ -2457,6 +2551,36 @@ var TaskManager = (() => {
     const { replanningTaskId, tasks } = getState();
     const task = tasks.find((item) => item.id === replanningTaskId);
     const today = formatDate(/* @__PURE__ */ new Date());
+    const isPopup = window.location.pathname.includes("popup");
+    if (isPopup) {
+      return `
+      <div id="replanModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 ${task ? "" : "hidden"}" tabindex="-1">
+        <div class="popup-replan-panel bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[92%] max-w-sm p-4">
+          <div class="flex items-center justify-between gap-3">
+            <h2 class="text-lg font-semibold">\u5B89\u6392\u65F6\u95F4</h2>
+            <button type="button" id="closeReplanBtn" class="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded" aria-label="\u5173\u95ED\u5B89\u6392\u65F6\u95F4">\xD7</button>
+          </div>
+          <p class="mt-1 text-sm text-gray-500 truncate">${task ? escapeHtml(task.title) : ""}</p>
+          <form id="replanForm" class="mt-4 space-y-3" novalidate>
+            <div>
+              <label class="block text-sm font-medium mb-2">\u9009\u62E9\u8BA1\u5212\u65E5\u671F</label>
+              <div class="popup-replan-quick-dates">${renderQuickDates("")}</div>
+              <div class="mt-3">
+                <label class="block text-xs text-gray-500 mb-1" for="replanDate">7 \u5929\u4EE5\u5916\u7684\u65E5\u671F</label>
+                <input type="date" id="replanDate" name="replanDate" value="" min="${today}" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700">
+              </div>
+              ${task?.hardDeadline ? `<p class="mt-2 text-xs text-red-500">\u786C\u622A\u6B62\u4ECD\u4E3A ${task.hardDeadline}\uFF0C\u4E0D\u4F1A\u88AB\u4FEE\u6539\u3002</p>` : ""}
+              <p id="replanError" class="mt-2 text-xs text-red-500" role="alert" aria-live="polite"></p>
+            </div>
+            <div class="flex justify-end gap-2">
+              <button type="button" id="cancelReplanBtn" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg">\u53D6\u6D88</button>
+              <button type="submit" id="confirmReplanBtn" disabled class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed">\u786E\u8BA4\u5B89\u6392</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+    }
     return `
     <div id="replanModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 ${task ? "" : "hidden"}">
       <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[90%] max-w-md p-5">
@@ -2495,7 +2619,7 @@ var TaskManager = (() => {
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
-        <form id="splitTaskForm" class="split-task-form space-y-4">
+        <form id="splitTaskForm" class="split-task-form space-y-4" novalidate>
           <div id="splitChildren" class="split-children space-y-2" style="max-height:min(48svh,460px)">
             ${rowsToRender.map((child, index) => renderSplitChildRow(index, child, child ? child.dueDate : today)).join("")}
           </div>
@@ -3554,9 +3678,79 @@ var TaskManager = (() => {
       }
 
       .view-nav { scrollbar-width: thin; }
+      .popup-app-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        column-gap: 8px;
+        row-gap: 8px;
+      }
+      .popup-app-header .header-brand { grid-column: 1; grid-row: 1; }
+      .popup-app-header .app-header-actions { display: contents; }
+      .popup-app-header .header-utility-actions {
+        grid-column: 2;
+        grid-row: 1;
+        width: auto;
+        flex-wrap: nowrap;
+        gap: 4px;
+      }
+      .popup-app-header .view-nav {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        width: 100%;
+      }
+      .task-more-menu { position: relative; }
+      .task-more-trigger {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        color: #6b7280;
+        cursor: pointer;
+        list-style: none;
+      }
+      .task-more-trigger::-webkit-details-marker { display: none; }
+      .task-more-trigger:hover { background: #f3f4f6; }
+      .dark .task-more-trigger:hover { background: #374151; }
+      .task-more-popover {
+        position: fixed;
+        z-index: 50;
+        top: 0;
+        left: 0;
+        width: min(160px, calc(100vw - 16px));
+        max-height: calc(100vh - 16px);
+        overflow-y: auto;
+        padding: 4px;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        background: white;
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
+        visibility: hidden;
+      }
+      .dark .task-more-popover { border-color: #4b5563; background: #1f2937; }
+      .task-more-popover button {
+        display: block;
+        width: 100%;
+        padding: 7px 9px;
+        border-radius: 6px;
+        text-align: left;
+        font-size: 12px;
+      }
+      .task-more-popover button:hover { background: #f3f4f6; }
+      .dark .task-more-popover button:hover { background: #374151; }
+      .task-more-popover .task-more-danger { color: #ef4444; }
+      .popup-replan-panel { max-height: calc(100vh - 24px); overflow-y: auto; }
+      .popup-replan-quick-dates .quick-dates-row { gap: 3px; margin-bottom: 0; }
+      .popup-replan-quick-dates .quick-date-btn { min-width: 0; padding: 6px 1px; }
+      .popup-replan-quick-dates .quick-day-name { font-size: 9px; }
+      .popup-replan-quick-dates .quick-day-num { font-size: 14px; }
+      .popup-replan-quick-dates .quick-date-load { font-size: 8px; }
       @media (max-width: 767px) {
         .app-header-actions { width: 100%; }
         .view-nav { align-self: stretch; }
+        .popup-app-header .app-header-actions { width: auto; }
       }
     `;
       document.head.appendChild(style);
@@ -3592,8 +3786,134 @@ var TaskManager = (() => {
   init_task();
   init_storage();
   init_sync();
+
+  // shared/quick-dates.ts
+  var bindTaskQuickDates = (taskModal) => {
+    const refresh = () => {
+      const input = taskModal.querySelector('input[name="dueDate"]');
+      if (!input)
+        return;
+      taskModal.querySelectorAll(".quick-date-btn").forEach((button) => {
+        const selected = button.dataset.date === input.value;
+        button.classList.toggle("selected", selected);
+        button.setAttribute("aria-pressed", String(selected));
+      });
+    };
+    taskModal.querySelectorAll(".quick-date-btn").forEach((button) => {
+      button.addEventListener("click", () => {
+        const date = button.dataset.date;
+        const input = taskModal.querySelector('input[name="dueDate"]');
+        if (!date || !input)
+          return;
+        input.value = date;
+        refresh();
+      });
+    });
+    taskModal.querySelector('input[name="dueDate"]')?.addEventListener("change", refresh);
+    return refresh;
+  };
+  var bindSplitQuickDates = (splitTaskModal) => {
+    splitTaskModal.addEventListener("click", (event) => {
+      const target = event.target;
+      const button = target.closest(".split-quick-dates .quick-date-btn");
+      const row = button?.closest(".split-child-row");
+      const input = row?.querySelector(".split-child-date");
+      const date = button?.dataset.date;
+      if (!button || !row || !input || !date)
+        return;
+      input.value = date;
+      row.querySelectorAll(".quick-date-btn").forEach((item) => {
+        const selected = item.dataset.date === date;
+        item.classList.toggle("selected", selected);
+        item.setAttribute("aria-pressed", String(selected));
+      });
+    });
+    splitTaskModal.addEventListener("change", (event) => {
+      const input = event.target;
+      if (!input.classList.contains("split-child-date"))
+        return;
+      const row = input.closest(".split-child-row");
+      if (!row)
+        return;
+      row.querySelectorAll(".quick-date-btn").forEach((button) => {
+        const selected = button.dataset.date === input.value;
+        button.classList.toggle("selected", selected);
+        button.setAttribute("aria-pressed", String(selected));
+      });
+    });
+  };
+  var createSubmissionGuard = () => {
+    let submitted = false;
+    return () => {
+      if (submitted)
+        return false;
+      submitted = true;
+      return true;
+    };
+  };
+
+  // shared/events.ts
   var draggedTaskId = null;
   var currentContainer = null;
+  var taskMenuDismissHandler = null;
+  var closePopupTaskMenus = (container) => {
+    container.querySelectorAll("details.task-more-menu[open]").forEach((menu) => {
+      menu.open = false;
+      const popover = menu.querySelector(".task-more-popover");
+      if (popover)
+        popover.style.visibility = "hidden";
+    });
+  };
+  var positionPopupTaskMenu = (menu) => {
+    const trigger = menu.querySelector(".task-more-trigger");
+    const popover = menu.querySelector(".task-more-popover");
+    if (!trigger || !popover)
+      return;
+    popover.style.position = "fixed";
+    popover.style.visibility = "hidden";
+    popover.style.left = "0px";
+    popover.style.top = "0px";
+    const triggerRect = trigger.getBoundingClientRect();
+    const menuRect = popover.getBoundingClientRect();
+    const margin = 8;
+    const gap = 4;
+    const maxLeft = Math.max(margin, window.innerWidth - menuRect.width - margin);
+    const left = Math.min(Math.max(margin, triggerRect.right - menuRect.width), maxLeft);
+    const fitsBelow = triggerRect.bottom + gap + menuRect.height <= window.innerHeight - margin;
+    const preferredTop = fitsBelow ? triggerRect.bottom + gap : triggerRect.top - menuRect.height - gap;
+    const maxTop = Math.max(margin, window.innerHeight - menuRect.height - margin);
+    const top = Math.min(Math.max(margin, preferredTop), maxTop);
+    popover.style.left = `${Math.round(left)}px`;
+    popover.style.top = `${Math.round(top)}px`;
+    popover.style.visibility = "visible";
+  };
+  var bindPopupTaskMenus = (container) => {
+    if (!window.location.pathname.includes("popup"))
+      return;
+    taskMenuDismissHandler && document.removeEventListener("pointerdown", taskMenuDismissHandler);
+    taskMenuDismissHandler = (event) => {
+      const target = event.target;
+      if (target && target.closest?.(".task-more-menu"))
+        return;
+      closePopupTaskMenus(container);
+    };
+    document.addEventListener("pointerdown", taskMenuDismissHandler);
+    const menus = [...container.querySelectorAll("details.task-more-menu")];
+    menus.forEach((menu) => {
+      menu.addEventListener("toggle", () => {
+        const popover = menu.querySelector(".task-more-popover");
+        if (!menu.open) {
+          if (popover)
+            popover.style.visibility = "hidden";
+          return;
+        }
+        menus.filter((other) => other !== menu).forEach((other) => {
+          other.open = false;
+        });
+        positionPopupTaskMenu(menu);
+      });
+    });
+  };
   function showSyncFeedback(container, message, type = "success") {
     const el = container.querySelector("#syncFeedback");
     if (!el)
@@ -3627,6 +3947,7 @@ var TaskManager = (() => {
   }
   var attachEventListeners = (container) => {
     currentContainer = container;
+    bindPopupTaskMenus(container);
     container.querySelector("#addTaskBtn")?.addEventListener("click", () => {
       resetEditingTask();
       reRender();
@@ -3642,6 +3963,16 @@ var TaskManager = (() => {
       setLocalSettings({ darkMode: !darkMode });
       await persistState();
       reRender();
+    });
+    container.querySelector("#toggleFiltersBtn")?.addEventListener("click", (e) => {
+      const button = e.currentTarget;
+      const filters = container.querySelector("#taskFilters");
+      if (!filters)
+        return;
+      const expanded = filters.classList.contains("hidden");
+      filters.classList.toggle("hidden", !expanded);
+      button.setAttribute("aria-expanded", String(expanded));
+      button.title = expanded ? "\u6536\u8D77\u7B5B\u9009" : "\u5C55\u5F00\u7B5B\u9009";
     });
     container.querySelectorAll("[data-view]").forEach((btn) => {
       btn.addEventListener("click", (e) => {
@@ -3946,12 +4277,63 @@ var TaskManager = (() => {
       reRender();
     };
     container.querySelector("#cancelReplanBtn")?.addEventListener("click", closeReplanModal);
+    container.querySelector("#closeReplanBtn")?.addEventListener("click", closeReplanModal);
+    container.querySelector("#replanModal")?.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeReplanModal();
+      }
+    });
+    const popupReplan = window.location.pathname.includes("popup");
+    let replanSubmitting = false;
+    const replanDateInput = container.querySelector("#replanDate");
+    const replanConfirmButton = container.querySelector("#confirmReplanBtn");
+    const replanError = container.querySelector("#replanError");
+    if (popupReplan && getState().replanningTaskId) {
+      container.querySelector("#replanModal")?.focus();
+    }
+    const setReplanError = (message) => {
+      if (replanError)
+        replanError.textContent = message;
+    };
+    const syncReplanQuickDateSelection = (date) => {
+      container.querySelectorAll(".popup-replan-quick-dates .quick-date-btn").forEach((button) => {
+        const selected = button.dataset.date === date;
+        button.classList.toggle("selected", selected);
+        button.setAttribute("aria-pressed", String(selected));
+      });
+      if (replanConfirmButton)
+        replanConfirmButton.disabled = !date || date < formatDate(/* @__PURE__ */ new Date());
+    };
+    if (popupReplan && replanDateInput) {
+      container.querySelectorAll(".popup-replan-quick-dates .quick-date-btn").forEach((button) => {
+        button.addEventListener("click", () => {
+          const date = button.dataset.date || "";
+          replanDateInput.value = date;
+          syncReplanQuickDateSelection(date);
+          setReplanError("");
+        });
+      });
+      replanDateInput.addEventListener("change", () => {
+        const date = replanDateInput.value;
+        const today = formatDate(/* @__PURE__ */ new Date());
+        syncReplanQuickDateSelection(date);
+        setReplanError(date && date < today ? "\u4E0D\u80FD\u5B89\u6392\u5230\u8FC7\u53BB\u65E5\u671F\u3002" : "");
+      });
+    }
     container.querySelector("#replanForm")?.addEventListener("submit", async (e) => {
       e.preventDefault();
       const { replanningTaskId } = getState();
-      if (!replanningTaskId)
+      if (!replanningTaskId || replanSubmitting)
         return;
       const date = new FormData(e.target).get("replanDate");
+      if (popupReplan && (!date || date < formatDate(/* @__PURE__ */ new Date()))) {
+        setReplanError(!date ? "\u8BF7\u9009\u62E9\u4E00\u4E2A\u8BA1\u5212\u65E5\u671F\u3002" : "\u4E0D\u80FD\u5B89\u6392\u5230\u8FC7\u53BB\u65E5\u671F\u3002");
+        return;
+      }
+      replanSubmitting = true;
+      if (replanConfirmButton)
+        replanConfirmButton.disabled = true;
       replanTask(replanningTaskId, date);
       setState({ replanningTaskId: null });
       await persistState();
@@ -4010,37 +4392,8 @@ var TaskManager = (() => {
       const next = isDec ? Math.max(0.5, current - 0.5) : Math.min(24, current + 0.5);
       input.value = next.toFixed(1);
     });
-    splitTaskModal?.addEventListener("click", (e) => {
-      const target = e.target;
-      const btn = target.closest(".split-quick-dates .quick-date-btn");
-      if (!btn)
-        return;
-      const row = btn.closest(".split-child-row");
-      const date = btn.dataset.date;
-      const input = row?.querySelector(".split-child-date");
-      if (!row || !date || !input)
-        return;
-      input.value = date;
-      row.querySelectorAll(".quick-date-btn").forEach((b) => {
-        const selected = b.dataset.date === date;
-        b.classList.toggle("selected", selected);
-        b.setAttribute("aria-pressed", String(selected));
-      });
-    });
-    splitTaskModal?.addEventListener("change", (e) => {
-      const target = e.target;
-      if (!target.classList.contains("split-child-date"))
-        return;
-      const row = target.closest(".split-child-row");
-      if (!row)
-        return;
-      const val = target.value;
-      row.querySelectorAll(".quick-date-btn").forEach((b) => {
-        const selected = b.dataset.date === val;
-        b.classList.toggle("selected", selected);
-        b.setAttribute("aria-pressed", String(selected));
-      });
-    });
+    if (splitTaskModal)
+      bindSplitQuickDates(splitTaskModal);
     container.querySelector("#addSplitChildBtn")?.addEventListener("click", () => {
       const list = container.querySelector("#splitChildren");
       if (!list)
@@ -4070,25 +4423,49 @@ var TaskManager = (() => {
       bindSplitRemoveButtons();
       row.querySelector(".split-child-title")?.focus();
     });
+    const canSubmitSplit = createSubmissionGuard();
     container.querySelector("#splitTaskForm")?.addEventListener("submit", async (e) => {
       e.preventDefault();
       const { splittingTaskId } = getState();
       if (!splittingTaskId)
         return;
-      const children = [...container.querySelectorAll(".split-child-row")].map((row) => ({
-        id: row.dataset.childId,
-        title: row.querySelector(".split-child-title").value.trim(),
-        duration: Math.round(Number.parseFloat(row.querySelector(".split-child-duration").value) * 60),
-        dueDate: row.querySelector(".split-child-date").value
-      }));
-      if (children.length < 2 || children.some((child) => !child.title || !child.dueDate || child.duration <= 0)) {
-        showSplitError("\u8BF7\u5B8C\u6574\u586B\u5199\u81F3\u5C11\u4E24\u4E2A\u5B50\u4EFB\u52A1\u3002");
+      const rows = [...container.querySelectorAll(".split-child-row")];
+      const children = rows.map((row) => {
+        const durationHours = Number.parseFloat(row.querySelector(".split-child-duration").value);
+        return {
+          id: row.dataset.childId,
+          title: row.querySelector(".split-child-title").value.trim(),
+          durationHours,
+          duration: Math.round(durationHours * 60),
+          dueDate: row.querySelector(".split-child-date").value
+        };
+      });
+      const invalidChildIndex = children.findIndex(
+        (child) => !child.title || !child.dueDate || !Number.isFinite(child.durationHours) || child.durationHours < 0.5 || child.durationHours > 24 || Math.abs(child.durationHours * 2 - Math.round(child.durationHours * 2)) > Number.EPSILON
+      );
+      if (children.length < 2) {
+        showSplitError("\u81F3\u5C11\u4FDD\u7559\u4E24\u4E2A\u5B50\u4EFB\u52A1\u3002");
         return;
       }
+      if (invalidChildIndex !== -1) {
+        const invalidChild = children[invalidChildIndex];
+        const invalidRow = rows[invalidChildIndex];
+        const invalidField = !invalidChild?.title ? invalidRow?.querySelector(".split-child-title") : !invalidChild?.dueDate ? invalidRow?.querySelector(".split-child-date") : invalidRow?.querySelector(".split-child-duration");
+        const message = !invalidChild?.title ? `\u8BF7\u586B\u5199\u5B50\u4EFB\u52A1 ${invalidChildIndex + 1} \u7684\u6807\u9898\u3002` : !invalidChild.dueDate ? `\u8BF7\u4E3A\u5B50\u4EFB\u52A1 ${invalidChildIndex + 1} \u9009\u62E9\u8BA1\u5212\u65E5\u671F\uFF0C\u6216\u5148\u5728\u4EFB\u52A1\u5217\u8868\u4E2D\u5B89\u6392\u5B83\u3002` : `\u5B50\u4EFB\u52A1 ${invalidChildIndex + 1} \u7684\u9884\u8BA1\u65F6\u95F4\u9700\u4E3A 0.5 \u81F3 24 \u5C0F\u65F6\uFF0C\u5E76\u4EE5 0.5 \u5C0F\u65F6\u9012\u589E\u3002`;
+        showSplitError(message);
+        invalidField?.scrollIntoView({ behavior: "smooth", block: "center" });
+        invalidField?.focus();
+        return;
+      }
+      if (!canSubmitSplit())
+        return;
       if (!splitTask(splittingTaskId, children)) {
         showSplitError("\u8BE5\u4EFB\u52A1\u5F53\u524D\u65E0\u6CD5\u62C6\u5206\uFF0C\u8BF7\u786E\u8BA4\u5B83\u4E0D\u662F\u5FAA\u73AF\u4EFB\u52A1\u3002");
         return;
       }
+      const submitButton = e.target.querySelector('button[type="submit"]');
+      if (submitButton)
+        submitButton.disabled = true;
       setState({ splittingTaskId: null });
       await persistState();
       reRender();
@@ -4150,31 +4527,9 @@ var TaskManager = (() => {
         dueDateField.style.pointerEvents = e.target.checked ? "none" : "auto";
       }
     });
-    const refreshQuickDates = () => {
-      const dateInput = container.querySelector('input[name="dueDate"]');
-      if (!dateInput)
-        return;
-      const val = dateInput.value;
-      container.querySelectorAll(".quick-date-btn").forEach((btn) => {
-        const date = btn.dataset.date;
-        const isSelected = date === val;
-        btn.classList.toggle("selected", isSelected);
-        btn.setAttribute("aria-pressed", String(isSelected));
-      });
+    const taskModal = container.querySelector("#taskModal");
+    const refreshQuickDates = taskModal ? bindTaskQuickDates(taskModal) : () => {
     };
-    container.querySelectorAll(".quick-date-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const date = btn.dataset.date;
-        if (!date)
-          return;
-        const dateInput = container.querySelector('input[name="dueDate"]');
-        if (dateInput) {
-          dateInput.value = date;
-          refreshQuickDates();
-        }
-      });
-    });
-    container.querySelector('input[name="dueDate"]')?.addEventListener("change", refreshQuickDates);
     container.querySelector("#addTaskBtn")?.addEventListener("click", () => {
       setTimeout(refreshQuickDates, 0);
     });
@@ -4722,11 +5077,9 @@ var TaskManager = (() => {
       renderApp(container);
       attachEventListeners(container);
     };
-    loadState().then(async () => {
-      const { tasks } = getState();
-      if (tasks.length > 0) {
-        await persistState();
-        console.log(`[TaskMaster] \u5DF2\u52A0\u8F7D ${tasks.length} \u4E2A\u4EFB\u52A1`);
+    loadState().then(() => {
+      if (window.location.pathname.includes("popup")) {
+        setState({ currentView: "focus" });
       }
       renderApp(container);
       attachEventListeners(container);

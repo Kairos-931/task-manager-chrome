@@ -7,8 +7,8 @@ const [renderSource, eventsSource] = await Promise.all([
 ])
 
 assert.match(renderSource, /aria-pressed="\$\{isSelected\}"/)
-assert.match(eventsSource, /btn\.classList\.toggle\('selected', isSelected\)/)
-assert.match(eventsSource, /btn\.setAttribute\('aria-pressed', String\(isSelected\)\)/)
+assert.match(eventsSource, /button\.classList\.toggle\('selected', selected\)/)
+assert.match(eventsSource, /button\.setAttribute\('aria-pressed', String\(selected\)\)/)
 
 assert.match(renderSource, /\.quick-date-btn\.today:not\(\.selected\) \.quick-date-badge/)
 assert.doesNotMatch(

@@ -308,14 +308,19 @@ const legacyWriteResponse = await worker.fetch(new Request('https://taskmaster.t
 assert.equal(legacyWriteResponse.status, 409)
 assert.equal((await legacyWriteResponse.json()).error, 'upgrade_required')
 
-const [backgroundSource, taskSource, eventSource] = await Promise.all([
+const [backgroundSource, taskSource, eventSource, storageModuleSource, entrySource] = await Promise.all([
   readFile(new URL('../shared/background.ts', import.meta.url), 'utf8'),
   readFile(new URL('../shared/task.ts', import.meta.url), 'utf8'),
-  readFile(new URL('../shared/events.ts', import.meta.url), 'utf8')
+  readFile(new URL('../shared/events.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../shared/storage.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../shared/entry.ts', import.meta.url), 'utf8')
 ])
 assert.doesNotMatch(backgroundSource, /lt\.title === \(rt\.title as string\)/)
 assert.match(backgroundSource, /localData\.tasks\.some\(local => local\.id === task\.id\)/)
 assert.match(taskSource, /setLocalSettings[\s\S]*syncSettingsUpdatedAt = getNextLocalSettingsUpdatedAt/)
 assert.match(eventSource, /#hideCompleted[\s\S]*setLocalSettings\(\{ hideCompleted:/)
+assert.match(storageModuleSource, /isRecoverableNetworkError[\s\S]*Failed to fetch/)
+assert.match(storageModuleSource, /warnForSyncFailure[\s\S]*isRecoverableNetworkError\(error\)/)
+assert.doesNotMatch(entrySource, /loadState\(\)\.then\([\s\S]*?await persistState\(\)/)
 
 console.log('Incremental sync tests passed')

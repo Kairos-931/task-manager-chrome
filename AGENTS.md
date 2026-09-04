@@ -53,6 +53,7 @@ TaskMaster 是一个 Chrome 扩展任务管理项目，同时包含 Cloudflare W
 - `deploy/`：服务器部署配置、容器和反向代理示例，不存放密钥。
 - `scripts/`：项目自动化脚本。
 - `docs/`：长期维护的项目文档。
+- `docs/requirements/`：需求任务与开发任务之间的正式交接规格；仅将用户已确认的需求交付开发。
 - `icons/`：扩展图标资源。
 - `work/`：Codex 临时分析、草稿和一次性脚本；任务结束时清理不再需要的内容。
 - `outputs/`：仅存放需交付给用户的产物，不放源码或临时文件。
@@ -87,3 +88,17 @@ TaskMaster 是一个 Chrome 扩展任务管理项目，同时包含 Cloudflare W
 - 默认使用中文，代码、命令、变量名使用英文。
 - 结论先行，并说明技术决策的原因和对用户的影响。
 - 需求模糊时先提出最合理方案；存在更直接或体验更好的方案时主动指出。
+
+## Product and development task roles
+
+- Project: `TaskMaster`
+- Requirements task: owns requirement clarification, prioritization, PRD/specification, user flows, acceptance criteria, and approved demos.
+- Developer task: `codex://threads/01a06a68-53a8-7740-aa49-d6a359cfa147`; owns technical design, production code, tests, versioning, Git, build, and deployment.
+- The requirements task does not edit production code unless the user explicitly asks for that exception.
+- Draft requirements do not enter development. After explicit confirmation, the requirements task saves the specification and sends its path to the developer task.
+- The developer task must not expand confirmed scope. Product-impacting ambiguity returns to the requirements task for a decision.
+
+## Product workflow files
+
+- `docs/PRODUCT_WORKFLOW.md` records the linked requirements/development tasks and shared operating contract.
+- `docs/requirements/` stores requirement handoff documents; `_TEMPLATE.md` is the structure baseline for new requirements.

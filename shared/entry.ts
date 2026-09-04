@@ -39,13 +39,10 @@ function autoInit() {
     attachEventListeners(container)
   }
 
-  loadState().then(async () => {
-    const { tasks } = getState()
-    if (tasks.length > 0) {
-      await persistState()
-      console.log(`[TaskMaster] 已加载 ${tasks.length} 个任务`)
+  loadState().then(() => {
+    if (window.location.pathname.includes('popup')) {
+      setState({ currentView: 'focus' })
     }
-
     renderApp(container)
     attachEventListeners(container)
 

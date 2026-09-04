@@ -1,5 +1,5 @@
 import type { Task, Category, StorageData, AppState, Priority } from './types'
-import { generateId, getNextLocalSettingsUpdatedAt, loadData, saveData, syncIncrementally, defaultCategories } from './storage'
+import { generateId, getNextLocalSettingsUpdatedAt, loadData, saveData, syncIncrementally, defaultCategories, getSyncDeviceIdAsync } from './storage'
 import { markCloudSynced, markLocalSave, markSaveComplete, markRemoteUpdated, markSyncError } from './sync'
 import { isTaskDueOnDate } from './calendar'
 import { getTaskProgress, isExecutableTask } from './planning'
@@ -127,7 +127,11 @@ export const getCatName = (id: string): string => {
 }
 
 // ==================== 数据操作 ====================
-const applyStorageData = (data: StorageData): void => {
+interface ApplyStorageOptions {
+  ignoreDeviceId?: string
+}
+
+const applyStorageData = (data: StorageData, _options?: ApplyStorageOptions): void => {
   const activeEditingTask = state.editingTask
   // Keep the original category id for existing task references while removing
   // duplicate names left by older versions of the sync implementation.
@@ -157,10 +161,13 @@ const applyStorageData = (data: StorageData): void => {
 export const loadState = async (): Promise<void> => {
   const data = await loadData()
   applyStorageData(data)
+  const deviceId = await getSyncDeviceIdAsync()
   syncIncrementally(data).then(result => {
     if (result.success && result.data) {
-      applyStorageData(result.data)
-      markRemoteUpdated()
+      applyStorageData(result.data, { ignoreDeviceId: deviceId })
+      // Only a genuinely foreign update should refresh the app. Echoing this
+      // device's own upload back would close popovers and reset the view.
+      if (result.hasForeignChanges) markRemoteUpdated()
     }
   }).catch(() => {})
 }
@@ -179,9 +186,9 @@ export const persistState = async (): Promise<void> => {
       weeklyGoalMinutes: state.weeklyGoalMinutes,
       weeklyGoalAnchor: state.weeklyGoalAnchor,
       syncSettingsUpdatedAt: state.syncSettingsUpdatedAt
-    }, (remoteData) => {
-      applyStorageData(remoteData)
-      markRemoteUpdated()
+    }, async (remoteData, options) => {
+      const deviceId = options?.ignoreDeviceId ?? await getSyncDeviceIdAsync()
+      applyStorageData(remoteData, { ignoreDeviceId: deviceId })
     }, (result) => {
       if (result.success) markCloudSynced()
       else if (result.error !== '未配置同步设置') markSyncError()

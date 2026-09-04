@@ -200,22 +200,24 @@ export const renderGoalSettingsModal = (): string => {
 
 export const renderStats = (): string => {
   const stats = getStats()
+  const isPopup = window.location.pathname.includes('popup')
   return `
     <div id="statsRow" class="stats-row">
       <div class="stats-row-bar">
         <div class="stats-row-items">
-          <span class="text-gray-500">待完成：</span><span class="font-medium text-orange-500">${formatHours(stats.pending)}</span>
-          <span class="text-gray-300 dark:text-gray-600">|</span>
-          <span class="text-gray-500">今日：</span><span class="font-medium">${stats.todayDone}/${stats.todayTotal}</span>
-          ${stats.overdueCount > 0 ? `<span class="text-red-500 font-medium">${stats.overdueCount}项过期</span>` : ''}
+          <span><span class="text-gray-500">待完成</span> <span class="font-medium text-orange-500">${formatHours(stats.pending)}</span></span>
+          <span class="text-gray-300 dark:text-gray-600">·</span>
+          <span><span class="text-gray-500">今日</span> <span class="font-medium">${stats.todayDone}/${stats.todayTotal}</span></span>
+          <span class="text-gray-300 dark:text-gray-600">·</span>
+          <span class="${stats.overdueCount > 0 ? 'text-red-500 font-medium' : 'text-gray-500'}">${stats.overdueCount} 项过期</span>
         </div>
-        <button id="statsToggleBtn" class="stats-toggle-btn" title="每周节奏">
+        ${isPopup ? '' : `<button id="statsToggleBtn" class="stats-toggle-btn" title="每周节奏">
           <span id="statsChevron" class="stats-chevron">&#x25BE;</span>
-        </button>
+        </button>`}
       </div>
-      <div id="weeklyGoalWrapper" style="display:none;">
+      ${isPopup ? '' : `<div id="weeklyGoalWrapper" style="display:none;">
         ${renderWeeklyGoalCard()}
-      </div>
+      </div>`}
     </div>
   `
 }
@@ -223,9 +225,10 @@ export const renderStats = (): string => {
 export const renderHeader = (): string => {
   const { currentView, darkMode } = getState()
   const isNewTab = window.location.pathname.includes('newtab')
+  const isPopup = !isNewTab
   return `
-    <header class="flex items-start justify-between mb-4 flex-wrap gap-3">
-      <div class="flex items-center gap-3">
+    <header class="${isPopup ? 'popup-app-header ' : ''}flex items-start justify-between mb-4 flex-wrap gap-3">
+      <div class="header-brand flex items-center gap-3">
         <h1 class="text-xl font-semibold">任务管理</h1>
         <button id="openFullPage" class="px-2 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition text-sm" title="新标签页打开">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
@@ -236,11 +239,16 @@ export const renderHeader = (): string => {
           <button data-view="focus" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === 'focus' ? 'bg-white dark:bg-gray-700 shadow' : ''}">今日聚焦</button>
           <button data-view="pool" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === 'pool' ? 'bg-white dark:bg-gray-700 shadow' : ''}">任务池</button>
           <button data-view="list" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === 'list' ? 'bg-white dark:bg-gray-700 shadow' : ''}">全部任务</button>
+          ${isNewTab ? `
           <button data-view="day" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === 'day' ? 'bg-white dark:bg-gray-700 shadow' : ''}">日</button>
           <button data-view="week" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === 'week' ? 'bg-white dark:bg-gray-700 shadow' : ''}">周</button>
           <button data-view="month" class="px-3 py-1 rounded text-sm transition whitespace-nowrap flex-shrink-0 ${currentView === 'month' ? 'bg-white dark:bg-gray-700 shadow' : ''}">月</button>
+          ` : ''}
         </div>
         <div class="header-utility-actions w-full flex items-center justify-end gap-2 flex-wrap">
+        ${isNewTab ? '' : `<button id="toggleFiltersBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="展开筛选" aria-expanded="false" aria-controls="taskFilters">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 01.8 1.6L14 13.67V19a1 1 0 01-.45.83l-4 2.67A1 1 0 018 21.67v-8L3.2 4.6A1 1 0 013 4z"/></svg>
+        </button>`}
         <button id="darkModeBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="切换深色模式">
           ${darkMode
             ? '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>'
@@ -265,8 +273,9 @@ export const renderHeader = (): string => {
 
 export const renderFilters = (): string => {
   const { hideCompleted, hideOverdue, filterPriority, filterCategory, categories = [] } = getState()
+  const isPopup = window.location.pathname.includes('popup')
   return `
-    <div class="flex flex-wrap gap-3 p-3 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 mb-4 items-center text-sm">
+    <div id="taskFilters" class="${isPopup ? 'hidden ' : ''}flex flex-wrap gap-3 p-3 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 mb-4 items-center text-sm">
       <div class="flex items-center gap-1">
         <span class="text-gray-500">优先级</span>
         <select id="filterPriority" class="px-2 py-1 border dark:border-gray-600 rounded bg-white dark:bg-gray-700 dark:text-white text-sm">
@@ -300,6 +309,33 @@ export const renderTaskItem = (task: Task): string => {
   const overdue = !task.noTimeLimit && isOverdue(task.dueDate, task.completed)
   const today = formatDate(new Date())
   const parent = task.parentId ? getState().tasks.find(item => item.id === task.parentId) : undefined
+  const isPopup = window.location.pathname.includes('popup')
+
+  if (task.isParent && isPopup) {
+    const progress = getParentTaskProgress(task)
+    return `
+      <div class="task-row popup-task-row flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${task.completed ? 'opacity-60' : ''}" data-task-id="${task.id}">
+        <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${task.completed ? 'bg-green-500 border-green-500' : 'border-gray-300 dark:border-gray-500'} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" title="${task.completed ? '标记为未完成' : '标记为已完成（子任务一并完成）'}">
+          ${task.completed ? '<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ''}
+        </button>
+        <div class="w-1.5 h-8 rounded ${getPriorityColor(task.priority)} flex-shrink-0" aria-hidden="true"></div>
+        <div class="task-main flex-1 min-w-0">
+          <div class="font-medium truncate ${task.completed ? 'line-through text-gray-400' : ''}">${escapeHtml(task.title)}</div>
+          <div class="mt-0.5 text-xs text-gray-400">父任务 · ${progress.completed}/${progress.total} 个子任务完成</div>
+        </div>
+        <details class="task-more-menu flex-shrink-0">
+          <summary class="task-more-trigger" title="更多操作" aria-label="${escapeHtml(task.title)}的更多操作">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+          </summary>
+          <div class="task-more-popover">
+            <button class="task-split" data-id="${task.id}">添加子任务</button>
+            <button class="task-edit" data-id="${task.id}">编辑</button>
+            <button class="task-delete task-more-danger" data-id="${task.id}">删除</button>
+          </div>
+        </details>
+      </div>
+    `
+  }
 
   if (task.isParent) {
     const progress = getParentTaskProgress(task)
@@ -334,6 +370,36 @@ export const renderTaskItem = (task: Task): string => {
           </button>
         </div>
         ${children.length > 0 ? `<div class="mt-3 ml-5 border-l-2 border-violet-100 dark:border-violet-900/40">${children.map(child => renderTaskItem(child)).join('')}</div>` : '<p class="mt-3 ml-5 text-xs text-gray-400">暂无子任务</p>'}
+      </div>
+    `
+  }
+
+  if (isPopup) {
+    return `
+      <div class="task-row popup-task-row flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${task.completed ? 'opacity-60' : ''} ${overdue && !task.completed ? 'bg-red-50/50 dark:bg-red-900/10' : ''}" data-task-id="${task.id}" draggable="true">
+        <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${task.completed ? 'bg-green-500 border-green-500' : task.noTimeLimit ? 'border-dashed border-gray-400' : 'border-gray-300 dark:border-gray-500'} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" title="${task.completed ? '标记为未完成' : '标记为已完成'}">
+          ${task.completed ? '<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ''}
+        </button>
+        <div class="w-1.5 h-8 rounded ${getPriorityColor(task.priority)} flex-shrink-0" aria-hidden="true"></div>
+        <div class="task-main flex-1 min-w-0">
+          <div class="font-medium truncate ${task.completed ? 'line-through text-gray-400' : ''}">${escapeHtml(task.title)}</div>
+          <div class="flex items-center gap-2 mt-0.5 text-xs text-gray-400">
+            <span class="${overdue ? 'text-red-500 font-medium' : ''}">${task.noTimeLimit ? '任务池' : getDateLabel(task.dueDate)}</span>
+            ${task.duration > 0 ? `<span>· ${formatHours(task.duration)}</span>` : ''}
+          </div>
+        </div>
+        <details class="task-more-menu flex-shrink-0">
+          <summary class="task-more-trigger" title="更多操作" aria-label="${escapeHtml(task.title)}的更多操作">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+          </summary>
+          <div class="task-more-popover">
+            ${task.repeatType === 'none' && !task.noTimeLimit && !isTaskDueOnDate(task, today) ? `<button class="task-focus-toggle" data-id="${task.id}">加入今天</button>` : ''}
+            ${task.repeatType === 'none' ? `<button class="overdue-replan" data-id="${task.id}">${task.noTimeLimit ? '安排时间' : '重新排期'}</button>` : ''}
+            ${task.repeatType === 'none' ? `<button class="task-split" data-id="${task.id}">拆分任务</button>` : ''}
+            <button class="task-edit" data-id="${task.id}">编辑</button>
+            <button class="task-delete task-more-danger" data-id="${task.id}">删除</button>
+          </div>
+        </details>
       </div>
     `
   }
@@ -440,6 +506,7 @@ export const renderFocusView = (): string => {
 }
 
 const renderPoolTaskItem = (task: Task): string => {
+  if (window.location.pathname.includes('popup')) return renderTaskItem(task)
   const category = getState().categories.find(item => item.id === task.category)
   const parent = task.parentId ? getState().tasks.find(item => item.id === task.parentId) : undefined
   return `
@@ -991,6 +1058,36 @@ export const renderReplanModal = (): string => {
   const { replanningTaskId, tasks } = getState()
   const task = tasks.find(item => item.id === replanningTaskId)
   const today = formatDate(new Date())
+  const isPopup = window.location.pathname.includes('popup')
+  if (isPopup) {
+    return `
+      <div id="replanModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 ${task ? '' : 'hidden'}" tabindex="-1">
+        <div class="popup-replan-panel bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[92%] max-w-sm p-4">
+          <div class="flex items-center justify-between gap-3">
+            <h2 class="text-lg font-semibold">安排时间</h2>
+            <button type="button" id="closeReplanBtn" class="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded" aria-label="关闭安排时间">×</button>
+          </div>
+          <p class="mt-1 text-sm text-gray-500 truncate">${task ? escapeHtml(task.title) : ''}</p>
+          <form id="replanForm" class="mt-4 space-y-3" novalidate>
+            <div>
+              <label class="block text-sm font-medium mb-2">选择计划日期</label>
+              <div class="popup-replan-quick-dates">${renderQuickDates('')}</div>
+              <div class="mt-3">
+                <label class="block text-xs text-gray-500 mb-1" for="replanDate">7 天以外的日期</label>
+                <input type="date" id="replanDate" name="replanDate" value="" min="${today}" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700">
+              </div>
+              ${task?.hardDeadline ? `<p class="mt-2 text-xs text-red-500">硬截止仍为 ${task.hardDeadline}，不会被修改。</p>` : ''}
+              <p id="replanError" class="mt-2 text-xs text-red-500" role="alert" aria-live="polite"></p>
+            </div>
+            <div class="flex justify-end gap-2">
+              <button type="button" id="cancelReplanBtn" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg">取消</button>
+              <button type="submit" id="confirmReplanBtn" disabled class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed">确认安排</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `
+  }
   return `
     <div id="replanModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 ${task ? '' : 'hidden'}">
       <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[90%] max-w-md p-5">
@@ -1035,7 +1132,7 @@ export const renderSplitModal = (): string => {
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
-        <form id="splitTaskForm" class="split-task-form space-y-4">
+        <form id="splitTaskForm" class="split-task-form space-y-4" novalidate>
           <div id="splitChildren" class="split-children space-y-2" style="max-height:min(48svh,460px)">
             ${rowsToRender.map((child, index) => renderSplitChildRow(index, child, child ? child.dueDate : today)).join('')}
           </div>
@@ -2099,9 +2196,79 @@ export const renderApp = (container: HTMLElement): void => {
       }
 
       .view-nav { scrollbar-width: thin; }
+      .popup-app-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        column-gap: 8px;
+        row-gap: 8px;
+      }
+      .popup-app-header .header-brand { grid-column: 1; grid-row: 1; }
+      .popup-app-header .app-header-actions { display: contents; }
+      .popup-app-header .header-utility-actions {
+        grid-column: 2;
+        grid-row: 1;
+        width: auto;
+        flex-wrap: nowrap;
+        gap: 4px;
+      }
+      .popup-app-header .view-nav {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        width: 100%;
+      }
+      .task-more-menu { position: relative; }
+      .task-more-trigger {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        color: #6b7280;
+        cursor: pointer;
+        list-style: none;
+      }
+      .task-more-trigger::-webkit-details-marker { display: none; }
+      .task-more-trigger:hover { background: #f3f4f6; }
+      .dark .task-more-trigger:hover { background: #374151; }
+      .task-more-popover {
+        position: fixed;
+        z-index: 50;
+        top: 0;
+        left: 0;
+        width: min(160px, calc(100vw - 16px));
+        max-height: calc(100vh - 16px);
+        overflow-y: auto;
+        padding: 4px;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        background: white;
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
+        visibility: hidden;
+      }
+      .dark .task-more-popover { border-color: #4b5563; background: #1f2937; }
+      .task-more-popover button {
+        display: block;
+        width: 100%;
+        padding: 7px 9px;
+        border-radius: 6px;
+        text-align: left;
+        font-size: 12px;
+      }
+      .task-more-popover button:hover { background: #f3f4f6; }
+      .dark .task-more-popover button:hover { background: #374151; }
+      .task-more-popover .task-more-danger { color: #ef4444; }
+      .popup-replan-panel { max-height: calc(100vh - 24px); overflow-y: auto; }
+      .popup-replan-quick-dates .quick-dates-row { gap: 3px; margin-bottom: 0; }
+      .popup-replan-quick-dates .quick-date-btn { min-width: 0; padding: 6px 1px; }
+      .popup-replan-quick-dates .quick-day-name { font-size: 9px; }
+      .popup-replan-quick-dates .quick-day-num { font-size: 14px; }
+      .popup-replan-quick-dates .quick-date-load { font-size: 8px; }
       @media (max-width: 767px) {
         .app-header-actions { width: 100%; }
         .view-nav { align-self: stretch; }
+        .popup-app-header .app-header-actions { width: auto; }
       }
     `
     document.head.appendChild(style)

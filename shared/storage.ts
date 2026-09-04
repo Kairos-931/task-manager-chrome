@@ -1,4 +1,4 @@
-import type { StorageData, Category, Task } from './types'
+import type { StorageData, Category, Task, RemoteApplyOptions } from './types'
 
 export const STORAGE_KEY = 'tm_data'
 
@@ -244,6 +244,7 @@ interface SyncRecord {
   payload: Record<string, unknown> | null
   deleted: boolean
   updatedAt: number
+  sourceDevice?: string
 }
 
 interface SyncShadow {
@@ -291,13 +292,24 @@ const setLocalValues = async (values: Record<string, unknown>): Promise<void> =>
   })
 }
 
-const getSyncDeviceId = async (): Promise<string> => {
+let cachedDeviceId: string | null = null
+
+// applyRemoteChanges runs synchronously and needs the device id to filter out
+// this device's own echo. The id is stable, so cache it after the first sync.
+export const getSyncDeviceIdAsync = async (): Promise<string> => {
+  if (cachedDeviceId) return cachedDeviceId
   const existing = await getLocalValue<string>(INCREMENTAL_DEVICE_KEY, '')
-  if (existing) return existing
+  if (existing) {
+    cachedDeviceId = existing
+    return existing
+  }
   const id = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : generateId()
   await setLocalValues({ [INCREMENTAL_DEVICE_KEY]: id })
+  cachedDeviceId = id
   return id
 }
+
+export const getSyncDeviceId = getSyncDeviceIdAsync
 
 const getSyncShadow = async (): Promise<SyncShadow> => {
   const shadow = await getLocalValue<SyncShadow | null>(INCREMENTAL_SHADOW_KEY, null)
@@ -367,12 +379,21 @@ const buildLocalChanges = (current: Record<string, SyncRecord>, shadow: SyncShad
   return changes
 }
 
-const applyRemoteChanges = (data: StorageData, changes: SyncRecord[]): StorageData => {
+const applyRemoteChanges = (
+  data: StorageData,
+  changes: SyncRecord[],
+  options: { ignoreDeviceId?: string } = {}
+): StorageData => {
+  // Changes uploaded by this device come back in the same response window.
+  // Treating them as remote updates would needlessly reset the app view.
+  const applicableChanges = options.ignoreDeviceId
+    ? changes.filter(change => change.sourceDevice !== options.ignoreDeviceId)
+    : changes
   const tasks = new Map(data.tasks.map(task => [task.id, task]))
   const categories = new Map(data.categories.map(category => [category.id, category]))
   let settings = { ...data }
 
-  for (const change of changes) {
+  for (const change of applicableChanges) {
     if (change.type === 'task') {
       const local = tasks.get(change.id)
       if (local && local.updatedAt > change.updatedAt) continue
@@ -408,7 +429,7 @@ const isVirginDefaultData = (data: StorageData): boolean => {
     !data.darkMode && !data.weeklyGoalMinutes && !data.weeklyGoalAnchor
 }
 
-const syncIncrementallyNow = async (inputData: StorageData): Promise<{ success: boolean; data?: StorageData; error?: string }> => {
+const syncIncrementallyNow = async (inputData: StorageData): Promise<{ success: boolean; data?: StorageData; hasForeignChanges?: boolean; error?: string }> => {
   try {
     const data = normalizeStorageData(inputData)
     const settings = await getCloudSettings()
@@ -426,6 +447,7 @@ const syncIncrementallyNow = async (inputData: StorageData): Promise<{ success: 
       ? []
       : buildLocalChanges(buildCurrentRecords(mergedData, shadow), shadow)
     let hasMore = true
+    let sawForeignChanges = false
     const receivedChanges: SyncRecord[] = []
 
     while (pending.length > 0 || hasMore) {
@@ -445,8 +467,10 @@ const syncIncrementallyNow = async (inputData: StorageData): Promise<{ success: 
       const result = await resp.json()
       const remoteChanges = Array.isArray(result.changes) ? result.changes as SyncRecord[] : []
       const rejectedChanges = Array.isArray(result.rejectedChanges) ? result.rejectedChanges as SyncRecord[] : []
-      receivedChanges.push(...remoteChanges, ...rejectedChanges)
-      mergedData = applyRemoteChanges(mergedData, [...remoteChanges, ...rejectedChanges])
+      const foreignChanges = remoteChanges.filter(change => change.sourceDevice !== deviceId)
+      if (foreignChanges.length > 0) sawForeignChanges = true
+      receivedChanges.push(...foreignChanges, ...rejectedChanges)
+      mergedData = applyRemoteChanges(mergedData, [...foreignChanges, ...rejectedChanges])
       cursor = Number.isInteger(result.cursor) ? result.cursor : cursor
       hasMore = result.hasMore === true
     }
@@ -467,18 +491,28 @@ const syncIncrementallyNow = async (inputData: StorageData): Promise<{ success: 
         [INCREMENTAL_CLOCK_KEY]: lastSyncTimestamp
       })
     ])
-    return { success: true, data: finalData }
+    return { success: true, data: finalData, hasForeignChanges: sawForeignChanges }
   } catch (e) {
     return { success: false, error: String(e) }
   }
 }
 
-export const syncIncrementally = (data: StorageData): Promise<{ success: boolean; data?: StorageData; error?: string }> =>
+export const syncIncrementally = (data: StorageData): Promise<{ success: boolean; data?: StorageData; hasForeignChanges?: boolean; error?: string }> =>
   enqueueSync(() => syncIncrementallyNow(cloneStorageData(data)))
 
 export const isCloudConfigured = async (): Promise<boolean> => {
   const settings = await getCloudSettings()
   return !!(settings.apiUrl && settings.apiToken)
+}
+
+const isRecoverableNetworkError = (error?: string): boolean => {
+  if (!error) return false
+  return /(?:TypeError:\s*)?Failed to fetch|NetworkError when attempting to fetch resource|Load failed/i.test(error)
+}
+
+const warnForSyncFailure = (error?: string): void => {
+  if (!error || error === '未配置同步设置' || isRecoverableNetworkError(error)) return
+  console.warn('[TaskMaster] incremental sync failed:', error)
 }
 
 // ==================== 公开 API ====================
@@ -551,17 +585,21 @@ const isTaskMatchRepeat = (t: any, date: Date): boolean => {
 
 export const saveData = async (
   data: StorageData,
-  onRemoteData?: (data: StorageData) => void,
+  onRemoteData?: (data: StorageData, options?: RemoteApplyOptions) => void,
   onSyncResult?: (result: { success: boolean; data?: StorageData; error?: string }) => void
 ): Promise<void> => {
   const localData = normalizeStorageData(data)
   localData.tasks = fixRecurringTasks(localData.tasks)
   await saveToLocal(localData)
   syncIncrementally(localData).then(result => {
-    if (result.success && result.data) onRemoteData?.(result.data)
-    else if (result.error !== '未配置同步设置') console.warn('[TaskMaster] incremental sync failed:', result.error)
+    if (result.success && result.data) {
+      getSyncDeviceIdAsync().then(deviceId => {
+        onRemoteData?.(result.data!, { ignoreDeviceId: deviceId })
+      })
+    }
+    else warnForSyncFailure(result.error)
     onSyncResult?.(result)
-  }).catch(e => console.warn('[TaskMaster] incremental sync failed:', e))
+  }).catch(e => warnForSyncFailure(String(e)))
 }
 
 // ==================== 自动备份（保留最近 3 天）====================
