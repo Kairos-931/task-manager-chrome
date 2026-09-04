@@ -172,7 +172,7 @@ export const loadState = async (): Promise<void> => {
   }).catch(() => {})
 }
 
-export const persistState = async (): Promise<void> => {
+export const persistState = async (): Promise<boolean> => {
   markLocalSave()
   try {
     await saveData({
@@ -194,8 +194,11 @@ export const persistState = async (): Promise<void> => {
       else if (result.error !== '未配置同步设置') markSyncError()
     })
     markSaveComplete()
+    return true
   } catch {
     // markSaveComplete won't be called, sync status stays at saving
+    markSyncError()
+    return false
   }
 }
 
@@ -471,6 +474,41 @@ export const splitTask = (id: string, children: SplitChildInput[]): boolean => {
     })
   }
   return true
+}
+
+export const createParentWithChildren = (
+  parent: Omit<Task, 'id' | 'createdAt' | 'completedAt' | 'updatedAt' | 'completedDates' | 'repeatStartDate' | 'duration' | 'dueDate' | 'focusDate' | 'isParent' | 'parentId'>,
+  children: SplitChildInput[]
+): boolean => {
+  const validChildren = children.filter(child => child.title.trim() && child.duration > 0 && child.dueDate)
+  if (validChildren.length < 2 || validChildren.length !== children.length) return false
+  const now = Date.now()
+  const parentId = generateId()
+  const newParent: Task = {
+    ...parent, id: parentId, duration: 0, dueDate: '', focusDate: undefined, isParent: true,
+    completed: false, completedDates: [], noTimeLimit: true, repeatType: 'none', repeatDays: [], repeatInterval: 1,
+    createdAt: now, updatedAt: now
+  }
+  const newChildren: Task[] = validChildren.map(child => ({
+    id: generateId(), title: child.title.trim(), description: '', priority: parent.priority, category: parent.category,
+    dueDate: child.dueDate, hardDeadline: parent.hardDeadline, focusDate: child.dueDate === getTodayStr() ? getTodayStr() : undefined,
+    duration: child.duration, repeatType: 'none', repeatDays: [], repeatInterval: 1, completed: false, completedDates: [],
+    createdAt: now, updatedAt: now, noTimeLimit: false, parentId
+  }))
+  state.tasks.push(newParent, ...newChildren)
+  return true
+}
+
+export const createParentWithChildrenPersisted = async (
+  parent: Parameters<typeof createParentWithChildren>[0],
+  children: SplitChildInput[],
+  persist: () => Promise<boolean> = persistState
+): Promise<boolean> => {
+  const previousTasks = [...state.tasks]
+  if (!createParentWithChildren(parent, children)) return false
+  if (await persist()) return true
+  state.tasks = previousTasks
+  return false
 }
 
 export const deleteCategory = (id: string): void => {

@@ -2,6 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer components {
+  .task-mode-switch { @apply flex rounded-lg bg-gray-100 p-1; }
+  .task-mode-btn { @apply flex-1 rounded-md px-3 py-2 text-sm; }
+  .task-mode-btn.active { @apply bg-white shadow dark:bg-gray-700; }
+  .jump-to-today { @apply fixed bottom-4 right-4 z-40 rounded-full bg-blue-500 px-3 py-2 text-sm font-semibold text-white shadow-lg; }
+  .today-anchor { scroll-margin-top: 16px; }
+  .today-anchor-highlight { animation: today-anchor-flash 1.5s ease-out; }
+  @keyframes today-anchor-flash { 0%, 60% { background: #dbeafe; } 100% { background: transparent; } }
+  @media (prefers-reduced-motion: reduce) { .today-anchor-highlight { animation: none; background: #dbeafe; } }
+}
+
 @layer base {
   html {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;

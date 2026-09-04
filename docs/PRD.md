@@ -4,7 +4,7 @@
 >
 > 更新日期：2026-08-20
 >
-> 当前开发基线：3.15.1
+> 当前开发基线：3.16.0
 
 本文档是 TaskMaster 当前产品需求的唯一 PRD。功能现状以当前工作区代码为准；发布记录见 [release-history.md](release-history.md)，未完成事项见 [open-issues.md](open-issues.md)。
 

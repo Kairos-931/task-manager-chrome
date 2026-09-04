@@ -1,6 +1,6 @@
 # 任务池未来 7 天快捷排期
 
-- Status: confirmed
+- Status: released in v3.16.0
 - Priority: high
 - Target version: 3.16.0
 - Confirmed date: 2026-09-04
@@ -118,3 +118,9 @@
 ## Open decisions
 
 - None.
+
+## Distribution status
+
+- Implementation commit: `0712e39 feat: streamline popup task planning`
+- Current GitHub latest release: `v3.15.1`; it does not contain this requirement.
+- Required delivery: include the existing implementation unchanged in the next `v3.16.0` extension release. Do not add remaining-capacity calculations or an 8-hour daily baseline.

@@ -933,6 +933,8 @@ var TaskManager = (() => {
   __export(task_exports, {
     addCategory: () => addCategory,
     addTask: () => addTask,
+    createParentWithChildren: () => createParentWithChildren,
+    createParentWithChildrenPersisted: () => createParentWithChildrenPersisted,
     deleteCategory: () => deleteCategory,
     deleteTask: () => deleteTask,
     escapeHtml: () => escapeHtml,
@@ -972,7 +974,7 @@ var TaskManager = (() => {
     updateCategory: () => updateCategory,
     updateTask: () => updateTask
   });
-  var escapeHtml, formatDate, parseDate, formatHours, getDateLabel, getTodayStr, state, getState, setState, setLocalSettings, resetEditingTask, getRemainingTime, isOverdue, getPriorityColor, getCatColor, getCatName, applyStorageData, loadState, persistState, getFilteredTasks, addTask, updateTask, deleteTask, toggleThrottleMap, toggleTask, moveTaskToDate, getNextUncompletedDate, addCategory, updateCategory, toggleTaskOnDate, focusTaskToday, replanTask, moveTaskToPool, splitTask, deleteCategory, getWeeklyGoalStats, getStats, getParentTaskProgress;
+  var escapeHtml, formatDate, parseDate, formatHours, getDateLabel, getTodayStr, state, getState, setState, setLocalSettings, resetEditingTask, getRemainingTime, isOverdue, getPriorityColor, getCatColor, getCatName, applyStorageData, loadState, persistState, getFilteredTasks, addTask, updateTask, deleteTask, toggleThrottleMap, toggleTask, moveTaskToDate, getNextUncompletedDate, addCategory, updateCategory, toggleTaskOnDate, focusTaskToday, replanTask, moveTaskToPool, splitTask, createParentWithChildren, createParentWithChildrenPersisted, deleteCategory, getWeeklyGoalStats, getStats, getParentTaskProgress;
   var init_task = __esm({
     "shared/task.ts"() {
       "use strict";
@@ -1148,7 +1150,10 @@ var TaskManager = (() => {
               markSyncError();
           });
           markSaveComplete();
+          return true;
         } catch {
+          markSyncError();
+          return false;
         }
       };
       getFilteredTasks = () => {
@@ -1408,6 +1413,60 @@ var TaskManager = (() => {
         }
         return true;
       };
+      createParentWithChildren = (parent, children) => {
+        const validChildren = children.filter((child) => child.title.trim() && child.duration > 0 && child.dueDate);
+        if (validChildren.length < 2 || validChildren.length !== children.length)
+          return false;
+        const now = Date.now();
+        const parentId = generateId();
+        const newParent = {
+          ...parent,
+          id: parentId,
+          duration: 0,
+          dueDate: "",
+          focusDate: void 0,
+          isParent: true,
+          completed: false,
+          completedDates: [],
+          noTimeLimit: true,
+          repeatType: "none",
+          repeatDays: [],
+          repeatInterval: 1,
+          createdAt: now,
+          updatedAt: now
+        };
+        const newChildren = validChildren.map((child) => ({
+          id: generateId(),
+          title: child.title.trim(),
+          description: "",
+          priority: parent.priority,
+          category: parent.category,
+          dueDate: child.dueDate,
+          hardDeadline: parent.hardDeadline,
+          focusDate: child.dueDate === getTodayStr() ? getTodayStr() : void 0,
+          duration: child.duration,
+          repeatType: "none",
+          repeatDays: [],
+          repeatInterval: 1,
+          completed: false,
+          completedDates: [],
+          createdAt: now,
+          updatedAt: now,
+          noTimeLimit: false,
+          parentId
+        }));
+        state.tasks.push(newParent, ...newChildren);
+        return true;
+      };
+      createParentWithChildrenPersisted = async (parent, children, persist = persistState) => {
+        const previousTasks = [...state.tasks];
+        if (!createParentWithChildren(parent, children))
+          return false;
+        if (await persist())
+          return true;
+        state.tasks = previousTasks;
+        return false;
+      };
       deleteCategory = (id) => {
         if (state.categories.length > 1) {
           const fallback = state.categories.find((category) => category.id !== id);
@@ -1548,6 +1607,19 @@ var TaskManager = (() => {
   init_task();
   init_sync();
   init_planning();
+
+  // shared/list-navigation.ts
+  var insertTodayDate = (dates, today) => {
+    if (dates.includes(today))
+      return dates;
+    const dated = dates.filter((date) => date !== "no-date");
+    const pool = dates.includes("no-date") ? ["no-date"] : [];
+    return [...dated.filter((date) => date < today), today, ...dated.filter((date) => date > today), ...pool];
+  };
+  var isAnchorVisible = (rect, viewportHeight) => rect.top >= 0 && rect.bottom <= viewportHeight;
+  var getTodayScrollBehavior = (reducedMotion) => reducedMotion ? "auto" : "smooth";
+
+  // shared/render.ts
   var renderSyncIndicator = () => {
     const status = getSyncStatus();
     if (status === "idle")
@@ -2064,8 +2136,9 @@ var TaskManager = (() => {
   };
   var renderListView = () => {
     const tasks = getFilteredTasks();
+    const today = formatDate(/* @__PURE__ */ new Date());
     if (tasks.length === 0) {
-      return `<div class="text-center py-12 text-gray-400"><p class="text-lg">\u6682\u65E0\u4EFB\u52A1</p><p class="text-sm mt-2">\u70B9\u51FB\u53F3\u4E0A\u89D2"\u6DFB\u52A0"\u5F00\u59CB</p></div>`;
+      return `<div id="todayAnchor" data-date="${today}" class="today-anchor">\u4ECA\u5929 \xB7 \u5F53\u524D\u7B5B\u9009\u65E0\u4EFB\u52A1</div><div class="text-center py-12 text-gray-400"><p class="text-lg">\u6682\u65E0\u4EFB\u52A1</p></div>`;
     }
     const parents = tasks.filter((task) => task.isParent);
     const visibleParentIds = new Set(parents.map((parent) => parent.id));
@@ -2084,16 +2157,17 @@ var TaskManager = (() => {
         return -1;
       return a.localeCompare(b);
     });
+    const orderedDates = insertTodayDate(dates, today);
     const parentSection = parents.length > 0 ? `
     <div class="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 overflow-hidden mb-4">
       <div class="px-4 py-2 bg-violet-50 dark:bg-violet-900/20 font-medium text-sm text-violet-700 dark:text-violet-300">\u5927\u4EFB\u52A1\u4E0E\u62C6\u5206\u8FDB\u5EA6</div>
       ${parents.map((parent) => renderTaskItem(parent)).join("")}
     </div>
   ` : "";
-    return parentSection + dates.map((d) => `
+    return parentSection + orderedDates.map((d) => `
     <div class="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 overflow-hidden mb-4">
-      <div class="px-4 py-2 bg-gray-50 dark:bg-gray-900 font-medium text-sm text-gray-600 dark:text-gray-400 drop-zone" data-date="${d}">
-        ${d === "no-date" ? "\u4EFB\u52A1\u6C60\uFF08\u65E0\u622A\u6B62\u65E5\u671F\uFF09" : getDateLabel(d)}
+      <div ${d === today ? 'id="todayAnchor"' : ""} class="px-4 py-2 bg-gray-50 dark:bg-gray-900 font-medium text-sm text-gray-600 dark:text-gray-400 drop-zone ${d === today ? "today-anchor" : ""}" data-date="${d}">
+        ${d === "no-date" ? "\u4EFB\u52A1\u6C60\uFF08\u65E0\u622A\u6B62\u65E5\u671F\uFF09" : d === today && !(groups.get(d) || []).length ? "\u4ECA\u5929 \xB7 \u5F53\u524D\u7B5B\u9009\u65E0\u4EFB\u52A1" : getDateLabel(d)}
       </div>
       ${(groups.get(d) || []).map((t) => renderTaskItem(t)).join("")}
     </div>
@@ -2422,12 +2496,13 @@ var TaskManager = (() => {
           </button>
         </div>
         <form id="taskForm" class="p-4 space-y-4">
+          ${!isEditing ? `<div class="task-mode-switch" role="group" aria-label="\u4EFB\u52A1\u7C7B\u578B"><button type="button" class="task-mode-btn active" data-task-mode="normal">\u666E\u901A\u4EFB\u52A1</button><button type="button" class="task-mode-btn" data-task-mode="parent">\u5927\u4EFB\u52A1</button></div>` : ""}
           <div class="flex items-start gap-4">
             <div class="flex-1">
               <label class="block text-sm font-medium mb-1">\u4EFB\u52A1\u540D\u79F0 *</label>
               <input type="text" name="title" value="${escapeHtml(task.title)}" required class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
             </div>
-            <div class="pt-6">
+            <div id="taskCompletedField" class="pt-6">
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" id="taskCompleted" ${task.completed ? "checked" : ""} class="rounded">
                 <span class="text-sm">\u5DF2\u5B8C\u6210</span>
@@ -2438,6 +2513,7 @@ var TaskManager = (() => {
             <label class="block text-sm font-medium mb-1">\u5907\u6CE8</label>
             <textarea name="description" rows="2" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white resize-none">${escapeHtml(task.description)}</textarea>
           </div>
+          ${!isEditing ? `<section id="parentChildrenFields" class="hidden border-t dark:border-gray-700 pt-4 space-y-3"><p class="text-sm text-gray-500">\u7236\u4EFB\u52A1\u4E0D\u8BBE\u7F6E\u65E5\u671F\u548C\u65F6\u957F\uFF1B\u5B50\u4EFB\u52A1\u5C06\u6309\u5404\u81EA\u8BA1\u5212\u8FDB\u5165\u65E5\u7A0B\u3002</p><label class="block text-sm font-medium">\u786C\u622A\u6B62\u65E5\u671F\uFF08\u53EF\u9009\uFF09<input type="date" name="parentHardDeadline" class="mt-1 w-full px-3 py-2 border rounded-lg"></label><div id="newParentChildren" class="split-children-list">${renderSplitChildRow(0, void 0, formatDate(/* @__PURE__ */ new Date()))}${renderSplitChildRow(1, void 0, formatDate(/* @__PURE__ */ new Date()))}</div><button type="button" id="addParentChildBtn" class="text-sm text-blue-600">+ \u6DFB\u52A0\u5B50\u4EFB\u52A1</button><p id="parentTaskError" class="text-sm text-red-500" aria-live="polite"></p></section>` : ""}
           <div class="grid grid-cols-2 gap-4">
             <div>
               <label class="block text-sm font-medium mb-1">\u4F18\u5148\u7EA7</label>
@@ -2463,7 +2539,7 @@ var TaskManager = (() => {
             </div>
           </div>
           ` : `
-          <div class="border-t dark:border-gray-700 pt-4">
+          <div id="normalTaskFields" class="border-t dark:border-gray-700 pt-4">
             <label class="flex items-center gap-2 cursor-pointer mb-3">
               <input type="checkbox" id="noTimeLimit" name="noTimeLimit" ${task.noTimeLimit ? "checked" : ""} class="rounded"> 
               <span class="text-sm font-medium">\u65E0\u8BA1\u5212\u65E5\u671F\uFF08\u4EFB\u52A1\u6C60\uFF09</span>
@@ -2519,7 +2595,7 @@ var TaskManager = (() => {
             ${isEditing ? `<button type="button" id="deleteTaskBtn" class="px-4 py-2 border border-red-500 text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition">\u5220\u9664</button>` : ""}
             <div class="flex-1"></div>
             <button type="button" id="cancelBtn" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition">\u53D6\u6D88</button>
-            <button type="submit" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">${isEditing ? "\u4FDD\u5B58" : "\u6DFB\u52A0"}</button>
+            <button type="submit" id="taskSubmitBtn" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">${isEditing ? "\u4FDD\u5B58" : "\u6DFB\u52A0"}</button>
           </div>
         </form>
       </div>
@@ -3770,6 +3846,7 @@ var TaskManager = (() => {
       ${renderHeader()}
       ${renderFilters()}
       ${renderTaskList()}
+      ${getState().currentView === "list" ? '<button id="jumpToTodayBtn" class="jump-to-today hidden" aria-label="\u5B9A\u4F4D\u5230\u4ECA\u5929" title="\u5B9A\u4F4D\u5230\u4ECA\u5929">\u4ECA</button>' : ""}
       ${renderModal()}
       ${renderReplanModal()}
       ${renderSplitModal()}
@@ -3851,11 +3928,26 @@ var TaskManager = (() => {
       return true;
     };
   };
+  var createResettableSubmissionGuard = () => {
+    let submitting = false;
+    return {
+      trySubmit: () => {
+        if (submitting)
+          return false;
+        submitting = true;
+        return true;
+      },
+      reset: () => {
+        submitting = false;
+      }
+    };
+  };
 
   // shared/events.ts
   var draggedTaskId = null;
   var currentContainer = null;
   var taskMenuDismissHandler = null;
+  var listScrollHandler = null;
   var closePopupTaskMenus = (container) => {
     container.querySelectorAll("details.task-more-menu[open]").forEach((menu) => {
       menu.open = false;
@@ -3948,6 +4040,28 @@ var TaskManager = (() => {
   var attachEventListeners = (container) => {
     currentContainer = container;
     bindPopupTaskMenus(container);
+    const jumpToToday = container.querySelector("#jumpToTodayBtn");
+    const todayAnchor = container.querySelector("#todayAnchor");
+    if (listScrollHandler)
+      window.removeEventListener("scroll", listScrollHandler);
+    if (jumpToToday && todayAnchor) {
+      const updateJumpVisibility = () => {
+        const rect = todayAnchor.getBoundingClientRect();
+        jumpToToday.classList.toggle("hidden", isAnchorVisible(rect, window.innerHeight));
+      };
+      listScrollHandler = updateJumpVisibility;
+      window.addEventListener("scroll", listScrollHandler, { passive: true });
+      updateJumpVisibility();
+      jumpToToday.addEventListener("click", () => {
+        const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+        todayAnchor.scrollIntoView({ behavior: getTodayScrollBehavior(reduced), block: "center" });
+        todayAnchor.classList.add("today-anchor-highlight");
+        setTimeout(() => todayAnchor.classList.remove("today-anchor-highlight"), 1500);
+        jumpToToday.classList.add("hidden");
+      });
+    } else {
+      listScrollHandler = null;
+    }
     container.querySelector("#addTaskBtn")?.addEventListener("click", () => {
       resetEditingTask();
       reRender();
@@ -4095,6 +4209,51 @@ var TaskManager = (() => {
       });
     });
     const taskForm = container.querySelector("#taskForm");
+    let taskMode = "normal";
+    const parentSubmitGuard = createResettableSubmissionGuard();
+    const setTaskMode = (mode) => {
+      taskMode = mode;
+      container.querySelector("#normalTaskFields")?.classList.toggle("hidden", mode === "parent");
+      container.querySelector("#parentChildrenFields")?.classList.toggle("hidden", mode !== "parent");
+      container.querySelector("#taskCompletedField")?.classList.toggle("hidden", mode === "parent");
+      container.querySelectorAll("[data-task-mode]").forEach((button) => button.classList.toggle("active", button.dataset.taskMode === mode));
+      const submit = container.querySelector("#taskSubmitBtn");
+      if (submit)
+        submit.textContent = mode === "parent" ? "\u521B\u5EFA\u5927\u4EFB\u52A1" : "\u6DFB\u52A0";
+    };
+    container.querySelectorAll("[data-task-mode]").forEach((button) => button.addEventListener("click", () => setTaskMode(button.dataset.taskMode === "parent" ? "parent" : "normal")));
+    const parentChildren = container.querySelector("#newParentChildren");
+    const bindParentChildControls = () => {
+      if (!parentChildren)
+        return;
+      parentChildren.addEventListener("click", (event) => {
+        const target = event.target;
+        const row = target.closest(".split-child-row");
+        if (!row)
+          return;
+        if (target.classList.contains("remove-split-child")) {
+          if (parentChildren.querySelectorAll(".split-child-row").length > 2)
+            row.remove();
+          return;
+        }
+        const input = row.querySelector(".split-child-duration");
+        if (input && (target.classList.contains("split-duration-increase") || target.classList.contains("split-duration-decrease"))) {
+          const step = target.classList.contains("split-duration-increase") ? 0.5 : -0.5;
+          input.value = String(Math.min(24, Math.max(0.5, (Number.parseFloat(input.value) || 1) + step)));
+        }
+      });
+      bindSplitQuickDates(parentChildren);
+    };
+    bindParentChildControls();
+    container.querySelector("#addParentChildBtn")?.addEventListener("click", () => {
+      if (!parentChildren)
+        return;
+      const index = parentChildren.querySelectorAll(".split-child-row").length + 1;
+      const today = formatDate(/* @__PURE__ */ new Date());
+      const row = document.createElement("div");
+      row.innerHTML = renderSplitChildRow(index - 1, void 0, today);
+      parentChildren.appendChild(row.firstElementChild);
+    });
     taskForm?.addEventListener("submit", async (e) => {
       e.preventDefault();
       const form = e.target;
@@ -4107,6 +4266,39 @@ var TaskManager = (() => {
         category: formData.get("category"),
         hardDeadline: formData.get("hardDeadline") || void 0
       };
+      if (!editingTask && taskMode === "parent") {
+        const rows = [...container.querySelectorAll("#newParentChildren .split-child-row")];
+        const children = rows.map((row) => ({ title: (row.querySelector(".split-child-title")?.value || "").trim(), duration: Math.round(Number.parseFloat(row.querySelector(".split-child-duration")?.value || "0") * 60), dueDate: row.querySelector(".split-child-date")?.value || "" }));
+        const invalidIndex = children.findIndex((child) => !child.title || child.duration < 30 || child.duration > 1440 || child.duration % 30 !== 0 || !child.dueDate);
+        if (children.length < 2 || invalidIndex !== -1) {
+          const invalid = children[Math.max(0, invalidIndex)];
+          const field = !invalid?.title ? ".split-child-title" : !invalid?.duration || invalid.duration < 30 || invalid.duration > 1440 || invalid.duration % 30 !== 0 ? ".split-child-duration" : ".split-child-date";
+          const message = children.length < 2 ? "\u81F3\u5C11\u4FDD\u7559\u4E24\u4E2A\u5B50\u4EFB\u52A1\u3002" : !invalid?.title ? `\u8BF7\u586B\u5199\u5B50\u4EFB\u52A1 ${invalidIndex + 1} \u7684\u6807\u9898\u3002` : field === ".split-child-duration" ? `\u8BF7\u586B\u5199\u5B50\u4EFB\u52A1 ${invalidIndex + 1} \u7684\u6709\u6548\u9884\u8BA1\u65F6\u95F4\u3002` : `\u8BF7\u9009\u62E9\u5B50\u4EFB\u52A1 ${invalidIndex + 1} \u7684\u8BA1\u5212\u65E5\u671F\u3002`;
+          container.querySelector("#parentTaskError")?.replaceChildren(document.createTextNode(message));
+          const target = rows[Math.max(0, invalidIndex)]?.querySelector(field);
+          target?.scrollIntoView({ behavior: "smooth", block: "center" });
+          target?.focus();
+          return;
+        }
+        if (!parentSubmitGuard.trySubmit())
+          return;
+        const submit = form.querySelector("#taskSubmitBtn");
+        if (submit)
+          submit.disabled = true;
+        const created = await createParentWithChildrenPersisted({ ...commonData, hardDeadline: formData.get("parentHardDeadline") || void 0, completed: false, noTimeLimit: true, repeatType: "none", repeatDays: [], repeatInterval: 1 }, children);
+        if (!created) {
+          ;
+          container.querySelector("#parentTaskError")?.replaceChildren(document.createTextNode("\u672C\u5730\u4FDD\u5B58\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5"));
+          if (submit)
+            submit.disabled = false;
+          parentSubmitGuard.reset();
+          return;
+        }
+        resetEditingTask();
+        reRender();
+        showToast(container, `\u5DF2\u521B\u5EFA\u5927\u4EFB\u52A1\u548C ${children.length} \u4E2A\u5B50\u4EFB\u52A1`, "success");
+        return;
+      }
       if (editingTask?.isParent) {
         const parentCompleted = form.querySelector("#taskCompleted")?.checked || false;
         updateTask(editingTask.id, {
@@ -4527,8 +4719,8 @@ var TaskManager = (() => {
         dueDateField.style.pointerEvents = e.target.checked ? "none" : "auto";
       }
     });
-    const taskModal = container.querySelector("#taskModal");
-    const refreshQuickDates = taskModal ? bindTaskQuickDates(taskModal) : () => {
+    const normalTaskFields = container.querySelector("#normalTaskFields");
+    const refreshQuickDates = normalTaskFields ? bindTaskQuickDates(normalTaskFields) : () => {
     };
     container.querySelector("#addTaskBtn")?.addEventListener("click", () => {
       setTimeout(refreshQuickDates, 0);

@@ -9,6 +9,7 @@ import {
 import { getSyncStatus } from './sync'
 import type { SyncStatus } from './sync'
 import { getHistoricalOverdueTasks, getTaskPoolTasks } from './planning'
+import { insertTodayDate } from './list-navigation'
 
 // ==================== 同步状态指示器 ====================
 export const renderSyncIndicator = (): string => {
@@ -556,8 +557,9 @@ export const renderPoolView = (): string => {
 
 export const renderListView = (): string => {
   const tasks = getFilteredTasks()
+  const today = formatDate(new Date())
   if (tasks.length === 0) {
-    return `<div class="text-center py-12 text-gray-400"><p class="text-lg">暂无任务</p><p class="text-sm mt-2">点击右上角"添加"开始</p></div>`
+    return `<div id="todayAnchor" data-date="${today}" class="today-anchor">今天 · 当前筛选无任务</div><div class="text-center py-12 text-gray-400"><p class="text-lg">暂无任务</p></div>`
   }
   const parents = tasks.filter(task => task.isParent)
   const visibleParentIds = new Set(parents.map(parent => parent.id))
@@ -573,16 +575,17 @@ export const renderListView = (): string => {
     if (b === 'no-date') return -1
     return a.localeCompare(b)
   })
+  const orderedDates = insertTodayDate(dates, today)
   const parentSection = parents.length > 0 ? `
     <div class="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 overflow-hidden mb-4">
       <div class="px-4 py-2 bg-violet-50 dark:bg-violet-900/20 font-medium text-sm text-violet-700 dark:text-violet-300">大任务与拆分进度</div>
       ${parents.map(parent => renderTaskItem(parent)).join('')}
     </div>
   ` : ''
-  return parentSection + dates.map(d => `
+  return parentSection + orderedDates.map(d => `
     <div class="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 overflow-hidden mb-4">
-      <div class="px-4 py-2 bg-gray-50 dark:bg-gray-900 font-medium text-sm text-gray-600 dark:text-gray-400 drop-zone" data-date="${d}">
-        ${d === 'no-date' ? '任务池（无截止日期）' : getDateLabel(d)}
+      <div ${d === today ? 'id="todayAnchor"' : ''} class="px-4 py-2 bg-gray-50 dark:bg-gray-900 font-medium text-sm text-gray-600 dark:text-gray-400 drop-zone ${d === today ? 'today-anchor' : ''}" data-date="${d}">
+        ${d === 'no-date' ? '任务池（无截止日期）' : d === today && !(groups.get(d) || []).length ? '今天 · 当前筛选无任务' : getDateLabel(d)}
       </div>
       ${(groups.get(d) || []).map(t => renderTaskItem(t)).join('')}
     </div>
@@ -927,12 +930,13 @@ export const renderModal = (): string => {
           </button>
         </div>
         <form id="taskForm" class="p-4 space-y-4">
+          ${!isEditing ? `<div class="task-mode-switch" role="group" aria-label="任务类型"><button type="button" class="task-mode-btn active" data-task-mode="normal">普通任务</button><button type="button" class="task-mode-btn" data-task-mode="parent">大任务</button></div>` : ''}
           <div class="flex items-start gap-4">
             <div class="flex-1">
               <label class="block text-sm font-medium mb-1">任务名称 *</label>
               <input type="text" name="title" value="${escapeHtml(task.title)}" required class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
             </div>
-            <div class="pt-6">
+            <div id="taskCompletedField" class="pt-6">
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" id="taskCompleted" ${task.completed ? 'checked' : ''} class="rounded">
                 <span class="text-sm">已完成</span>
@@ -943,6 +947,7 @@ export const renderModal = (): string => {
             <label class="block text-sm font-medium mb-1">备注</label>
             <textarea name="description" rows="2" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white resize-none">${escapeHtml(task.description)}</textarea>
           </div>
+          ${!isEditing ? `<section id="parentChildrenFields" class="hidden border-t dark:border-gray-700 pt-4 space-y-3"><p class="text-sm text-gray-500">父任务不设置日期和时长；子任务将按各自计划进入日程。</p><label class="block text-sm font-medium">硬截止日期（可选）<input type="date" name="parentHardDeadline" class="mt-1 w-full px-3 py-2 border rounded-lg"></label><div id="newParentChildren" class="split-children-list">${renderSplitChildRow(0, undefined, formatDate(new Date()))}${renderSplitChildRow(1, undefined, formatDate(new Date()))}</div><button type="button" id="addParentChildBtn" class="text-sm text-blue-600">+ 添加子任务</button><p id="parentTaskError" class="text-sm text-red-500" aria-live="polite"></p></section>` : ''}
           <div class="grid grid-cols-2 gap-4">
             <div>
               <label class="block text-sm font-medium mb-1">优先级</label>
@@ -968,7 +973,7 @@ export const renderModal = (): string => {
             </div>
           </div>
           ` : `
-          <div class="border-t dark:border-gray-700 pt-4">
+          <div id="normalTaskFields" class="border-t dark:border-gray-700 pt-4">
             <label class="flex items-center gap-2 cursor-pointer mb-3">
               <input type="checkbox" id="noTimeLimit" name="noTimeLimit" ${task.noTimeLimit ? 'checked' : ''} class="rounded"> 
               <span class="text-sm font-medium">无计划日期（任务池）</span>
@@ -1024,7 +1029,7 @@ export const renderModal = (): string => {
             ${isEditing ? `<button type="button" id="deleteTaskBtn" class="px-4 py-2 border border-red-500 text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition">删除</button>` : ''}
             <div class="flex-1"></div>
             <button type="button" id="cancelBtn" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition">取消</button>
-            <button type="submit" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">${isEditing ? '保存' : '添加'}</button>
+            <button type="submit" id="taskSubmitBtn" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">${isEditing ? '保存' : '添加'}</button>
           </div>
         </form>
       </div>
@@ -1032,7 +1037,7 @@ export const renderModal = (): string => {
   `
 }
 
-const renderSplitChildRow = (index: number, child?: { title: string; duration: number; dueDate: string; id?: string }, dueDate?: string): string => `
+export const renderSplitChildRow = (index: number, child?: { title: string; duration: number; dueDate: string; id?: string }, dueDate?: string): string => `
   <div class="split-child-row grid gap-2 p-3 rounded-lg border dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30"${child?.id ? ` data-child-id="${child.id}"` : ''}>
     <input type="text" class="split-child-title px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${child ? escapeHtml(child.title) : ''}" placeholder="子任务 ${index + 1}" required aria-label="子任务标题">
     <button type="button" class="remove-split-child p-2 text-gray-400 hover:text-red-500 rounded" title="删除此子任务" aria-label="删除此子任务">×</button>
@@ -2289,6 +2294,7 @@ export const renderApp = (container: HTMLElement): void => {
       ${renderHeader()}
       ${renderFilters()}
       ${renderTaskList()}
+      ${getState().currentView === 'list' ? '<button id="jumpToTodayBtn" class="jump-to-today hidden" aria-label="定位到今天" title="定位到今天">今</button>' : ''}
       ${renderModal()}
       ${renderReplanModal()}
       ${renderSplitModal()}

@@ -1,14 +1,16 @@
 import type { Priority, Task, ViewMode } from './types'
 import { getState, setState, setLocalSettings, resetEditingTask, formatDate, persistState, moveTaskToDate, loadState, shiftMonth } from './task'
-import { toggleTask as toggleTaskAction, toggleTaskOnDate, deleteTask as deleteTaskAction, addTask, updateTask, addCategory, updateCategory, deleteCategory as deleteCategoryAction, focusTaskToday, replanTask, moveTaskToPool, splitTask } from './task'
-import { renderApp, renderQuickDates } from './render'
+import { toggleTask as toggleTaskAction, toggleTaskOnDate, deleteTask as deleteTaskAction, addTask, updateTask, addCategory, updateCategory, deleteCategory as deleteCategoryAction, focusTaskToday, replanTask, moveTaskToPool, splitTask, createParentWithChildrenPersisted } from './task'
+import { renderApp, renderQuickDates, renderSplitChildRow } from './render'
 import { downloadExportFile, importDataFromFile } from './storage'
 import { showToast } from './sync'
-import { bindTaskQuickDates, bindSplitQuickDates, createSubmissionGuard } from './quick-dates'
+import { bindTaskQuickDates, bindSplitQuickDates, createSubmissionGuard, createResettableSubmissionGuard } from './quick-dates'
+import { getTodayScrollBehavior, isAnchorVisible } from './list-navigation'
 
 let draggedTaskId: string | null = null
 let currentContainer: HTMLElement | null = null
 let taskMenuDismissHandler: ((event: PointerEvent) => void) | null = null
+let listScrollHandler: (() => void) | null = null
 
 const closePopupTaskMenus = (container: HTMLElement): void => {
   container.querySelectorAll<HTMLDetailsElement>('details.task-more-menu[open]').forEach(menu => {
@@ -110,6 +112,27 @@ function reRender() {
 export const attachEventListeners = (container: HTMLElement): void => {
   currentContainer = container
   bindPopupTaskMenus(container)
+  const jumpToToday = container.querySelector<HTMLButtonElement>('#jumpToTodayBtn')
+  const todayAnchor = container.querySelector<HTMLElement>('#todayAnchor')
+  if (listScrollHandler) window.removeEventListener('scroll', listScrollHandler)
+  if (jumpToToday && todayAnchor) {
+    const updateJumpVisibility = () => {
+      const rect = todayAnchor.getBoundingClientRect()
+      jumpToToday.classList.toggle('hidden', isAnchorVisible(rect, window.innerHeight))
+    }
+    listScrollHandler = updateJumpVisibility
+    window.addEventListener('scroll', listScrollHandler, { passive: true })
+    updateJumpVisibility()
+    jumpToToday.addEventListener('click', () => {
+      const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+      todayAnchor.scrollIntoView({ behavior: getTodayScrollBehavior(reduced), block: 'center' })
+      todayAnchor.classList.add('today-anchor-highlight')
+      setTimeout(() => todayAnchor.classList.remove('today-anchor-highlight'), 1500)
+      jumpToToday.classList.add('hidden')
+    })
+  } else {
+    listScrollHandler = null
+  }
   
   // 添加任务按钮
   container.querySelector('#addTaskBtn')?.addEventListener('click', () => {
@@ -286,6 +309,43 @@ export const attachEventListeners = (container: HTMLElement): void => {
 
   // 任务表单提交
   const taskForm = container.querySelector('#taskForm') as HTMLFormElement
+  let taskMode: 'normal' | 'parent' = 'normal'
+  const parentSubmitGuard = createResettableSubmissionGuard()
+  const setTaskMode = (mode: 'normal' | 'parent') => {
+    taskMode = mode
+    container.querySelector('#normalTaskFields')?.classList.toggle('hidden', mode === 'parent')
+    container.querySelector('#parentChildrenFields')?.classList.toggle('hidden', mode !== 'parent')
+    container.querySelector('#taskCompletedField')?.classList.toggle('hidden', mode === 'parent')
+    container.querySelectorAll<HTMLElement>('[data-task-mode]').forEach(button => button.classList.toggle('active', button.dataset.taskMode === mode))
+    const submit = container.querySelector<HTMLButtonElement>('#taskSubmitBtn')
+    if (submit) submit.textContent = mode === 'parent' ? '创建大任务' : '添加'
+  }
+  container.querySelectorAll<HTMLElement>('[data-task-mode]').forEach(button => button.addEventListener('click', () => setTaskMode(button.dataset.taskMode === 'parent' ? 'parent' : 'normal')))
+  const parentChildren = container.querySelector<HTMLElement>('#newParentChildren')
+  const bindParentChildControls = () => {
+    if (!parentChildren) return
+    parentChildren.addEventListener('click', event => {
+      const target = event.target as HTMLElement
+      const row = target.closest('.split-child-row') as HTMLElement | null
+      if (!row) return
+      if (target.classList.contains('remove-split-child')) { if (parentChildren.querySelectorAll('.split-child-row').length > 2) row.remove(); return }
+      const input = row.querySelector<HTMLInputElement>('.split-child-duration')
+      if (input && (target.classList.contains('split-duration-increase') || target.classList.contains('split-duration-decrease'))) {
+        const step = target.classList.contains('split-duration-increase') ? 0.5 : -0.5
+        input.value = String(Math.min(24, Math.max(0.5, (Number.parseFloat(input.value) || 1) + step)))
+      }
+    })
+    bindSplitQuickDates(parentChildren)
+  }
+  bindParentChildControls()
+  container.querySelector('#addParentChildBtn')?.addEventListener('click', () => {
+    if (!parentChildren) return
+    const index = parentChildren.querySelectorAll('.split-child-row').length + 1
+    const today = formatDate(new Date())
+    const row = document.createElement('div')
+    row.innerHTML = renderSplitChildRow(index - 1, undefined, today)
+    parentChildren.appendChild(row.firstElementChild!)
+  })
   taskForm?.addEventListener('submit', async (e) => {
     e.preventDefault()
     const form = e.target as HTMLFormElement
@@ -298,6 +358,36 @@ export const attachEventListeners = (container: HTMLElement): void => {
       priority: formData.get('priority') as Priority,
       category: formData.get('category') as string,
       hardDeadline: (formData.get('hardDeadline') as string) || undefined
+    }
+
+    if (!editingTask && taskMode === 'parent') {
+      const rows = [...container.querySelectorAll<HTMLDivElement>('#newParentChildren .split-child-row')]
+      const children = rows.map(row => ({ title: (row.querySelector<HTMLInputElement>('.split-child-title')?.value || '').trim(), duration: Math.round(Number.parseFloat(row.querySelector<HTMLInputElement>('.split-child-duration')?.value || '0') * 60), dueDate: row.querySelector<HTMLInputElement>('.split-child-date')?.value || '' }))
+      const invalidIndex = children.findIndex(child => !child.title || child.duration < 30 || child.duration > 1440 || child.duration % 30 !== 0 || !child.dueDate)
+      if (children.length < 2 || invalidIndex !== -1) {
+        const invalid = children[Math.max(0, invalidIndex)]
+        const field = !invalid?.title ? '.split-child-title' : !invalid?.duration || invalid.duration < 30 || invalid.duration > 1440 || invalid.duration % 30 !== 0 ? '.split-child-duration' : '.split-child-date'
+        const message = children.length < 2 ? '至少保留两个子任务。' : !invalid?.title ? `请填写子任务 ${invalidIndex + 1} 的标题。` : field === '.split-child-duration' ? `请填写子任务 ${invalidIndex + 1} 的有效预计时间。` : `请选择子任务 ${invalidIndex + 1} 的计划日期。`
+        ;(container.querySelector('#parentTaskError') as HTMLElement | null)?.replaceChildren(document.createTextNode(message))
+        const target = rows[Math.max(0, invalidIndex)]?.querySelector<HTMLElement>(field)
+        target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        target?.focus()
+        return
+      }
+      if (!parentSubmitGuard.trySubmit()) return
+      const submit = form.querySelector<HTMLButtonElement>('#taskSubmitBtn')
+      if (submit) submit.disabled = true
+      const created = await createParentWithChildrenPersisted({ ...commonData, hardDeadline: (formData.get('parentHardDeadline') as string) || undefined, completed: false, noTimeLimit: true, repeatType: 'none', repeatDays: [], repeatInterval: 1 }, children)
+      if (!created) {
+        ;(container.querySelector('#parentTaskError') as HTMLElement | null)?.replaceChildren(document.createTextNode('本地保存失败，请重试'))
+        if (submit) submit.disabled = false
+        parentSubmitGuard.reset()
+        return
+      }
+      resetEditingTask()
+      reRender()
+      showToast(container, `已创建大任务和 ${children.length} 个子任务`, 'success')
+      return
     }
 
     if (editingTask?.isParent) {
@@ -481,6 +571,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
       e.preventDefault()
       closeReplanModal()
     }
+
   })
   const popupReplan = window.location.pathname.includes('popup')
   let replanSubmitting = false
@@ -745,8 +836,8 @@ export const attachEventListeners = (container: HTMLElement): void => {
   })
 
   // 快捷日期选择（仅任务新增/编辑弹窗，避免与拆分、重新排期弹窗串扰）
-  const taskModal = container.querySelector('#taskModal') as HTMLElement | null
-  const refreshQuickDates = taskModal ? bindTaskQuickDates(taskModal) : () => {}
+  const normalTaskFields = container.querySelector('#normalTaskFields') as HTMLElement | null
+  const refreshQuickDates = normalTaskFields ? bindTaskQuickDates(normalTaskFields) : () => {}
   // 任务弹窗打开时同步一次
   container.querySelector('#addTaskBtn')?.addEventListener('click', () => {
     setTimeout(refreshQuickDates, 0)

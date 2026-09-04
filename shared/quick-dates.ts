@@ -57,3 +57,15 @@ export const createSubmissionGuard = (): (() => boolean) => {
     return true
   }
 }
+
+export const createResettableSubmissionGuard = (): { trySubmit: () => boolean; reset: () => void } => {
+  let submitting = false
+  return {
+    trySubmit: () => {
+      if (submitting) return false
+      submitting = true
+      return true
+    },
+    reset: () => { submitting = false }
+  }
+}
