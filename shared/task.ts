@@ -202,8 +202,10 @@ export const persistState = async (): Promise<boolean> => {
   }
 }
 
-export const getFilteredTasks = (): Task[] => {
+export const getFilteredTasks = (options: { ignoreFilters?: boolean } = {}): Task[] => {
+  const ignoreFilters = options.ignoreFilters === true
   return state.tasks.filter(t => {
+    if (ignoreFilters) return true
     if (state.hideCompleted && t.completed) return false
     if (state.hideOverdue && !t.noTimeLimit && t.dueDate < getTodayStr()) return false
     if (state.filterPriority !== 'all' && t.priority !== state.filterPriority) return false
@@ -600,8 +602,8 @@ export const getWeeklyGoalStats = (): WeeklyGoalStats | null => {
   }
 }
 
-export const getStats = () => {
-  const tasks = getFilteredTasks().filter(isExecutableTask)
+export const getStats = (ignoreFilters = false) => {
+  const tasks = (ignoreFilters ? state.tasks : getFilteredTasks()).filter(isExecutableTask)
   const pending = tasks.filter(t => !t.completed && t.repeatType === 'none').reduce((s, t) => s + t.duration, 0)
   const done = tasks.filter(t => t.completed && t.repeatType === 'none').reduce((s, t) => s + t.duration, 0)
   const overdueCount = tasks.filter(t => !t.completed && !t.noTimeLimit && isOverdue(t.dueDate, false)).length

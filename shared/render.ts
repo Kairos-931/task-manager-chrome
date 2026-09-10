@@ -38,6 +38,12 @@ export const renderSyncIndicator = (): string => {
 }
 
 // ==================== 渲染函数 ====================
+const getPageTasks = (): Task[] => (
+  window.location.pathname.includes('popup')
+    ? getFilteredTasks({ ignoreFilters: true })
+    : getFilteredTasks()
+)
+
 export const renderWeeklyGoalCard = (): string => {
   const stats = getWeeklyGoalStats()
   if (!stats) {
@@ -200,8 +206,8 @@ export const renderGoalSettingsModal = (): string => {
 }
 
 export const renderStats = (): string => {
-  const stats = getStats()
   const isPopup = window.location.pathname.includes('popup')
+  const stats = getStats(isPopup)
   return `
     <div id="statsRow" class="stats-row">
       <div class="stats-row-bar">
@@ -247,7 +253,7 @@ export const renderHeader = (): string => {
           ` : ''}
         </div>
         <div class="header-utility-actions w-full flex items-center justify-end gap-2 flex-wrap">
-        ${isNewTab ? '' : `<button id="toggleFiltersBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="展开筛选" aria-expanded="false" aria-controls="taskFilters">
+        ${isNewTab ? '' : `<button id="toggleFiltersBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="${isPopup ? '查看今日聚焦规则' : '展开筛选'}" aria-expanded="false" aria-controls="taskFilters">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 01.8 1.6L14 13.67V19a1 1 0 01-.45.83l-4 2.67A1 1 0 018 21.67v-8L3.2 4.6A1 1 0 013 4z"/></svg>
         </button>`}
         <button id="darkModeBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="切换深色模式">
@@ -273,10 +279,18 @@ export const renderHeader = (): string => {
 }
 
 export const renderFilters = (): string => {
-  const { hideCompleted, hideOverdue, filterPriority, filterCategory, categories = [] } = getState()
   const isPopup = window.location.pathname.includes('popup')
+  if (isPopup) {
+    return `
+      <div id="taskFilters" class="hidden popup-focus-rules" role="note">
+        <span class="popup-focus-rules-label">今日聚焦固定规则</span>
+        <span>已完成与未完成都显示 · 不受管理页筛选影响</span>
+      </div>
+    `
+  }
+  const { hideCompleted, hideOverdue, filterPriority, filterCategory, categories = [] } = getState()
   return `
-    <div id="taskFilters" class="${isPopup ? 'hidden ' : ''}flex flex-wrap gap-3 p-3 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 mb-4 items-center text-sm">
+    <div id="taskFilters" class="flex flex-wrap gap-3 p-3 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 mb-4 items-center text-sm">
       <div class="flex items-center gap-1">
         <span class="text-gray-500">优先级</span>
         <select id="filterPriority" class="px-2 py-1 border dark:border-gray-600 rounded bg-white dark:bg-gray-700 dark:text-white text-sm">
@@ -305,7 +319,11 @@ export const renderFilters = (): string => {
   `
 }
 
-export const renderTaskItem = (task: Task): string => {
+interface TaskItemRenderOptions {
+  popupFocus?: boolean
+}
+
+export const renderTaskItem = (task: Task, options: TaskItemRenderOptions = {}): string => {
   const category = getState().categories.find(c => c.id === task.category)
   const overdue = !task.noTimeLimit && isOverdue(task.dueDate, task.completed)
   const today = formatDate(new Date())
@@ -340,7 +358,7 @@ export const renderTaskItem = (task: Task): string => {
 
   if (task.isParent) {
     const progress = getParentTaskProgress(task)
-    const children = getFilteredTasks().filter(child => child.parentId === task.id)
+    const children = getPageTasks().filter(child => child.parentId === task.id)
     return `
       <div class="p-4 bg-white dark:bg-gray-800${task.completed ? ' opacity-60' : ''}" data-task-id="${task.id}">
         <div class="flex items-start gap-3">
@@ -376,6 +394,39 @@ export const renderTaskItem = (task: Task): string => {
   }
 
   if (isPopup) {
+    if (options.popupFocus) {
+      return `
+        <div class="task-row popup-task-row popup-focus-task-row flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${task.completed ? 'opacity-60' : ''}" data-task-id="${task.id}" draggable="true">
+          <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${task.completed ? 'bg-green-500 border-green-500' : 'border-gray-300 dark:border-gray-500'} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" title="${task.completed ? '标记为未完成' : '标记为完成'}" aria-label="${task.completed ? '取消完成' : '完成'} ${escapeHtml(task.title)}">
+            ${task.completed ? '<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ''}
+          </button>
+          <div class="w-1.5 h-8 rounded ${getPriorityColor(task.priority)} flex-shrink-0" aria-hidden="true"></div>
+          <div class="task-main flex-1 min-w-0">
+            <div class="font-medium truncate ${task.completed ? 'line-through text-gray-400' : ''}">${escapeHtml(task.title)}</div>
+            <div class="flex items-center gap-2 mt-0.5 text-xs text-gray-400">
+              <span>${task.noTimeLimit ? '任务池' : getDateLabel(task.dueDate)}</span>
+              ${task.duration > 0 ? `<span>· ${formatHours(task.duration)}</span>` : ''}
+            </div>
+          </div>
+          <div class="task-actions popup-focus-actions flex items-center gap-1 flex-shrink-0">
+            ${task.repeatType === 'none' ? `<button class="popup-focus-action popup-focus-replan overdue-replan" data-id="${task.id}" title="重新排期" aria-label="重新排期 ${escapeHtml(task.title)}">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M7 4v6m10-6v6M5 11h14a1 1 0 011 1v7a1 1 0 01-1 1H5a1 1 0 01-1-1v-7a1 1 0 011-1z"/></svg>
+            </button>` : ''}
+            <button class="popup-focus-action task-edit" data-id="${task.id}" title="编辑" aria-label="编辑 ${escapeHtml(task.title)}">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+            </button>
+            <details class="task-more-menu flex-shrink-0">
+              <summary class="task-more-trigger" title="更多操作" aria-label="${escapeHtml(task.title)}的更多操作">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+              </summary>
+              <div class="task-more-popover">
+                <button class="task-delete task-more-danger" data-id="${task.id}">删除任务</button>
+              </div>
+            </details>
+          </div>
+        </div>
+      `
+    }
     return `
       <div class="task-row popup-task-row flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${task.completed ? 'opacity-60' : ''} ${overdue && !task.completed ? 'bg-red-50/50 dark:bg-red-900/10' : ''}" data-task-id="${task.id}" draggable="true">
         <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${task.completed ? 'bg-green-500 border-green-500' : task.noTimeLimit ? 'border-dashed border-gray-400' : 'border-gray-300 dark:border-gray-500'} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" title="${task.completed ? '标记为未完成' : '标记为已完成'}">
@@ -467,15 +518,16 @@ const renderOverdueTaskItem = (task: Task): string => {
 export const renderFocusView = (): string => {
   const state = getState()
   const today = formatDate(new Date())
-  const visibleFocused = getFilteredTasks().filter(task => !task.isParent && isTaskDueOnDate(task, today)).filter(task => {
+  const isPopup = window.location.pathname.includes('popup')
+  const visibleFocused = getPageTasks().filter(task => !task.isParent && isTaskDueOnDate(task, today)).filter(task => {
     // A recurring task advances its dueDate after today's instance is done.
     // The next instance belongs to its future date, not to today's focus list.
-    return task.repeatType === 'none' || !isTaskCompletedOnDate(task, today)
+    return isPopup || task.repeatType === 'none' || !isTaskCompletedOnDate(task, today)
   })
   const overdue = state.tasks.filter(task => {
     if (task.isParent || task.completed || task.noTimeLimit || !task.dueDate || task.dueDate >= today) return false
-    if (state.filterPriority !== 'all' && task.priority !== state.filterPriority) return false
-    if (state.filterCategory !== 'all' && task.category !== state.filterCategory) return false
+    if (!isPopup && state.filterPriority !== 'all' && task.priority !== state.filterPriority) return false
+    if (!isPopup && state.filterCategory !== 'all' && task.category !== state.filterCategory) return false
     return true
   })
 
@@ -499,7 +551,7 @@ export const renderFocusView = (): string => {
           <span class="focus-panel-count">${visibleFocused.length} 项</span>
         </div>
         ${visibleFocused.length > 0
-          ? `<div class="focus-panel-list">${visibleFocused.map(task => renderTaskItem(task)).join('')}</div>`
+          ? `<div class="focus-panel-list">${visibleFocused.map(task => renderTaskItem(task, isPopup ? { popupFocus: true } : undefined)).join('')}</div>`
           : '<div class="focus-panel-empty"><p>今天没有计划任务</p><p>为任务设置今天的计划日期后会自动出现在这里。</p></div>'}
       </section>
     </div>
@@ -541,7 +593,7 @@ const renderPoolTaskItem = (task: Task): string => {
 }
 
 export const renderPoolView = (): string => {
-  const tasks = getTaskPoolTasks(getFilteredTasks())
+  const tasks = getTaskPoolTasks(getPageTasks())
   return `
     <section class="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl overflow-hidden">
       <div class="px-4 py-3 border-b dark:border-gray-700 flex items-center justify-between gap-3">
@@ -556,7 +608,7 @@ export const renderPoolView = (): string => {
 }
 
 export const renderListView = (): string => {
-  const tasks = getFilteredTasks()
+  const tasks = getPageTasks()
   const today = formatDate(new Date())
   if (tasks.length === 0) {
     return `<div id="todayAnchor" data-date="${today}" class="today-anchor">今天 · 当前筛选无任务</div><div class="text-center py-12 text-gray-400"><p class="text-lg">暂无任务</p></div>`
@@ -594,7 +646,7 @@ export const renderListView = (): string => {
 
 export const renderDayView = (): string => {
   const { currentDate } = getState()
-  const tasks = getFilteredTasks().filter(t => !t.noTimeLimit && isTaskDueOnDate(t, currentDate))
+  const tasks = getPageTasks().filter(t => !t.noTimeLimit && isTaskDueOnDate(t, currentDate))
   const todayStr = formatDate(new Date())
   const isToday = currentDate === todayStr
   return `
@@ -625,7 +677,7 @@ export const renderWeekView = (): string => {
   const weekStart = days[0]
   const todayStr = formatDate(new Date())
   const isCurrentWeek = getWeekDates(todayStr)[0] === weekStart
-  const visibleTasks = getFilteredTasks().filter(task => !task.isParent)
+  const visibleTasks = getPageTasks().filter(task => !task.isParent)
   const tasksByDay = days.map(date => visibleTasks.filter(task => {
     if (!isTaskDueOnDate(task, date)) return false
     return !(state.hideCompleted && isTaskCompletedOnDate(task, date))
@@ -2222,6 +2274,41 @@ export const renderApp = (container: HTMLElement): void => {
         grid-row: 2;
         width: 100%;
       }
+      .popup-focus-rules {
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+        padding: 7px 10px;
+        border: 1px solid #dbeafe;
+        border-radius: 8px;
+        background: #eff6ff;
+        color: #64748b;
+        font-size: 11px;
+        line-height: 1.35;
+      }
+      .popup-focus-rules:not(.hidden) { display: flex; }
+      .dark .popup-focus-rules { border-color: #1e3a8a; background: rgba(30,64,175,0.18); color: #cbd5e1; }
+      .popup-focus-rules-label { color: #2563eb; font-weight: 600; white-space: nowrap; }
+      .dark .popup-focus-rules-label { color: #93c5fd; }
+      .popup-focus-actions {
+        flex-shrink: 0;
+        gap: 2px;
+        white-space: nowrap;
+      }
+      .popup-focus-action {
+        display: flex;
+        width: 30px;
+        height: 30px;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        padding: 0;
+        border-radius: 8px;
+        color: #64748b;
+      }
+      .popup-focus-action:hover { background: #f1f5f9; color: #2563eb; }
+      .dark .popup-focus-action { color: #94a3b8; }
+      .dark .popup-focus-action:hover { background: #374151; color: #93c5fd; }
       .task-more-menu { position: relative; }
       .task-more-trigger {
         display: flex;
@@ -2274,6 +2361,13 @@ export const renderApp = (container: HTMLElement): void => {
         .app-header-actions { width: 100%; }
         .view-nav { align-self: stretch; }
         .popup-app-header .app-header-actions { width: auto; }
+      }
+      @media (max-width: 520px) {
+        .popup-task-row { flex-wrap: nowrap; align-items: center; }
+        .popup-task-row .task-main { flex: 1 1 auto; }
+        .popup-task-row .task-actions { width: auto; padding-left: 0; margin-top: 0; }
+        .popup-focus-task-row { gap: 5px; padding-left: 10px; padding-right: 8px; }
+        .popup-focus-task-row .popup-focus-action { width: 28px; height: 28px; }
       }
     `
     document.head.appendChild(style)

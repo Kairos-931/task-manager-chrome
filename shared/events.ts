@@ -163,7 +163,10 @@ export const attachEventListeners = (container: HTMLElement): void => {
     const expanded = filters.classList.contains('hidden')
     filters.classList.toggle('hidden', !expanded)
     button.setAttribute('aria-expanded', String(expanded))
-    button.title = expanded ? '收起筛选' : '展开筛选'
+    const isPopup = window.location.pathname.includes('popup')
+    button.title = expanded
+      ? (isPopup ? '收起今日聚焦规则' : '收起筛选')
+      : (isPopup ? '查看今日聚焦规则' : '展开筛选')
   })
 
   // 视图切换

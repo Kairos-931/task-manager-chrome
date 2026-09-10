@@ -13,7 +13,7 @@ assert.match(typesSource, /'focus' \| 'pool' \| 'list' \| 'day' \| 'week' \| 'mo
 assert.match(renderSource, /data-view="focus"[\s\S]*data-view="pool"[\s\S]*data-view="list"[\s\S]*data-view="day"[\s\S]*data-view="week"[\s\S]*data-view="month"/)
 assert.match(renderSource, />全部任务<\/button>/)
 assert.doesNotMatch(renderSource, /id="showNoTimeLimitOnly"/)
-assert.match(renderSource, /getTaskPoolTasks\(getFilteredTasks\(\)\)/)
+assert.match(renderSource, /getTaskPoolTasks\(getPageTasks\(\)\)/)
 assert.match(renderSource, />安排到今天<\/button>/)
 assert.match(renderSource, />选择日期<\/button>/)
 assert.match(renderSource, /class="task-split[^"]*"[^>]*>拆分<\/button>/)

@@ -48,7 +48,8 @@ const [renderSource, eventSource, prdSource] = await Promise.all([
   readFile(new URL('../shared/events.ts', import.meta.url), 'utf8'),
   readFile(new URL('../docs/PRD.md', import.meta.url), 'utf8'),
 ])
-assert.match(renderSource, /visibleFocused = getFilteredTasks\(\)\.filter\(task => !task\.isParent && isTaskDueOnDate\(task, today\)\)/)
+assert.match(renderSource, /visibleFocused = getPageTasks\(\)\.filter\(task => !task\.isParent && isTaskDueOnDate\(task, today\)\)/)
+assert.match(renderSource, /window\.location\.pathname\.includes\('popup'\)[\s\S]*getFilteredTasks\(\{ ignoreFilters: true \}\)/)
 assert.doesNotMatch(renderSource, /今天真正要完成什么？/, 'removed focus summary card must not return')
 assert.match(renderSource, /toggleOverdueSection/)
 assert.match(renderSource, /overdueCollapsed/)

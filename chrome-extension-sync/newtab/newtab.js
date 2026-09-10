@@ -1156,8 +1156,11 @@ var TaskManager = (() => {
           return false;
         }
       };
-      getFilteredTasks = () => {
+      getFilteredTasks = (options = {}) => {
+        const ignoreFilters = options.ignoreFilters === true;
         return state.tasks.filter((t) => {
+          if (ignoreFilters)
+            return true;
           if (state.hideCompleted && t.completed)
             return false;
           if (state.hideOverdue && !t.noTimeLimit && t.dueDate < getTodayStr())
@@ -1539,8 +1542,8 @@ var TaskManager = (() => {
           behindExpected: gap < 0
         };
       };
-      getStats = () => {
-        const tasks = getFilteredTasks().filter(isExecutableTask);
+      getStats = (ignoreFilters = false) => {
+        const tasks = (ignoreFilters ? state.tasks : getFilteredTasks()).filter(isExecutableTask);
         const pending = tasks.filter((t) => !t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
         const done = tasks.filter((t) => t.completed && t.repeatType === "none").reduce((s, t) => s + t.duration, 0);
         const overdueCount = tasks.filter((t) => !t.completed && !t.noTimeLimit && isOverdue(t.dueDate, false)).length;
@@ -1644,6 +1647,7 @@ var TaskManager = (() => {
     };
     return icons[status];
   };
+  var getPageTasks = () => window.location.pathname.includes("popup") ? getFilteredTasks({ ignoreFilters: true }) : getFilteredTasks();
   var renderWeeklyGoalCard = () => {
     const stats = getWeeklyGoalStats();
     if (!stats) {
@@ -1797,8 +1801,8 @@ var TaskManager = (() => {
   `;
   };
   var renderStats = () => {
-    const stats = getStats();
     const isPopup = window.location.pathname.includes("popup");
+    const stats = getStats(isPopup);
     return `
     <div id="statsRow" class="stats-row">
       <div class="stats-row-bar">
@@ -1843,7 +1847,7 @@ var TaskManager = (() => {
           ` : ""}
         </div>
         <div class="header-utility-actions w-full flex items-center justify-end gap-2 flex-wrap">
-        ${isNewTab ? "" : `<button id="toggleFiltersBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="\u5C55\u5F00\u7B5B\u9009" aria-expanded="false" aria-controls="taskFilters">
+        ${isNewTab ? "" : `<button id="toggleFiltersBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="${isPopup ? "\u67E5\u770B\u4ECA\u65E5\u805A\u7126\u89C4\u5219" : "\u5C55\u5F00\u7B5B\u9009"}" aria-expanded="false" aria-controls="taskFilters">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 01.8 1.6L14 13.67V19a1 1 0 01-.45.83l-4 2.67A1 1 0 018 21.67v-8L3.2 4.6A1 1 0 013 4z"/></svg>
         </button>`}
         <button id="darkModeBtn" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition" title="\u5207\u6362\u6DF1\u8272\u6A21\u5F0F">
@@ -1866,10 +1870,18 @@ var TaskManager = (() => {
   `;
   };
   var renderFilters = () => {
-    const { hideCompleted, hideOverdue, filterPriority, filterCategory, categories = [] } = getState();
     const isPopup = window.location.pathname.includes("popup");
+    if (isPopup) {
+      return `
+      <div id="taskFilters" class="hidden popup-focus-rules" role="note">
+        <span class="popup-focus-rules-label">\u4ECA\u65E5\u805A\u7126\u56FA\u5B9A\u89C4\u5219</span>
+        <span>\u5DF2\u5B8C\u6210\u4E0E\u672A\u5B8C\u6210\u90FD\u663E\u793A \xB7 \u4E0D\u53D7\u7BA1\u7406\u9875\u7B5B\u9009\u5F71\u54CD</span>
+      </div>
+    `;
+    }
+    const { hideCompleted, hideOverdue, filterPriority, filterCategory, categories = [] } = getState();
     return `
-    <div id="taskFilters" class="${isPopup ? "hidden " : ""}flex flex-wrap gap-3 p-3 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 mb-4 items-center text-sm">
+    <div id="taskFilters" class="flex flex-wrap gap-3 p-3 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 mb-4 items-center text-sm">
       <div class="flex items-center gap-1">
         <span class="text-gray-500">\u4F18\u5148\u7EA7</span>
         <select id="filterPriority" class="px-2 py-1 border dark:border-gray-600 rounded bg-white dark:bg-gray-700 dark:text-white text-sm">
@@ -1897,7 +1909,7 @@ var TaskManager = (() => {
     </div>
   `;
   };
-  var renderTaskItem = (task) => {
+  var renderTaskItem = (task, options = {}) => {
     const category = getState().categories.find((c) => c.id === task.category);
     const overdue = !task.noTimeLimit && isOverdue(task.dueDate, task.completed);
     const today = formatDate(/* @__PURE__ */ new Date());
@@ -1930,7 +1942,7 @@ var TaskManager = (() => {
     }
     if (task.isParent) {
       const progress = getParentTaskProgress(task);
-      const children = getFilteredTasks().filter((child) => child.parentId === task.id);
+      const children = getPageTasks().filter((child) => child.parentId === task.id);
       return `
       <div class="p-4 bg-white dark:bg-gray-800${task.completed ? " opacity-60" : ""}" data-task-id="${task.id}">
         <div class="flex items-start gap-3">
@@ -1965,6 +1977,39 @@ var TaskManager = (() => {
     `;
     }
     if (isPopup) {
+      if (options.popupFocus) {
+        return `
+        <div class="task-row popup-task-row popup-focus-task-row flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${task.completed ? "opacity-60" : ""}" data-task-id="${task.id}" draggable="true">
+          <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${task.completed ? "bg-green-500 border-green-500" : "border-gray-300 dark:border-gray-500"} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" title="${task.completed ? "\u6807\u8BB0\u4E3A\u672A\u5B8C\u6210" : "\u6807\u8BB0\u4E3A\u5B8C\u6210"}" aria-label="${task.completed ? "\u53D6\u6D88\u5B8C\u6210" : "\u5B8C\u6210"} ${escapeHtml(task.title)}">
+            ${task.completed ? '<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ""}
+          </button>
+          <div class="w-1.5 h-8 rounded ${getPriorityColor(task.priority)} flex-shrink-0" aria-hidden="true"></div>
+          <div class="task-main flex-1 min-w-0">
+            <div class="font-medium truncate ${task.completed ? "line-through text-gray-400" : ""}">${escapeHtml(task.title)}</div>
+            <div class="flex items-center gap-2 mt-0.5 text-xs text-gray-400">
+              <span>${task.noTimeLimit ? "\u4EFB\u52A1\u6C60" : getDateLabel(task.dueDate)}</span>
+              ${task.duration > 0 ? `<span>\xB7 ${formatHours(task.duration)}</span>` : ""}
+            </div>
+          </div>
+          <div class="task-actions popup-focus-actions flex items-center gap-1 flex-shrink-0">
+            ${task.repeatType === "none" ? `<button class="popup-focus-action popup-focus-replan overdue-replan" data-id="${task.id}" title="\u91CD\u65B0\u6392\u671F" aria-label="\u91CD\u65B0\u6392\u671F ${escapeHtml(task.title)}">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M7 4v6m10-6v6M5 11h14a1 1 0 011 1v7a1 1 0 01-1 1H5a1 1 0 01-1-1v-7a1 1 0 011-1z"/></svg>
+            </button>` : ""}
+            <button class="popup-focus-action task-edit" data-id="${task.id}" title="\u7F16\u8F91" aria-label="\u7F16\u8F91 ${escapeHtml(task.title)}">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+            </button>
+            <details class="task-more-menu flex-shrink-0">
+              <summary class="task-more-trigger" title="\u66F4\u591A\u64CD\u4F5C" aria-label="${escapeHtml(task.title)}\u7684\u66F4\u591A\u64CD\u4F5C">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+              </summary>
+              <div class="task-more-popover">
+                <button class="task-delete task-more-danger" data-id="${task.id}">\u5220\u9664\u4EFB\u52A1</button>
+              </div>
+            </details>
+          </div>
+        </div>
+      `;
+      }
       return `
       <div class="task-row popup-task-row flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${task.completed ? "opacity-60" : ""} ${overdue && !task.completed ? "bg-red-50/50 dark:bg-red-900/10" : ""}" data-task-id="${task.id}" draggable="true">
         <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${task.completed ? "bg-green-500 border-green-500" : task.noTimeLimit ? "border-dashed border-gray-400" : "border-gray-300 dark:border-gray-500"} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" title="${task.completed ? "\u6807\u8BB0\u4E3A\u672A\u5B8C\u6210" : "\u6807\u8BB0\u4E3A\u5DF2\u5B8C\u6210"}">
@@ -2052,15 +2097,16 @@ var TaskManager = (() => {
   var renderFocusView = () => {
     const state2 = getState();
     const today = formatDate(/* @__PURE__ */ new Date());
-    const visibleFocused = getFilteredTasks().filter((task) => !task.isParent && isTaskDueOnDate(task, today)).filter((task) => {
-      return task.repeatType === "none" || !isTaskCompletedOnDate(task, today);
+    const isPopup = window.location.pathname.includes("popup");
+    const visibleFocused = getPageTasks().filter((task) => !task.isParent && isTaskDueOnDate(task, today)).filter((task) => {
+      return isPopup || task.repeatType === "none" || !isTaskCompletedOnDate(task, today);
     });
     const overdue = state2.tasks.filter((task) => {
       if (task.isParent || task.completed || task.noTimeLimit || !task.dueDate || task.dueDate >= today)
         return false;
-      if (state2.filterPriority !== "all" && task.priority !== state2.filterPriority)
+      if (!isPopup && state2.filterPriority !== "all" && task.priority !== state2.filterPriority)
         return false;
-      if (state2.filterCategory !== "all" && task.category !== state2.filterCategory)
+      if (!isPopup && state2.filterCategory !== "all" && task.category !== state2.filterCategory)
         return false;
       return true;
     });
@@ -2083,7 +2129,7 @@ var TaskManager = (() => {
           <div class="focus-panel-copy"><h3>\u4ECA\u65E5\u805A\u7126</h3><p>\u81EA\u52A8\u663E\u793A\u8BA1\u5212\u65E5\u671F\u4E3A\u4ECA\u5929\u7684\u4EFB\u52A1\u3002</p></div>
           <span class="focus-panel-count">${visibleFocused.length} \u9879</span>
         </div>
-        ${visibleFocused.length > 0 ? `<div class="focus-panel-list">${visibleFocused.map((task) => renderTaskItem(task)).join("")}</div>` : '<div class="focus-panel-empty"><p>\u4ECA\u5929\u6CA1\u6709\u8BA1\u5212\u4EFB\u52A1</p><p>\u4E3A\u4EFB\u52A1\u8BBE\u7F6E\u4ECA\u5929\u7684\u8BA1\u5212\u65E5\u671F\u540E\u4F1A\u81EA\u52A8\u51FA\u73B0\u5728\u8FD9\u91CC\u3002</p></div>'}
+        ${visibleFocused.length > 0 ? `<div class="focus-panel-list">${visibleFocused.map((task) => renderTaskItem(task, isPopup ? { popupFocus: true } : void 0)).join("")}</div>` : '<div class="focus-panel-empty"><p>\u4ECA\u5929\u6CA1\u6709\u8BA1\u5212\u4EFB\u52A1</p><p>\u4E3A\u4EFB\u52A1\u8BBE\u7F6E\u4ECA\u5929\u7684\u8BA1\u5212\u65E5\u671F\u540E\u4F1A\u81EA\u52A8\u51FA\u73B0\u5728\u8FD9\u91CC\u3002</p></div>'}
       </section>
     </div>
   `;
@@ -2123,7 +2169,7 @@ var TaskManager = (() => {
   `;
   };
   var renderPoolView = () => {
-    const tasks = getTaskPoolTasks(getFilteredTasks());
+    const tasks = getTaskPoolTasks(getPageTasks());
     return `
     <section class="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-xl overflow-hidden">
       <div class="px-4 py-3 border-b dark:border-gray-700 flex items-center justify-between gap-3">
@@ -2135,7 +2181,7 @@ var TaskManager = (() => {
   `;
   };
   var renderListView = () => {
-    const tasks = getFilteredTasks();
+    const tasks = getPageTasks();
     const today = formatDate(/* @__PURE__ */ new Date());
     if (tasks.length === 0) {
       return `<div id="todayAnchor" data-date="${today}" class="today-anchor">\u4ECA\u5929 \xB7 \u5F53\u524D\u7B5B\u9009\u65E0\u4EFB\u52A1</div><div class="text-center py-12 text-gray-400"><p class="text-lg">\u6682\u65E0\u4EFB\u52A1</p></div>`;
@@ -2175,7 +2221,7 @@ var TaskManager = (() => {
   };
   var renderDayView = () => {
     const { currentDate } = getState();
-    const tasks = getFilteredTasks().filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, currentDate));
+    const tasks = getPageTasks().filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, currentDate));
     const todayStr = formatDate(/* @__PURE__ */ new Date());
     const isToday = currentDate === todayStr;
     return `
@@ -2205,7 +2251,7 @@ var TaskManager = (() => {
     const weekStart = days[0];
     const todayStr = formatDate(/* @__PURE__ */ new Date());
     const isCurrentWeek = getWeekDates(todayStr)[0] === weekStart;
-    const visibleTasks = getFilteredTasks().filter((task) => !task.isParent);
+    const visibleTasks = getPageTasks().filter((task) => !task.isParent);
     const tasksByDay = days.map((date) => visibleTasks.filter((task) => {
       if (!isTaskDueOnDate(task, date))
         return false;
@@ -3775,6 +3821,41 @@ var TaskManager = (() => {
         grid-row: 2;
         width: 100%;
       }
+      .popup-focus-rules {
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+        padding: 7px 10px;
+        border: 1px solid #dbeafe;
+        border-radius: 8px;
+        background: #eff6ff;
+        color: #64748b;
+        font-size: 11px;
+        line-height: 1.35;
+      }
+      .popup-focus-rules:not(.hidden) { display: flex; }
+      .dark .popup-focus-rules { border-color: #1e3a8a; background: rgba(30,64,175,0.18); color: #cbd5e1; }
+      .popup-focus-rules-label { color: #2563eb; font-weight: 600; white-space: nowrap; }
+      .dark .popup-focus-rules-label { color: #93c5fd; }
+      .popup-focus-actions {
+        flex-shrink: 0;
+        gap: 2px;
+        white-space: nowrap;
+      }
+      .popup-focus-action {
+        display: flex;
+        width: 30px;
+        height: 30px;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        padding: 0;
+        border-radius: 8px;
+        color: #64748b;
+      }
+      .popup-focus-action:hover { background: #f1f5f9; color: #2563eb; }
+      .dark .popup-focus-action { color: #94a3b8; }
+      .dark .popup-focus-action:hover { background: #374151; color: #93c5fd; }
       .task-more-menu { position: relative; }
       .task-more-trigger {
         display: flex;
@@ -3827,6 +3908,13 @@ var TaskManager = (() => {
         .app-header-actions { width: 100%; }
         .view-nav { align-self: stretch; }
         .popup-app-header .app-header-actions { width: auto; }
+      }
+      @media (max-width: 520px) {
+        .popup-task-row { flex-wrap: nowrap; align-items: center; }
+        .popup-task-row .task-main { flex: 1 1 auto; }
+        .popup-task-row .task-actions { width: auto; padding-left: 0; margin-top: 0; }
+        .popup-focus-task-row { gap: 5px; padding-left: 10px; padding-right: 8px; }
+        .popup-focus-task-row .popup-focus-action { width: 28px; height: 28px; }
       }
     `;
       document.head.appendChild(style);
@@ -4086,7 +4174,8 @@ var TaskManager = (() => {
       const expanded = filters.classList.contains("hidden");
       filters.classList.toggle("hidden", !expanded);
       button.setAttribute("aria-expanded", String(expanded));
-      button.title = expanded ? "\u6536\u8D77\u7B5B\u9009" : "\u5C55\u5F00\u7B5B\u9009";
+      const isPopup = window.location.pathname.includes("popup");
+      button.title = expanded ? isPopup ? "\u6536\u8D77\u4ECA\u65E5\u805A\u7126\u89C4\u5219" : "\u6536\u8D77\u7B5B\u9009" : isPopup ? "\u67E5\u770B\u4ECA\u65E5\u805A\u7126\u89C4\u5219" : "\u5C55\u5F00\u7B5B\u9009";
     });
     container.querySelectorAll("[data-view]").forEach((btn) => {
       btn.addEventListener("click", (e) => {
