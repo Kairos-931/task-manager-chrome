@@ -202,11 +202,12 @@ export const persistState = async (): Promise<boolean> => {
   }
 }
 
-export const getFilteredTasks = (options: { ignoreFilters?: boolean } = {}): Task[] => {
+export const getFilteredTasks = (options: { ignoreFilters?: boolean; ignoreCompleted?: boolean } = {}): Task[] => {
   const ignoreFilters = options.ignoreFilters === true
+  const ignoreCompleted = options.ignoreCompleted === true
   return state.tasks.filter(t => {
     if (ignoreFilters) return true
-    if (state.hideCompleted && t.completed) return false
+    if (state.hideCompleted && !ignoreCompleted && t.completed) return false
     if (state.hideOverdue && !t.noTimeLimit && t.dueDate < getTodayStr()) return false
     if (state.filterPriority !== 'all' && t.priority !== state.filterPriority) return false
     if (state.filterCategory !== 'all' && t.category !== state.filterCategory) return false

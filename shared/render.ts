@@ -38,10 +38,10 @@ export const renderSyncIndicator = (): string => {
 }
 
 // ==================== 渲染函数 ====================
-const getPageTasks = (): Task[] => (
+const getPageTasks = (options: { ignoreCompleted?: boolean } = {}): Task[] => (
   window.location.pathname.includes('popup')
     ? getFilteredTasks({ ignoreFilters: true })
-    : getFilteredTasks()
+    : getFilteredTasks(options)
 )
 
 export const renderWeeklyGoalCard = (): string => {
@@ -321,11 +321,15 @@ export const renderFilters = (): string => {
 
 interface TaskItemRenderOptions {
   popupFocus?: boolean
+  occurrenceDate?: string
 }
 
 export const renderTaskItem = (task: Task, options: TaskItemRenderOptions = {}): string => {
   const category = getState().categories.find(c => c.id === task.category)
-  const overdue = !task.noTimeLimit && isOverdue(task.dueDate, task.completed)
+  const occurrenceDate = options.occurrenceDate
+  const displayDate = occurrenceDate || task.dueDate
+  const displayCompleted = occurrenceDate ? isTaskCompletedOnDate(task, occurrenceDate) : task.completed
+  const overdue = !task.noTimeLimit && isOverdue(displayDate, displayCompleted)
   const today = formatDate(new Date())
   const parent = task.parentId ? getState().tasks.find(item => item.id === task.parentId) : undefined
   const isPopup = window.location.pathname.includes('popup')
@@ -457,23 +461,23 @@ export const renderTaskItem = (task: Task, options: TaskItemRenderOptions = {}):
   }
 
   return `
-    <div class="task-row flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${task.completed ? 'opacity-60' : ''} ${task.noTimeLimit ? 'border-l-[3px] border-dashed border-gray-300 dark:border-gray-600 pl-3 -ml-3' : ''} ${overdue && !task.completed ? 'bg-red-50/50 dark:bg-red-900/10' : ''}" data-task-id="${task.id}" draggable="true">
+    <div class="task-row flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${displayCompleted ? 'opacity-60' : ''} ${task.noTimeLimit ? 'border-l-[3px] border-dashed border-gray-300 dark:border-gray-600 pl-3 -ml-3' : ''} ${overdue && !displayCompleted ? 'bg-red-50/50 dark:bg-red-900/10' : ''}" data-task-id="${task.id}" draggable="true">
       <div class="w-2 h-8 rounded ${getPriorityColor(task.priority)} flex-shrink-0"></div>
-      <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${task.completed ? 'bg-green-500 border-green-500' : task.noTimeLimit ? 'border-dashed border-gray-400' : 'border-gray-300 dark:border-gray-500'} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}">
-        ${task.completed ? '<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ''}
+      <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${displayCompleted ? 'bg-green-500 border-green-500' : task.noTimeLimit ? 'border-dashed border-gray-400' : 'border-gray-300 dark:border-gray-500'} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" data-task-date="${occurrenceDate && task.repeatType !== 'none' ? occurrenceDate : ''}" title="${displayCompleted ? '标记为未完成' : '标记为已完成'}" aria-label="${displayCompleted ? '恢复' : '完成'} ${escapeHtml(task.title)}">
+        ${displayCompleted ? '<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ''}
       </button>
       <div class="task-main flex-1 min-w-0">
         <div class="flex items-center gap-2">
-          <span class="font-medium truncate ${task.completed ? 'line-through text-gray-400' : ''}">${escapeHtml(task.title)}</span>
+          <span class="font-medium truncate ${displayCompleted ? 'line-through text-gray-400' : ''}">${escapeHtml(task.title)}</span>
           ${category ? `<span class="text-xs px-2 py-0.5 rounded flex-shrink-0" style="background-color: ${category.color}20; color: ${category.color}">${escapeHtml(category.name)}</span>` : ''}
           ${task.noTimeLimit ? `<span class="text-xs px-2 py-0.5 rounded flex-shrink-0 bg-gray-100 dark:bg-gray-700 text-gray-500">无期限</span>` : ''}
           ${parent ? `<span class="text-xs px-2 py-0.5 rounded flex-shrink-0 bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-300">属于 ${escapeHtml(parent.title)}</span>` : ''}
         </div>
         <div class="flex items-center gap-3 mt-1 text-xs text-gray-400">
           ${task.duration > 0 ? `<span>${formatHours(task.duration)}</span>` : ''}
-          ${!task.noTimeLimit ? `<span class="${overdue ? 'text-red-500 font-medium' : ''}">${getRemainingTime(task.dueDate, task.completed)}</span>` : ''}
+          ${!task.noTimeLimit ? `<span class="${overdue ? 'text-red-500 font-medium' : ''}">${getRemainingTime(displayDate, displayCompleted)}</span>` : ''}
           ${task.repeatType !== 'none' ? `<span class="text-blue-500">🔄</span>` : ''}
-          ${task.hardDeadline ? `<span class="${task.hardDeadline < today && !task.completed ? 'text-red-600 font-medium' : 'text-red-400'}">硬截止 ${task.hardDeadline}</span>` : ''}
+          ${task.hardDeadline ? `<span class="${task.hardDeadline < today && !displayCompleted ? 'text-red-600 font-medium' : 'text-red-400'}">硬截止 ${task.hardDeadline}</span>` : ''}
         </div>
         ${task.description ? `<p class="text-sm text-gray-500 mt-1 truncate dark:text-gray-400">${escapeHtml(task.description)}</p>` : ''}
       </div>
@@ -645,8 +649,10 @@ export const renderListView = (): string => {
 }
 
 export const renderDayView = (): string => {
-  const { currentDate } = getState()
-  const tasks = getPageTasks().filter(t => !t.noTimeLimit && isTaskDueOnDate(t, currentDate))
+  const { currentDate, hideCompleted } = getState()
+  const tasks = getPageTasks({ ignoreCompleted: true })
+    .filter(t => !t.noTimeLimit && isTaskDueOnDate(t, currentDate))
+    .filter(t => !hideCompleted || !isTaskCompletedOnDate(t, currentDate))
   const todayStr = formatDate(new Date())
   const isToday = currentDate === todayStr
   return `
@@ -664,7 +670,7 @@ export const renderDayView = (): string => {
         </button>
       </div>
       <div class="${tasks.length === 0 ? 'py-8 text-center text-gray-400' : ''}">
-        ${tasks.length === 0 ? '今日无任务' : tasks.map(t => renderTaskItem(t)).join('')}
+        ${tasks.length === 0 ? '今日无任务' : tasks.map(t => renderTaskItem(t, { occurrenceDate: currentDate })).join('')}
       </div>
     </div>
   `
