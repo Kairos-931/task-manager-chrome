@@ -1101,7 +1101,20 @@ export const renderModal = (): string => {
   `
 }
 
-export const renderSplitChildRow = (index: number, child?: { title: string; duration: number; dueDate: string; id?: string }, dueDate?: string): string => `
+interface SplitChildRowOptions {
+  allowUnscheduled?: boolean
+}
+
+export const renderSplitChildRow = (
+  index: number,
+  child?: { title: string; duration: number; dueDate: string; id?: string },
+  dueDate?: string,
+  options: SplitChildRowOptions = {}
+): string => {
+  const selectedDate = dueDate ?? ''
+  const allowUnscheduled = options.allowUnscheduled === true
+  const dateStatus = selectedDate ? `已安排 ${selectedDate}` : '暂不安排 · 进入任务池'
+  return `
   <div class="split-child-row grid gap-2 p-3 rounded-lg border dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30"${child?.id ? ` data-child-id="${child.id}"` : ''}>
     <input type="text" class="split-child-title px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${child ? escapeHtml(child.title) : ''}" placeholder="子任务 ${index + 1}" required aria-label="子任务标题">
     <button type="button" class="remove-split-child p-2 text-gray-400 hover:text-red-500 rounded" title="删除此子任务" aria-label="删除此子任务">×</button>
@@ -1114,14 +1127,18 @@ export const renderSplitChildRow = (index: number, child?: { title: string; dura
           <button type="button" class="split-duration-increase px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="增加 0.5 小时">+</button>
         </div>
       </div>
-      <div class="split-quick-dates">${renderQuickDates(dueDate ?? '')}</div>
+      <div class="split-quick-dates">${renderQuickDates(selectedDate)}</div>
       <div class="split-child-field split-child-date-field">
-        <label class="split-child-field-label">自定义日期</label>
-        <input type="date" class="split-child-date w-full px-2 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${dueDate ?? ''}" required aria-label="计划日期">
+        ${allowUnscheduled
+          ? `<div class="split-child-date-heading"><span class="split-child-field-label">计划日期</span><button type="button" class="split-child-unscheduled" aria-pressed="${selectedDate ? 'false' : 'true'}">暂不安排</button></div>`
+          : '<span class="split-child-field-label">自定义日期</span>'}
+        <input type="date" class="split-child-date w-full px-2 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${selectedDate}"${allowUnscheduled ? '' : ' required'} aria-label="${allowUnscheduled ? '计划日期（可选）' : '计划日期'}">
+        ${allowUnscheduled ? `<span class="split-child-date-status" data-date-state="${selectedDate ? 'scheduled' : 'unscheduled'}">${dateStatus}</span>` : ''}
       </div>
     </div>
   </div>
 `
+}
 
 export const renderReplanModal = (): string => {
   const { replanningTaskId, tasks } = getState()
@@ -1181,7 +1198,6 @@ export const renderReplanModal = (): string => {
 export const renderSplitModal = (): string => {
   const { splittingTaskId, tasks } = getState()
   const task = tasks.find(item => item.id === splittingTaskId)
-  const today = formatDate(new Date())
   const existingChildren = task?.isParent
     ? tasks.filter(child => child.parentId === task.id)
         .sort((a, b) => a.createdAt - b.createdAt)
@@ -1203,7 +1219,7 @@ export const renderSplitModal = (): string => {
         </div>
         <form id="splitTaskForm" class="split-task-form space-y-4" novalidate>
           <div id="splitChildren" class="split-children space-y-2" style="max-height:min(48svh,460px)">
-            ${rowsToRender.map((child, index) => renderSplitChildRow(index, child, child ? child.dueDate : today)).join('')}
+            ${rowsToRender.map((child, index) => renderSplitChildRow(index, child, child?.dueDate || '', { allowUnscheduled: true })).join('')}
           </div>
           <button type="button" id="addSplitChildBtn" class="split-add-button text-sm text-blue-600 hover:underline">+ 添加一个步骤</button>
           <p id="splitTaskError" class="hidden text-sm text-red-500"></p>
@@ -2113,7 +2129,44 @@ export const renderApp = (container: HTMLElement): void => {
       }
       .split-child-date-field,
       .split-quick-dates { min-width: 0; }
+      .split-child-date-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 4px;
+        min-width: 0;
+        margin-bottom: 4px;
+      }
+      .split-child-date-heading .split-child-field-label { margin-bottom: 0; }
+      .split-child-unscheduled {
+        flex-shrink: 0;
+        padding: 2px 5px;
+        border: 1px solid #d1d5db;
+        border-radius: 5px;
+        color: #6b7280;
+        font-size: 9px;
+        line-height: 1.2;
+        white-space: nowrap;
+      }
+      .split-child-unscheduled[aria-pressed="true"] {
+        border-color: #818cf8;
+        background: #eef2ff;
+        color: #4f46e5;
+      }
+      .split-child-date-status {
+        display: block;
+        margin-top: 3px;
+        overflow: hidden;
+        color: #9ca3af;
+        font-size: 9px;
+        line-height: 1.2;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       .dark .split-child-field-label { color: #9ca3af; }
+      .dark .split-child-unscheduled { border-color: #4b5563; color: #9ca3af; }
+      .dark .split-child-unscheduled[aria-pressed="true"] { border-color: #818cf8; background: rgba(99,102,241,0.18); color: #c7d2fe; }
+      .dark .split-child-date-status { color: #9ca3af; }
 
       @media (max-width: 520px) {
         .task-row { flex-wrap: wrap; align-items: flex-start; }

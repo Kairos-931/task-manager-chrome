@@ -442,7 +442,7 @@ export interface SplitChildInput {
 
 export const splitTask = (id: string, children: SplitChildInput[]): boolean => {
   const task = state.tasks.find(t => t.id === id)
-  const validChildren = children.filter(child => child.title.trim() && child.duration > 0 && child.dueDate)
+  const validChildren = children.filter(child => child.title.trim() && child.duration > 0)
   if (!task || task.repeatType !== 'none' || validChildren.length < 2) return false
 
   const now = Date.now()
@@ -455,19 +455,22 @@ export const splitTask = (id: string, children: SplitChildInput[]): boolean => {
       if (match) {
         match.title = child.title.trim()
         match.duration = child.duration
-        match.dueDate = child.dueDate
-        match.focusDate = child.dueDate === getTodayStr() ? getTodayStr() : undefined
+        const childDate = child.dueDate || ''
+        match.dueDate = childDate
+        match.noTimeLimit = childDate.length === 0
+        match.focusDate = childDate === getTodayStr() ? getTodayStr() : undefined
         match.updatedAt = now
       } else {
+        const childDate = child.dueDate || ''
         state.tasks.push({
           id: generateId(),
           title: child.title.trim(),
           description: '',
           priority: task.priority,
           category: task.category,
-          dueDate: child.dueDate,
+          dueDate: childDate,
           hardDeadline: task.hardDeadline,
-          focusDate: child.dueDate === getTodayStr() ? getTodayStr() : undefined,
+          focusDate: childDate === getTodayStr() ? getTodayStr() : undefined,
           duration: child.duration,
           repeatType: 'none',
           repeatDays: [],
@@ -476,7 +479,7 @@ export const splitTask = (id: string, children: SplitChildInput[]): boolean => {
           completedDates: [],
           createdAt: now,
           updatedAt: now,
-          noTimeLimit: false,
+          noTimeLimit: childDate.length === 0,
           parentId: task.id
         })
       }
@@ -500,7 +503,7 @@ export const splitTask = (id: string, children: SplitChildInput[]): boolean => {
   task.updatedAt = now
 
   for (const child of validChildren) {
-    const childDate = child.dueDate
+    const childDate = child.dueDate || ''
     state.tasks.push({
       id: generateId(),
       title: child.title.trim(),
@@ -518,7 +521,7 @@ export const splitTask = (id: string, children: SplitChildInput[]): boolean => {
       completedDates: [],
       createdAt: now,
       updatedAt: now,
-      noTimeLimit: false,
+      noTimeLimit: childDate.length === 0,
       parentId: task.id
     })
   }

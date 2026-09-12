@@ -1,7 +1,7 @@
 import type { Priority, Task, ViewMode } from './types'
 import { getState, setState, setLocalSettings, resetEditingTask, formatDate, persistState, moveTaskToDate, loadState, shiftMonth } from './task'
 import { toggleTask as toggleTaskAction, toggleTaskOnDate, deleteTask as deleteTaskAction, addTask, updateTask, addCategory, updateCategory, deleteCategory as deleteCategoryAction, focusTaskToday, replanTask, moveTaskToPool, splitTask, createParentWithChildrenPersisted } from './task'
-import { renderApp, renderQuickDates, renderSplitChildRow } from './render'
+import { renderApp, renderSplitChildRow } from './render'
 import { downloadExportFile, importDataFromFile } from './storage'
 import { showToast } from './sync'
 import { bindTaskQuickDates, bindSplitQuickDates, createSubmissionGuard, createResettableSubmissionGuard } from './quick-dates'
@@ -686,6 +686,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
     })
   }
   bindSplitRemoveButtons()
+  let splitTaskSnapshot: Task[] | null = null
 
   // 子任务时长步进器（与主任务弹窗一致：每次 ±0.5h，范围 0.5-24）
   splitTaskModal?.addEventListener('click', (e) => {
@@ -704,29 +705,13 @@ export const attachEventListeners = (container: HTMLElement): void => {
   if (splitTaskModal) bindSplitQuickDates(splitTaskModal)
 
   container.querySelector('#addSplitChildBtn')?.addEventListener('click', () => {
-    const list = container.querySelector('#splitChildren')
+    const list = container.querySelector<HTMLElement>('#splitChildren')
     if (!list) return
     const index = list.querySelectorAll('.split-child-row').length
-    const row = document.createElement('div')
-    row.className = 'split-child-row grid gap-2 p-3 rounded-lg border dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30'
-    row.innerHTML = `
-      <input type="text" class="split-child-title px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" placeholder="子任务 ${index + 1}" required aria-label="子任务标题">
-      <button type="button" class="remove-split-child p-2 text-gray-400 hover:text-red-500 rounded" title="删除此子任务" aria-label="删除此子任务">×</button>
-      <div class="split-child-schedule">
-        <div class="split-child-field split-child-duration-field">
-          <span class="split-child-field-label">预计时间</span>
-          <div class="split-child-duration-control">
-            <button type="button" class="split-duration-decrease px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="减少 0.5 小时">−</button>
-            <input type="number" class="split-child-duration w-14 text-center px-1 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="1" min="0.5" step="0.5" aria-label="预计小时">
-            <button type="button" class="split-duration-increase px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="增加 0.5 小时">+</button>
-          </div>
-        </div>
-        <div class="split-quick-dates">${renderQuickDates(formatDate(new Date()))}</div>
-        <div class="split-child-field split-child-date-field">
-          <label class="split-child-field-label">自定义日期</label>
-          <input type="date" class="split-child-date w-full px-2 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${formatDate(new Date())}" required aria-label="计划日期">
-        </div>
-      </div>`
+    const wrapper = document.createElement('div')
+    wrapper.innerHTML = renderSplitChildRow(index, undefined, '', { allowUnscheduled: true })
+    const row = wrapper.firstElementChild as HTMLElement | null
+    if (!row) return
     list.appendChild(row)
     bindSplitRemoveButtons()
     row.querySelector<HTMLInputElement>('.split-child-title')?.focus()
@@ -750,7 +735,6 @@ export const attachEventListeners = (container: HTMLElement): void => {
     })
     const invalidChildIndex = children.findIndex(child =>
       !child.title ||
-      !child.dueDate ||
       !Number.isFinite(child.durationHours) ||
       child.durationHours < 0.5 ||
       child.durationHours > 24 ||
@@ -761,34 +745,45 @@ export const attachEventListeners = (container: HTMLElement): void => {
       return
     }
     if (invalidChildIndex !== -1) {
-      const invalidChild = children[invalidChildIndex]
-      const invalidRow = rows[invalidChildIndex]
-      const invalidField = !invalidChild?.title
-        ? invalidRow?.querySelector<HTMLInputElement>('.split-child-title')
-        : !invalidChild?.dueDate
-          ? invalidRow?.querySelector<HTMLInputElement>('.split-child-date')
-          : invalidRow?.querySelector<HTMLInputElement>('.split-child-duration')
-      const message = !invalidChild?.title
-        ? `请填写子任务 ${invalidChildIndex + 1} 的标题。`
-        : !invalidChild.dueDate
-          ? `请为子任务 ${invalidChildIndex + 1} 选择计划日期，或先在任务列表中安排它。`
-          : `子任务 ${invalidChildIndex + 1} 的预计时间需为 0.5 至 24 小时，并以 0.5 小时递增。`
+    const invalidChild = children[invalidChildIndex]
+    const invalidRow = rows[invalidChildIndex]
+    const invalidField = !invalidChild?.title
+      ? invalidRow?.querySelector<HTMLInputElement>('.split-child-title')
+      : invalidRow?.querySelector<HTMLInputElement>('.split-child-duration')
+    const message = !invalidChild?.title
+      ? `请填写子任务 ${invalidChildIndex + 1} 的标题。`
+      : `子任务 ${invalidChildIndex + 1} 的预计时间需为 0.5 至 24 小时，并以 0.5 小时递增。`
       showSplitError(message)
       invalidField?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       invalidField?.focus()
       return
     }
     if (!canSubmitSplit()) return
+    splitTaskSnapshot = getState().tasks.map(task => ({
+      ...task,
+      repeatDays: [...(task.repeatDays || [])],
+      completedDates: [...(task.completedDates || [])]
+    }))
     if (!splitTask(splittingTaskId, children)) {
+      splitTaskSnapshot = null
       showSplitError('该任务当前无法拆分，请确认它不是循环任务。')
       return
     }
     const submitButton = (e.target as HTMLFormElement).querySelector<HTMLButtonElement>('button[type="submit"]')
     if (submitButton) submitButton.disabled = true
+    const saved = await persistState()
+    if (!saved) {
+      if (splitTaskSnapshot) setState({ tasks: splitTaskSnapshot })
+      splitTaskSnapshot = null
+      if (submitButton) submitButton.disabled = false
+      showSplitError('拆分保存失败，请重试')
+      return
+    }
+    splitTaskSnapshot = null
     setState({ splittingTaskId: null })
-    await persistState()
     reRender()
-    showToast(container, `已保存 ${children.length} 个子任务`, 'success')
+    const waitingCount = children.filter(child => !child.dueDate).length
+    showToast(container, `已拆分 ${children.length} 个子任务，其中 ${waitingCount} 个待安排`, 'success')
   })
   taskForm?.addEventListener('change', () => {
     taskFormDirty = true

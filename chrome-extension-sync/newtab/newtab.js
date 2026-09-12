@@ -1422,7 +1422,7 @@ var TaskManager = (() => {
       };
       splitTask = (id, children) => {
         const task = state.tasks.find((t) => t.id === id);
-        const validChildren = children.filter((child) => child.title.trim() && child.duration > 0 && child.dueDate);
+        const validChildren = children.filter((child) => child.title.trim() && child.duration > 0);
         if (!task || task.repeatType !== "none" || validChildren.length < 2)
           return false;
         const now = Date.now();
@@ -1433,19 +1433,22 @@ var TaskManager = (() => {
             if (match) {
               match.title = child.title.trim();
               match.duration = child.duration;
-              match.dueDate = child.dueDate;
-              match.focusDate = child.dueDate === getTodayStr() ? getTodayStr() : void 0;
+              const childDate = child.dueDate || "";
+              match.dueDate = childDate;
+              match.noTimeLimit = childDate.length === 0;
+              match.focusDate = childDate === getTodayStr() ? getTodayStr() : void 0;
               match.updatedAt = now;
             } else {
+              const childDate = child.dueDate || "";
               state.tasks.push({
                 id: generateId(),
                 title: child.title.trim(),
                 description: "",
                 priority: task.priority,
                 category: task.category,
-                dueDate: child.dueDate,
+                dueDate: childDate,
                 hardDeadline: task.hardDeadline,
-                focusDate: child.dueDate === getTodayStr() ? getTodayStr() : void 0,
+                focusDate: childDate === getTodayStr() ? getTodayStr() : void 0,
                 duration: child.duration,
                 repeatType: "none",
                 repeatDays: [],
@@ -1454,7 +1457,7 @@ var TaskManager = (() => {
                 completedDates: [],
                 createdAt: now,
                 updatedAt: now,
-                noTimeLimit: false,
+                noTimeLimit: childDate.length === 0,
                 parentId: task.id
               });
             }
@@ -1475,7 +1478,7 @@ var TaskManager = (() => {
         task.focusDate = void 0;
         task.updatedAt = now;
         for (const child of validChildren) {
-          const childDate = child.dueDate;
+          const childDate = child.dueDate || "";
           state.tasks.push({
             id: generateId(),
             title: child.title.trim(),
@@ -1493,7 +1496,7 @@ var TaskManager = (() => {
             completedDates: [],
             createdAt: now,
             updatedAt: now,
-            noTimeLimit: false,
+            noTimeLimit: childDate.length === 0,
             parentId: task.id
           });
         }
@@ -2744,7 +2747,11 @@ var TaskManager = (() => {
     </div>
   `;
   };
-  var renderSplitChildRow = (index, child, dueDate) => `
+  var renderSplitChildRow = (index, child, dueDate, options = {}) => {
+    const selectedDate = dueDate ?? "";
+    const allowUnscheduled = options.allowUnscheduled === true;
+    const dateStatus = selectedDate ? `\u5DF2\u5B89\u6392 ${selectedDate}` : "\u6682\u4E0D\u5B89\u6392 \xB7 \u8FDB\u5165\u4EFB\u52A1\u6C60";
+    return `
   <div class="split-child-row grid gap-2 p-3 rounded-lg border dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30"${child?.id ? ` data-child-id="${child.id}"` : ""}>
     <input type="text" class="split-child-title px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${child ? escapeHtml(child.title) : ""}" placeholder="\u5B50\u4EFB\u52A1 ${index + 1}" required aria-label="\u5B50\u4EFB\u52A1\u6807\u9898">
     <button type="button" class="remove-split-child p-2 text-gray-400 hover:text-red-500 rounded" title="\u5220\u9664\u6B64\u5B50\u4EFB\u52A1" aria-label="\u5220\u9664\u6B64\u5B50\u4EFB\u52A1">\xD7</button>
@@ -2757,14 +2764,16 @@ var TaskManager = (() => {
           <button type="button" class="split-duration-increase px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="\u589E\u52A0 0.5 \u5C0F\u65F6">+</button>
         </div>
       </div>
-      <div class="split-quick-dates">${renderQuickDates(dueDate ?? "")}</div>
+      <div class="split-quick-dates">${renderQuickDates(selectedDate)}</div>
       <div class="split-child-field split-child-date-field">
-        <label class="split-child-field-label">\u81EA\u5B9A\u4E49\u65E5\u671F</label>
-        <input type="date" class="split-child-date w-full px-2 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${dueDate ?? ""}" required aria-label="\u8BA1\u5212\u65E5\u671F">
+        ${allowUnscheduled ? `<div class="split-child-date-heading"><span class="split-child-field-label">\u8BA1\u5212\u65E5\u671F</span><button type="button" class="split-child-unscheduled" aria-pressed="${selectedDate ? "false" : "true"}">\u6682\u4E0D\u5B89\u6392</button></div>` : '<span class="split-child-field-label">\u81EA\u5B9A\u4E49\u65E5\u671F</span>'}
+        <input type="date" class="split-child-date w-full px-2 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${selectedDate}"${allowUnscheduled ? "" : " required"} aria-label="${allowUnscheduled ? "\u8BA1\u5212\u65E5\u671F\uFF08\u53EF\u9009\uFF09" : "\u8BA1\u5212\u65E5\u671F"}">
+        ${allowUnscheduled ? `<span class="split-child-date-status" data-date-state="${selectedDate ? "scheduled" : "unscheduled"}">${dateStatus}</span>` : ""}
       </div>
     </div>
   </div>
 `;
+  };
   var renderReplanModal = () => {
     const { replanningTaskId, tasks } = getState();
     const task = tasks.find((item) => item.id === replanningTaskId);
@@ -2822,7 +2831,6 @@ var TaskManager = (() => {
   var renderSplitModal = () => {
     const { splittingTaskId, tasks } = getState();
     const task = tasks.find((item) => item.id === splittingTaskId);
-    const today = formatDate(/* @__PURE__ */ new Date());
     const existingChildren = task?.isParent ? tasks.filter((child) => child.parentId === task.id).sort((a, b) => a.createdAt - b.createdAt).map((child) => ({ id: child.id, title: child.title, duration: child.duration, dueDate: child.dueDate })) : [];
     const rowsToRender = task?.isParent && existingChildren.length >= 2 ? existingChildren : [void 0, void 0];
     return `
@@ -2839,7 +2847,7 @@ var TaskManager = (() => {
         </div>
         <form id="splitTaskForm" class="split-task-form space-y-4" novalidate>
           <div id="splitChildren" class="split-children space-y-2" style="max-height:min(48svh,460px)">
-            ${rowsToRender.map((child, index) => renderSplitChildRow(index, child, child ? child.dueDate : today)).join("")}
+            ${rowsToRender.map((child, index) => renderSplitChildRow(index, child, child?.dueDate || "", { allowUnscheduled: true })).join("")}
           </div>
           <button type="button" id="addSplitChildBtn" class="split-add-button text-sm text-blue-600 hover:underline">+ \u6DFB\u52A0\u4E00\u4E2A\u6B65\u9AA4</button>
           <p id="splitTaskError" class="hidden text-sm text-red-500"></p>
@@ -3744,7 +3752,44 @@ var TaskManager = (() => {
       }
       .split-child-date-field,
       .split-quick-dates { min-width: 0; }
+      .split-child-date-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 4px;
+        min-width: 0;
+        margin-bottom: 4px;
+      }
+      .split-child-date-heading .split-child-field-label { margin-bottom: 0; }
+      .split-child-unscheduled {
+        flex-shrink: 0;
+        padding: 2px 5px;
+        border: 1px solid #d1d5db;
+        border-radius: 5px;
+        color: #6b7280;
+        font-size: 9px;
+        line-height: 1.2;
+        white-space: nowrap;
+      }
+      .split-child-unscheduled[aria-pressed="true"] {
+        border-color: #818cf8;
+        background: #eef2ff;
+        color: #4f46e5;
+      }
+      .split-child-date-status {
+        display: block;
+        margin-top: 3px;
+        overflow: hidden;
+        color: #9ca3af;
+        font-size: 9px;
+        line-height: 1.2;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       .dark .split-child-field-label { color: #9ca3af; }
+      .dark .split-child-unscheduled { border-color: #4b5563; color: #9ca3af; }
+      .dark .split-child-unscheduled[aria-pressed="true"] { border-color: #818cf8; background: rgba(99,102,241,0.18); color: #c7d2fe; }
+      .dark .split-child-date-status { color: #9ca3af; }
 
       @media (max-width: 520px) {
         .task-row { flex-wrap: wrap; align-items: flex-start; }
@@ -4075,20 +4120,40 @@ var TaskManager = (() => {
     return refresh;
   };
   var bindSplitQuickDates = (splitTaskModal) => {
+    const syncSplitDateRow = (row, date) => {
+      row.querySelectorAll(".quick-date-btn").forEach((button) => {
+        const selected = button.dataset.date === date;
+        button.classList.toggle("selected", selected);
+        button.setAttribute("aria-pressed", String(selected));
+      });
+      const unscheduled = row.querySelector(".split-child-unscheduled");
+      const isUnscheduled = date.length === 0;
+      unscheduled?.classList.toggle("selected", isUnscheduled);
+      unscheduled?.setAttribute("aria-pressed", String(isUnscheduled));
+      const status = row.querySelector(".split-child-date-status");
+      if (status) {
+        status.dataset.dateState = isUnscheduled ? "unscheduled" : "scheduled";
+        status.textContent = isUnscheduled ? "\u6682\u4E0D\u5B89\u6392 \xB7 \u8FDB\u5165\u4EFB\u52A1\u6C60" : `\u5DF2\u5B89\u6392 ${date}`;
+      }
+    };
     splitTaskModal.addEventListener("click", (event) => {
       const target = event.target;
+      const unscheduled = target.closest(".split-child-unscheduled");
       const button = target.closest(".split-quick-dates .quick-date-btn");
-      const row = button?.closest(".split-child-row");
+      const row = (unscheduled || button)?.closest(".split-child-row");
       const input = row?.querySelector(".split-child-date");
       const date = button?.dataset.date;
-      if (!button || !row || !input || !date)
+      if (!row || !input)
+        return;
+      if (unscheduled) {
+        input.value = "";
+        syncSplitDateRow(row, "");
+        return;
+      }
+      if (!button || !date)
         return;
       input.value = date;
-      row.querySelectorAll(".quick-date-btn").forEach((item) => {
-        const selected = item.dataset.date === date;
-        item.classList.toggle("selected", selected);
-        item.setAttribute("aria-pressed", String(selected));
-      });
+      syncSplitDateRow(row, date);
     });
     splitTaskModal.addEventListener("change", (event) => {
       const input = event.target;
@@ -4097,11 +4162,7 @@ var TaskManager = (() => {
       const row = input.closest(".split-child-row");
       if (!row)
         return;
-      row.querySelectorAll(".quick-date-btn").forEach((button) => {
-        const selected = button.dataset.date === input.value;
-        button.classList.toggle("selected", selected);
-        button.setAttribute("aria-pressed", String(selected));
-      });
+      syncSplitDateRow(row, input.value);
     });
   };
   var createSubmissionGuard = () => {
@@ -4778,6 +4839,7 @@ var TaskManager = (() => {
       });
     };
     bindSplitRemoveButtons();
+    let splitTaskSnapshot = null;
     splitTaskModal?.addEventListener("click", (e) => {
       const target = e.target;
       const isDec = target.classList.contains("split-duration-decrease");
@@ -4798,26 +4860,11 @@ var TaskManager = (() => {
       if (!list)
         return;
       const index = list.querySelectorAll(".split-child-row").length;
-      const row = document.createElement("div");
-      row.className = "split-child-row grid gap-2 p-3 rounded-lg border dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30";
-      row.innerHTML = `
-      <input type="text" class="split-child-title px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" placeholder="\u5B50\u4EFB\u52A1 ${index + 1}" required aria-label="\u5B50\u4EFB\u52A1\u6807\u9898">
-      <button type="button" class="remove-split-child p-2 text-gray-400 hover:text-red-500 rounded" title="\u5220\u9664\u6B64\u5B50\u4EFB\u52A1" aria-label="\u5220\u9664\u6B64\u5B50\u4EFB\u52A1">\xD7</button>
-      <div class="split-child-schedule">
-        <div class="split-child-field split-child-duration-field">
-          <span class="split-child-field-label">\u9884\u8BA1\u65F6\u95F4</span>
-          <div class="split-child-duration-control">
-            <button type="button" class="split-duration-decrease px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="\u51CF\u5C11 0.5 \u5C0F\u65F6">\u2212</button>
-            <input type="number" class="split-child-duration w-14 text-center px-1 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="1" min="0.5" step="0.5" aria-label="\u9884\u8BA1\u5C0F\u65F6">
-            <button type="button" class="split-duration-increase px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="\u589E\u52A0 0.5 \u5C0F\u65F6">+</button>
-          </div>
-        </div>
-        <div class="split-quick-dates">${renderQuickDates(formatDate(/* @__PURE__ */ new Date()))}</div>
-        <div class="split-child-field split-child-date-field">
-          <label class="split-child-field-label">\u81EA\u5B9A\u4E49\u65E5\u671F</label>
-          <input type="date" class="split-child-date w-full px-2 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${formatDate(/* @__PURE__ */ new Date())}" required aria-label="\u8BA1\u5212\u65E5\u671F">
-        </div>
-      </div>`;
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = renderSplitChildRow(index, void 0, "", { allowUnscheduled: true });
+      const row = wrapper.firstElementChild;
+      if (!row)
+        return;
       list.appendChild(row);
       bindSplitRemoveButtons();
       row.querySelector(".split-child-title")?.focus();
@@ -4840,7 +4887,7 @@ var TaskManager = (() => {
         };
       });
       const invalidChildIndex = children.findIndex(
-        (child) => !child.title || !child.dueDate || !Number.isFinite(child.durationHours) || child.durationHours < 0.5 || child.durationHours > 24 || Math.abs(child.durationHours * 2 - Math.round(child.durationHours * 2)) > Number.EPSILON
+        (child) => !child.title || !Number.isFinite(child.durationHours) || child.durationHours < 0.5 || child.durationHours > 24 || Math.abs(child.durationHours * 2 - Math.round(child.durationHours * 2)) > Number.EPSILON
       );
       if (children.length < 2) {
         showSplitError("\u81F3\u5C11\u4FDD\u7559\u4E24\u4E2A\u5B50\u4EFB\u52A1\u3002");
@@ -4849,8 +4896,8 @@ var TaskManager = (() => {
       if (invalidChildIndex !== -1) {
         const invalidChild = children[invalidChildIndex];
         const invalidRow = rows[invalidChildIndex];
-        const invalidField = !invalidChild?.title ? invalidRow?.querySelector(".split-child-title") : !invalidChild?.dueDate ? invalidRow?.querySelector(".split-child-date") : invalidRow?.querySelector(".split-child-duration");
-        const message = !invalidChild?.title ? `\u8BF7\u586B\u5199\u5B50\u4EFB\u52A1 ${invalidChildIndex + 1} \u7684\u6807\u9898\u3002` : !invalidChild.dueDate ? `\u8BF7\u4E3A\u5B50\u4EFB\u52A1 ${invalidChildIndex + 1} \u9009\u62E9\u8BA1\u5212\u65E5\u671F\uFF0C\u6216\u5148\u5728\u4EFB\u52A1\u5217\u8868\u4E2D\u5B89\u6392\u5B83\u3002` : `\u5B50\u4EFB\u52A1 ${invalidChildIndex + 1} \u7684\u9884\u8BA1\u65F6\u95F4\u9700\u4E3A 0.5 \u81F3 24 \u5C0F\u65F6\uFF0C\u5E76\u4EE5 0.5 \u5C0F\u65F6\u9012\u589E\u3002`;
+        const invalidField = !invalidChild?.title ? invalidRow?.querySelector(".split-child-title") : invalidRow?.querySelector(".split-child-duration");
+        const message = !invalidChild?.title ? `\u8BF7\u586B\u5199\u5B50\u4EFB\u52A1 ${invalidChildIndex + 1} \u7684\u6807\u9898\u3002` : `\u5B50\u4EFB\u52A1 ${invalidChildIndex + 1} \u7684\u9884\u8BA1\u65F6\u95F4\u9700\u4E3A 0.5 \u81F3 24 \u5C0F\u65F6\uFF0C\u5E76\u4EE5 0.5 \u5C0F\u65F6\u9012\u589E\u3002`;
         showSplitError(message);
         invalidField?.scrollIntoView({ behavior: "smooth", block: "center" });
         invalidField?.focus();
@@ -4858,17 +4905,34 @@ var TaskManager = (() => {
       }
       if (!canSubmitSplit())
         return;
+      splitTaskSnapshot = getState().tasks.map((task) => ({
+        ...task,
+        repeatDays: [...task.repeatDays || []],
+        completedDates: [...task.completedDates || []]
+      }));
       if (!splitTask(splittingTaskId, children)) {
+        splitTaskSnapshot = null;
         showSplitError("\u8BE5\u4EFB\u52A1\u5F53\u524D\u65E0\u6CD5\u62C6\u5206\uFF0C\u8BF7\u786E\u8BA4\u5B83\u4E0D\u662F\u5FAA\u73AF\u4EFB\u52A1\u3002");
         return;
       }
       const submitButton = e.target.querySelector('button[type="submit"]');
       if (submitButton)
         submitButton.disabled = true;
+      const saved = await persistState();
+      if (!saved) {
+        if (splitTaskSnapshot)
+          setState({ tasks: splitTaskSnapshot });
+        splitTaskSnapshot = null;
+        if (submitButton)
+          submitButton.disabled = false;
+        showSplitError("\u62C6\u5206\u4FDD\u5B58\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5");
+        return;
+      }
+      splitTaskSnapshot = null;
       setState({ splittingTaskId: null });
-      await persistState();
       reRender();
-      showToast(container, `\u5DF2\u4FDD\u5B58 ${children.length} \u4E2A\u5B50\u4EFB\u52A1`, "success");
+      const waitingCount = children.filter((child) => !child.dueDate).length;
+      showToast(container, `\u5DF2\u62C6\u5206 ${children.length} \u4E2A\u5B50\u4EFB\u52A1\uFF0C\u5176\u4E2D ${waitingCount} \u4E2A\u5F85\u5B89\u6392`, "success");
     });
     taskForm?.addEventListener("change", () => {
       taskFormDirty = true;
