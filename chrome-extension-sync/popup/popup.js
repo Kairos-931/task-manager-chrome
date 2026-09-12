@@ -48,7 +48,7 @@ var TaskManager = (() => {
     syncToCloud: () => syncToCloud,
     validateImportData: () => validateImportData
   });
-  var STORAGE_KEY, LOCAL_BACKUP_KEY, generateId, DEFAULT_CATEGORY_DEFINITIONS, LEGACY_STARRED_CATEGORY_ID, defaultCategoryByName, createDefaultCategories, defaultCategories, getDefaultData, loadFromLocal, saveToLocal, dedupeCategories, CLOUD_SYNC_SETTINGS_KEY, getCloudSettings, CLOUD_BASE_AT_KEY, getCloudBaseAt, setCloudBaseAt, syncToCloud, syncFromCloud, normalizeStorageData, INCREMENTAL_CURSOR_KEY, INCREMENTAL_DEVICE_KEY, INCREMENTAL_SHADOW_KEY, INCREMENTAL_CLOCK_KEY, OUTGOING_SYNC_BATCH, lastSyncTimestamp, syncQueue, getNextLocalSettingsUpdatedAt, recordKey, nextSyncTimestamp, cloneStorageData, enqueueSync, getLocalValue, setLocalValues, cachedDeviceId, getSyncDeviceIdAsync, getSyncDeviceId, getSyncShadow, getSettingsPayload, samePayload, buildCurrentRecords, buildLocalChanges, applyRemoteChanges, isVirginDefaultData, syncIncrementallyNow, syncIncrementally, isCloudConfigured, isRecoverableNetworkError, warnForSyncFailure, loadData, fixRecurringTasks, isTaskMatchRepeat, saveData, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
+  var STORAGE_KEY, LOCAL_BACKUP_KEY, generateId, DEFAULT_CATEGORY_DEFINITIONS, LEGACY_STARRED_CATEGORY_ID, defaultCategoryByName, createDefaultCategories, defaultCategories, getDefaultData, loadFromLocal, saveToLocal, dedupeCategories, isValidDateOnly, CLOUD_SYNC_SETTINGS_KEY, getCloudSettings, CLOUD_BASE_AT_KEY, getCloudBaseAt, setCloudBaseAt, syncToCloud, syncFromCloud, normalizeStorageData, INCREMENTAL_CURSOR_KEY, INCREMENTAL_DEVICE_KEY, INCREMENTAL_SHADOW_KEY, INCREMENTAL_CLOCK_KEY, OUTGOING_SYNC_BATCH, lastSyncTimestamp, syncQueue, getNextLocalSettingsUpdatedAt, recordKey, nextSyncTimestamp, cloneStorageData, enqueueSync, getLocalValue, setLocalValues, cachedDeviceId, getSyncDeviceIdAsync, getSyncDeviceId, getSyncShadow, getSettingsPayload, samePayload, buildCurrentRecords, buildLocalChanges, applyRemoteChanges, isVirginDefaultData, syncIncrementallyNow, syncIncrementally, isCloudConfigured, isRecoverableNetworkError, warnForSyncFailure, loadData, fixRecurringTasks, isTaskMatchRepeat, isRecurringSeriesComplete, saveData, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
   var init_storage = __esm({
     "shared/storage.ts"() {
       "use strict";
@@ -120,6 +120,15 @@ var TaskManager = (() => {
           }
         }
         return [...map.values()];
+      };
+      isValidDateOnly = (value) => {
+        if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value))
+          return false;
+        const date = /* @__PURE__ */ new Date(`${value}T00:00:00`);
+        if (!Number.isFinite(date.getTime()))
+          return false;
+        const normalized = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+        return normalized === value;
       };
       CLOUD_SYNC_SETTINGS_KEY = "tm_sync_settings";
       getCloudSettings = async () => {
@@ -240,6 +249,7 @@ var TaskManager = (() => {
             category: resolveTaskCategory(task.category || ""),
             hardDeadline: typeof task.hardDeadline === "string" && task.hardDeadline ? task.hardDeadline : void 0,
             focusDate: typeof task.focusDate === "string" && task.focusDate ? task.focusDate : void 0,
+            repeatEndDate: isValidDateOnly(task.repeatEndDate) ? task.repeatEndDate : void 0,
             parentId: typeof task.parentId === "string" && task.parentId ? task.parentId : void 0,
             isParent: task.isParent === true || void 0,
             duration: task.isParent === true ? 0 : task.duration,
@@ -505,9 +515,9 @@ var TaskManager = (() => {
       };
       fixRecurringTasks = (tasks) => tasks.map((t) => {
         if (t.repeatType && t.repeatType !== "none") {
-          t.completed = false;
           if (!Array.isArray(t.completedDates))
             t.completedDates = [];
+          t.repeatEndDate = isValidDateOnly(t.repeatEndDate) ? t.repeatEndDate : void 0;
           if (t.repeatType === "weekly" && (!Array.isArray(t.repeatDays) || t.repeatDays.length === 0)) {
             if (t.repeatStartDate || t.dueDate) {
               const anchor = new Date(t.repeatStartDate || t.dueDate);
@@ -528,6 +538,7 @@ var TaskManager = (() => {
             }
             t.completedDates = completed;
           }
+          t.completed = Boolean(t.repeatEndDate && isRecurringSeriesComplete(t));
         }
         return t;
       });
@@ -551,6 +562,25 @@ var TaskManager = (() => {
           default:
             return false;
         }
+      };
+      isRecurringSeriesComplete = (task) => {
+        if (!isValidDateOnly(task.repeatEndDate))
+          return false;
+        const anchorValue = task.repeatStartDate || task.dueDate;
+        if (!isValidDateOnly(anchorValue) || task.repeatEndDate < anchorValue)
+          return false;
+        const completed = new Set(Array.isArray(task.completedDates) ? task.completedDates : []);
+        const cursor = /* @__PURE__ */ new Date(`${anchorValue}T00:00:00`);
+        const end = /* @__PURE__ */ new Date(`${task.repeatEndDate}T00:00:00`);
+        while (cursor <= end) {
+          if (isTaskMatchRepeat(task, cursor)) {
+            const date = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`;
+            if (!completed.has(date))
+              return false;
+          }
+          cursor.setDate(cursor.getDate() + 1);
+        }
+        return true;
       };
       saveData = async (data, onRemoteData, onSyncResult) => {
         const localData = normalizeStorageData(data);
@@ -832,6 +862,8 @@ var TaskManager = (() => {
         if (!task.repeatType || task.repeatType === "none")
           return task.dueDate === dateString;
         const anchor = task.repeatStartDate || task.dueDate;
+        if (task.repeatEndDate && dateString > task.repeatEndDate)
+          return false;
         if (anchor === dateString)
           return true;
         const date = parseLocalDate(dateString);
@@ -974,7 +1006,7 @@ var TaskManager = (() => {
     updateCategory: () => updateCategory,
     updateTask: () => updateTask
   });
-  var escapeHtml, formatDate, parseDate, formatHours, getDateLabel, getTodayStr, state, getState, setState, setLocalSettings, resetEditingTask, getRemainingTime, isOverdue, getPriorityColor, getCatColor, getCatName, applyStorageData, loadState, persistState, getFilteredTasks, addTask, updateTask, deleteTask, toggleThrottleMap, toggleTask, moveTaskToDate, getNextUncompletedDate, addCategory, updateCategory, toggleTaskOnDate, focusTaskToday, replanTask, moveTaskToPool, splitTask, createParentWithChildren, createParentWithChildrenPersisted, deleteCategory, getWeeklyGoalStats, getStats, getParentTaskProgress;
+  var escapeHtml, formatDate, parseDate, formatHours, getDateLabel, getTodayStr, state, getState, setState, setLocalSettings, resetEditingTask, getRemainingTime, isOverdue, getPriorityColor, getCatColor, getCatName, applyStorageData, loadState, persistState, getFilteredTasks, addTask, updateTask, deleteTask, toggleThrottleMap, toggleTask, moveTaskToDate, isValidDateOnly2, getNextUncompletedDate, hasUncompletedRepeatOccurrence, addCategory, updateCategory, toggleTaskOnDate, focusTaskToday, replanTask, moveTaskToPool, splitTask, createParentWithChildren, createParentWithChildrenPersisted, deleteCategory, getWeeklyGoalStats, getStats, getParentTaskProgress;
   var init_task = __esm({
     "shared/task.ts"() {
       "use strict";
@@ -1240,7 +1272,13 @@ var TaskManager = (() => {
           if (!task.repeatStartDate) {
             task.repeatStartDate = task.dueDate;
           }
-          task.dueDate = getNextUncompletedDate(task, completedDate);
+          const nextDate = getNextUncompletedDate(task, completedDate);
+          if (nextDate) {
+            task.dueDate = nextDate;
+          } else {
+            task.completed = true;
+            task.completedAt = Date.now();
+          }
           task.updatedAt = Date.now();
         } else {
           task.completed = !task.completed;
@@ -1256,20 +1294,50 @@ var TaskManager = (() => {
           task.updatedAt = Date.now();
         }
       };
+      isValidDateOnly2 = (value) => {
+        if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value))
+          return false;
+        const date = parseDate(value);
+        if (!Number.isFinite(date.getTime()))
+          return false;
+        return formatDate(date) === value;
+      };
       getNextUncompletedDate = (task, afterDate) => {
         const completed = task.completedDates || [];
         const after = afterDate ? parseDate(afterDate) : parseDate(getTodayStr());
         const start = new Date(after);
         start.setDate(start.getDate() + 1);
-        for (let i = 0; i < 365; i++) {
+        const hasEnd = isValidDateOnly2(task.repeatEndDate);
+        const end = hasEnd ? parseDate(task.repeatEndDate) : null;
+        for (let i = 0; ; i++) {
           const candidate = new Date(start);
           candidate.setDate(candidate.getDate() + i);
+          if (end && candidate > end)
+            return null;
+          if (!end && i >= 365)
+            return formatDate(start);
           const dateStr = formatDate(candidate);
           if (isTaskDueOnDate(task, dateStr) && !completed.includes(dateStr)) {
             return dateStr;
           }
         }
-        return formatDate(start);
+      };
+      hasUncompletedRepeatOccurrence = (task) => {
+        if (!isValidDateOnly2(task.repeatEndDate))
+          return true;
+        const anchor = task.repeatStartDate || task.dueDate;
+        if (!isValidDateOnly2(anchor) || task.repeatEndDate < anchor)
+          return true;
+        const completed = new Set(task.completedDates || []);
+        const cursor = parseDate(anchor);
+        const end = parseDate(task.repeatEndDate);
+        while (cursor <= end) {
+          const date = formatDate(cursor);
+          if (isTaskDueOnDate(task, date) && !completed.has(date))
+            return true;
+          cursor.setDate(cursor.getDate() + 1);
+        }
+        return false;
       };
       addCategory = (name, color) => {
         const trimmed = name.trim();
@@ -1295,17 +1363,31 @@ var TaskManager = (() => {
           toggleTask(id);
           return;
         }
+        if (!isTaskDueOnDate(task, date))
+          return;
         if (!task.repeatStartDate)
           task.repeatStartDate = task.dueDate || date;
         const completedDates = task.completedDates || [];
         if (completedDates.includes(date)) {
           task.completedDates = completedDates.filter((completedDate) => completedDate !== date);
+          task.completed = false;
+          task.completedAt = void 0;
           if (!task.dueDate || date < task.dueDate)
             task.dueDate = date;
         } else {
           task.completedDates = [...completedDates, date];
-          if (task.dueDate === date)
-            task.dueDate = getNextUncompletedDate(task, date);
+          if (task.dueDate === date) {
+            const nextDate = getNextUncompletedDate(task, date);
+            if (nextDate) {
+              task.dueDate = nextDate;
+            } else {
+              task.completed = true;
+              task.completedAt = Date.now();
+            }
+          } else if (!hasUncompletedRepeatOccurrence(task)) {
+            task.completed = true;
+            task.completedAt = Date.now();
+          }
         }
         task.updatedAt = Date.now();
       };
@@ -1498,7 +1580,10 @@ var TaskManager = (() => {
                 earliest = date;
             }
             if (t.repeatType && t.repeatType !== "none" && t.completedDates?.length > 0) {
-              const firstDate = parseDate(t.completedDates[0]).getTime();
+              const completedDates = t.completedDates.filter((date) => isTaskDueOnDate(t, date));
+              if (completedDates.length === 0)
+                continue;
+              const firstDate = parseDate(completedDates[0]).getTime();
               if (firstDate < earliest)
                 earliest = firstDate;
             }
@@ -1520,8 +1605,9 @@ var TaskManager = (() => {
             completedCount++;
           }
           if (t.repeatType && t.repeatType !== "none" && t.completedDates?.length > 0) {
-            totalMinutes += t.duration * t.completedDates.length;
-            completedCount += t.completedDates.length;
+            const completedDates = t.completedDates.filter((date) => isTaskDueOnDate(t, date));
+            totalMinutes += t.duration * completedDates.length;
+            completedCount += completedDates.length;
           }
         }
         const expectedMinutes = Math.round(weeklyGoalMinutes * weeksElapsed);
@@ -1549,7 +1635,7 @@ var TaskManager = (() => {
         const overdueCount = tasks.filter((t) => !t.completed && !t.noTimeLimit && isOverdue(t.dueDate, false)).length;
         const todayStr = formatDate(/* @__PURE__ */ new Date());
         const todayTasks = tasks.filter((t) => !t.noTimeLimit && isTaskDueOnDate(t, todayStr));
-        const todayDone = todayTasks.filter((t) => t.completed).length;
+        const todayDone = todayTasks.filter((t) => isTaskCompletedOnDate(t, todayStr)).length;
         return { pending, done, overdueCount, todayTotal: todayTasks.length, todayDone };
       };
       getParentTaskProgress = (task) => getTaskProgress(task, state.tasks);
@@ -1980,7 +2066,7 @@ var TaskManager = (() => {
       if (options.popupFocus) {
         return `
         <div class="task-row popup-task-row popup-focus-task-row flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${task.completed ? "opacity-60" : ""}" data-task-id="${task.id}" draggable="true">
-          <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${task.completed ? "bg-green-500 border-green-500" : "border-gray-300 dark:border-gray-500"} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" title="${task.completed ? "\u6807\u8BB0\u4E3A\u672A\u5B8C\u6210" : "\u6807\u8BB0\u4E3A\u5B8C\u6210"}" aria-label="${task.completed ? "\u53D6\u6D88\u5B8C\u6210" : "\u5B8C\u6210"} ${escapeHtml(task.title)}">
+          <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${task.completed ? "bg-green-500 border-green-500" : "border-gray-300 dark:border-gray-500"} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" data-task-date="${task.repeatType !== "none" ? task.dueDate : ""}" title="${task.completed ? "\u6807\u8BB0\u4E3A\u672A\u5B8C\u6210" : "\u6807\u8BB0\u4E3A\u5B8C\u6210"}" aria-label="${task.completed ? "\u53D6\u6D88\u5B8C\u6210" : "\u5B8C\u6210"} ${escapeHtml(task.title)}">
             ${task.completed ? '<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ""}
           </button>
           <div class="w-1.5 h-8 rounded ${getPriorityColor(task.priority)} flex-shrink-0" aria-hidden="true"></div>
@@ -2527,6 +2613,7 @@ var TaskManager = (() => {
       repeatType: "none",
       repeatDays: [],
       repeatInterval: 1,
+      repeatEndDate: "",
       noTimeLimit: false,
       completed: false,
       isParent: false
@@ -2620,6 +2707,11 @@ var TaskManager = (() => {
               <option value="workdays" ${task.repeatType === "workdays" ? "selected" : ""}>\u5DE5\u4F5C\u65E5</option>
               <option value="custom" ${task.repeatType === "custom" ? "selected" : ""}>\u81EA\u5B9A\u4E49\u95F4\u9694</option>
             </select>
+          </div>
+          <div id="repeatEndDateField" class="${task.repeatType === "none" ? "hidden " : ""}mt-4">
+            <label class="block text-sm font-medium mb-1" for="repeatEndDate">\u91CD\u590D\u622A\u6B62\u65E5\u671F *</label>
+            <input type="date" name="repeatEndDate" id="repeatEndDate" value="${task.repeatEndDate || ""}" min="${task.dueDate || ""}" ${task.repeatType !== "none" ? "required" : ""} aria-required="true" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
+            <p id="repeatEndDateError" class="mt-1 text-sm text-red-500" role="alert" aria-live="polite"></p>
           </div>
           <div id="weeklyDays" class="${task.repeatType !== "weekly" ? "hidden" : ""}">
             <label class="block text-sm font-medium mb-1">\u9009\u62E9\u661F\u671F</label>
@@ -3971,6 +4063,7 @@ var TaskManager = (() => {
         if (!date || !input)
           return;
         input.value = date;
+        input.dispatchEvent?.(new Event("change", { bubbles: true }));
         refresh();
       });
     });
@@ -4125,6 +4218,15 @@ var TaskManager = (() => {
     renderApp(currentContainer);
     attachEventListeners(currentContainer);
   }
+  var repeatEndDateErrorFor = (dueDate, repeatEndDate) => {
+    if (!repeatEndDate)
+      return "\u8BF7\u9009\u62E9\u91CD\u590D\u622A\u6B62\u65E5\u671F";
+    if (!dueDate)
+      return "\u8BF7\u9009\u62E9\u9996\u6B21\u8BA1\u5212\u65E5\u671F";
+    if (dueDate && repeatEndDate < dueDate)
+      return "\u91CD\u590D\u622A\u6B62\u65E5\u671F\u4E0D\u80FD\u65E9\u4E8E\u9996\u6B21\u8BA1\u5212\u65E5\u671F";
+    return "";
+  };
   var attachEventListeners = (container) => {
     currentContainer = container;
     bindPopupTaskMenus(container);
@@ -4419,6 +4521,17 @@ var TaskManager = (() => {
       const duration = Math.round(parseFloat(durationInput?.value || "1") * 60) || 60;
       const repeatType = formData.get("repeatType");
       const dueDate = noTimeLimit ? "" : formData.get("dueDate");
+      const repeatEndDate = repeatType === "none" ? "" : (formData.get("repeatEndDate") || "").trim();
+      if (repeatType !== "none") {
+        const repeatEndDateError2 = repeatEndDateErrorFor(dueDate, repeatEndDate);
+        if (repeatEndDateError2) {
+          setRepeatEndDateError(repeatEndDateError2);
+          repeatEndDateInput?.focus();
+          return;
+        }
+      } else {
+        setRepeatEndDateError("");
+      }
       const taskData = {
         ...commonData,
         dueDate,
@@ -4428,6 +4541,7 @@ var TaskManager = (() => {
         repeatType,
         repeatDays,
         repeatInterval: parseInt(formData.get("repeatInterval")) || 1,
+        repeatEndDate: repeatType === "none" ? void 0 : repeatEndDate,
         noTimeLimit
       };
       if (editingTask) {
@@ -4814,7 +4928,44 @@ var TaskManager = (() => {
     container.querySelector("#addTaskBtn")?.addEventListener("click", () => {
       setTimeout(refreshQuickDates, 0);
     });
-    container.querySelector("#repeatType")?.addEventListener("change", (e) => {
+    const repeatTypeInput = container.querySelector("#repeatType");
+    const repeatEndDateField = container.querySelector("#repeatEndDateField");
+    const repeatEndDateInput = container.querySelector("#repeatEndDate");
+    const repeatEndDateError = container.querySelector("#repeatEndDateError");
+    const dueDateInput = container.querySelector('input[name="dueDate"]');
+    const setRepeatEndDateError = (message) => {
+      if (repeatEndDateError)
+        repeatEndDateError.textContent = message;
+      if (repeatEndDateInput && typeof repeatEndDateInput.setCustomValidity === "function") {
+        repeatEndDateInput.setCustomValidity(message);
+      }
+    };
+    const syncRepeatEndDateField = () => {
+      const active = repeatTypeInput?.value !== "none";
+      const value = repeatEndDateInput?.value || "";
+      repeatEndDateField?.classList.toggle("hidden", active === false);
+      if (repeatEndDateInput) {
+        repeatEndDateInput.required = active;
+        repeatEndDateInput.min = dueDateInput?.value || "";
+      }
+      if (active === false || value.length === 0)
+        setRepeatEndDateError("");
+      else
+        setRepeatEndDateError(repeatEndDateErrorFor(dueDateInput?.value || "", value));
+    };
+    repeatEndDateInput?.addEventListener("input", () => {
+      if (repeatEndDateInput.value.length === 0)
+        setRepeatEndDateError("");
+      else
+        setRepeatEndDateError(repeatEndDateErrorFor(dueDateInput?.value || "", repeatEndDateInput.value));
+    });
+    repeatEndDateInput?.addEventListener("invalid", () => {
+      if (repeatTypeInput?.value !== "none") {
+        setRepeatEndDateError(repeatEndDateErrorFor(dueDateInput?.value || "", repeatEndDateInput.value));
+      }
+    });
+    dueDateInput?.addEventListener("change", syncRepeatEndDateField);
+    repeatTypeInput?.addEventListener("change", (e) => {
       const weeklyDays = container.querySelector("#weeklyDays");
       const customInterval = container.querySelector("#customInterval");
       const value = e.target.value;
@@ -4822,7 +4973,9 @@ var TaskManager = (() => {
         weeklyDays.classList.toggle("hidden", value !== "weekly");
       if (customInterval)
         customInterval.classList.toggle("hidden", value !== "custom");
+      syncRepeatEndDateField();
     });
+    syncRepeatEndDateField();
     const isNewTab = window.location.pathname.includes("newtab");
     if (isNewTab) {
       container.querySelector("#manageCategoryBtn")?.addEventListener("click", () => {

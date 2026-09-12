@@ -108,6 +108,13 @@ function reRender() {
   renderApp(currentContainer)
   attachEventListeners(currentContainer)
 }
+const repeatEndDateErrorFor = (dueDate: string, repeatEndDate: string): string => {
+  if (!repeatEndDate) return '请选择重复截止日期'
+  if (!dueDate) return '请选择首次计划日期'
+  if (dueDate && repeatEndDate < dueDate) return '重复截止日期不能早于首次计划日期'
+  return ''
+}
+
 
 export const attachEventListeners = (container: HTMLElement): void => {
   currentContainer = container
@@ -425,6 +432,17 @@ export const attachEventListeners = (container: HTMLElement): void => {
     const duration = Math.round(parseFloat(durationInput?.value || '1') * 60) || 60
     const repeatType = formData.get('repeatType') as Task['repeatType']
     const dueDate = noTimeLimit ? '' : (formData.get('dueDate') as string)
+    const repeatEndDate = repeatType === 'none' ? '' : ((formData.get('repeatEndDate') as string) || '').trim()
+    if (repeatType !== 'none') {
+      const repeatEndDateError = repeatEndDateErrorFor(dueDate, repeatEndDate)
+      if (repeatEndDateError) {
+        setRepeatEndDateError(repeatEndDateError)
+        repeatEndDateInput?.focus()
+        return
+      }
+    } else {
+      setRepeatEndDateError('')
+    }
 
     const taskData = {
       ...commonData,
@@ -435,6 +453,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
       repeatType,
       repeatDays,
       repeatInterval: parseInt(formData.get('repeatInterval') as string) || 1,
+      repeatEndDate: repeatType === 'none' ? undefined : repeatEndDate,
       noTimeLimit,
     }
     
@@ -847,13 +866,47 @@ export const attachEventListeners = (container: HTMLElement): void => {
   })
 
   // 重复类型切换
-  container.querySelector('#repeatType')?.addEventListener('change', (e) => {
+  const repeatTypeInput = container.querySelector<HTMLSelectElement>('#repeatType')
+  const repeatEndDateField = container.querySelector<HTMLElement>('#repeatEndDateField')
+  const repeatEndDateInput = container.querySelector<HTMLInputElement>('#repeatEndDate')
+  const repeatEndDateError = container.querySelector<HTMLElement>('#repeatEndDateError')
+  const dueDateInput = container.querySelector<HTMLInputElement>('input[name="dueDate"]')
+  const setRepeatEndDateError = (message: string): void => {
+    if (repeatEndDateError) repeatEndDateError.textContent = message
+    if (repeatEndDateInput && typeof repeatEndDateInput.setCustomValidity === 'function') {
+      repeatEndDateInput.setCustomValidity(message)
+    }
+  }
+  const syncRepeatEndDateField = (): void => {
+    const active = repeatTypeInput?.value !== 'none'
+    const value = repeatEndDateInput?.value || ''
+    repeatEndDateField?.classList.toggle('hidden', active === false)
+    if (repeatEndDateInput) {
+      repeatEndDateInput.required = active
+      repeatEndDateInput.min = dueDateInput?.value || ''
+    }
+    if (active === false || value.length === 0) setRepeatEndDateError('')
+    else setRepeatEndDateError(repeatEndDateErrorFor(dueDateInput?.value || '', value))
+  }
+  repeatEndDateInput?.addEventListener('input', () => {
+    if (repeatEndDateInput.value.length === 0) setRepeatEndDateError('')
+    else setRepeatEndDateError(repeatEndDateErrorFor(dueDateInput?.value || '', repeatEndDateInput.value))
+  })
+  repeatEndDateInput?.addEventListener('invalid', () => {
+    if (repeatTypeInput?.value !== 'none') {
+      setRepeatEndDateError(repeatEndDateErrorFor(dueDateInput?.value || '', repeatEndDateInput.value))
+    }
+  })
+  dueDateInput?.addEventListener('change', syncRepeatEndDateField)
+  repeatTypeInput?.addEventListener('change', (e) => {
     const weeklyDays = container.querySelector('#weeklyDays') as HTMLElement
     const customInterval = container.querySelector('#customInterval') as HTMLElement
     const value = (e.target as HTMLSelectElement).value
     if (weeklyDays) weeklyDays.classList.toggle('hidden', value !== 'weekly')
     if (customInterval) customInterval.classList.toggle('hidden', value !== 'custom')
+    syncRepeatEndDateField()
   })
+  syncRepeatEndDateField()
 
   // 分类管理（仅新标签页版本）
   const isNewTab = window.location.pathname.includes('newtab')

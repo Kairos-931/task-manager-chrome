@@ -397,7 +397,7 @@ export const renderTaskItem = (task: Task, options: TaskItemRenderOptions = {}):
     if (options.popupFocus) {
       return `
         <div class="task-row popup-task-row popup-focus-task-row flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${task.completed ? 'opacity-60' : ''}" data-task-id="${task.id}" draggable="true">
-          <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${task.completed ? 'bg-green-500 border-green-500' : 'border-gray-300 dark:border-gray-500'} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" title="${task.completed ? '标记为未完成' : '标记为完成'}" aria-label="${task.completed ? '取消完成' : '完成'} ${escapeHtml(task.title)}">
+          <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${task.completed ? 'bg-green-500 border-green-500' : 'border-gray-300 dark:border-gray-500'} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" data-task-date="${task.repeatType !== 'none' ? task.dueDate : ''}" title="${task.completed ? '标记为未完成' : '标记为完成'}" aria-label="${task.completed ? '取消完成' : '完成'} ${escapeHtml(task.title)}">
             ${task.completed ? '<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ''}
           </button>
           <div class="w-1.5 h-8 rounded ${getPriorityColor(task.priority)} flex-shrink-0" aria-hidden="true"></div>
@@ -966,6 +966,7 @@ export const renderModal = (): string => {
     repeatType: 'none' as const,
     repeatDays: [],
     repeatInterval: 1,
+    repeatEndDate: '',
     noTimeLimit: false,
     completed: false,
     isParent: false
@@ -1060,6 +1061,11 @@ export const renderModal = (): string => {
               <option value="workdays" ${task.repeatType === 'workdays' ? 'selected' : ''}>工作日</option>
               <option value="custom" ${task.repeatType === 'custom' ? 'selected' : ''}>自定义间隔</option>
             </select>
+          </div>
+          <div id="repeatEndDateField" class="${task.repeatType === 'none' ? 'hidden ' : ''}mt-4">
+            <label class="block text-sm font-medium mb-1" for="repeatEndDate">重复截止日期 *</label>
+            <input type="date" name="repeatEndDate" id="repeatEndDate" value="${task.repeatEndDate || ''}" min="${task.dueDate || ''}" ${task.repeatType !== 'none' ? 'required' : ''} aria-required="true" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
+            <p id="repeatEndDateError" class="mt-1 text-sm text-red-500" role="alert" aria-live="polite"></p>
           </div>
           <div id="weeklyDays" class="${task.repeatType !== 'weekly' ? 'hidden' : ''}">
             <label class="block text-sm font-medium mb-1">选择星期</label>

@@ -85,6 +85,14 @@ const dedupeCategories = (cats: Category[]): Category[] => {
   return [...map.values()]
 }
 
+const isValidDateOnly = (value: unknown): value is string => {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const date = new Date(`${value}T00:00:00`)
+  if (!Number.isFinite(date.getTime())) return false
+  const normalized = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  return normalized === value
+}
+
 const CLOUD_SYNC_SETTINGS_KEY = 'tm_sync_settings'
 
 const getCloudSettings = async (): Promise<{ apiUrl?: string; apiToken?: string }> => {
@@ -223,6 +231,7 @@ export const normalizeStorageData = (data: StorageData): StorageData => {
           category: resolveTaskCategory(task.category || ''),
           hardDeadline: typeof task.hardDeadline === 'string' && task.hardDeadline ? task.hardDeadline : undefined,
           focusDate: typeof task.focusDate === 'string' && task.focusDate ? task.focusDate : undefined,
+          repeatEndDate: isValidDateOnly(task.repeatEndDate) ? task.repeatEndDate : undefined,
           parentId: typeof task.parentId === 'string' && task.parentId ? task.parentId : undefined,
           isParent: task.isParent === true || undefined,
           duration: task.isParent === true ? 0 : task.duration,
@@ -536,11 +545,11 @@ export const loadData = async (): Promise<StorageData> => {
   return getDefaultData()
 }
 
-/** 修复循环任务数据一致性：completed 必须为 false，completedDates 必须为数组，从 repeatStartDate/dueDate 反推丢失的完成记录 */
+/** 修复循环任务数据一致性：补齐完成记录，并保留已完成最后一期的重复系列状态。 */
 const fixRecurringTasks = (tasks: any[]): any[] => tasks.map(t => {
   if (t.repeatType && t.repeatType !== 'none') {
-    t.completed = false
     if (!Array.isArray(t.completedDates)) t.completedDates = []
+    t.repeatEndDate = isValidDateOnly(t.repeatEndDate) ? t.repeatEndDate : undefined
     if (t.repeatType === 'weekly' && (!Array.isArray(t.repeatDays) || t.repeatDays.length === 0)) {
       if (t.repeatStartDate || t.dueDate) {
         const anchor = new Date(t.repeatStartDate || t.dueDate)
@@ -562,6 +571,7 @@ const fixRecurringTasks = (tasks: any[]): any[] => tasks.map(t => {
       }
       t.completedDates = completed
     }
+    t.completed = Boolean(t.repeatEndDate && isRecurringSeriesComplete(t))
   }
   return t
 })
@@ -581,6 +591,24 @@ const isTaskMatchRepeat = (t: any, date: Date): boolean => {
     }
     default: return false
   }
+}
+
+const isRecurringSeriesComplete = (task: any): boolean => {
+  if (!isValidDateOnly(task.repeatEndDate)) return false
+  const anchorValue = task.repeatStartDate || task.dueDate
+  if (!isValidDateOnly(anchorValue) || task.repeatEndDate < anchorValue) return false
+
+  const completed = new Set<string>(Array.isArray(task.completedDates) ? task.completedDates : [])
+  const cursor = new Date(`${anchorValue}T00:00:00`)
+  const end = new Date(`${task.repeatEndDate}T00:00:00`)
+  while (cursor <= end) {
+    if (isTaskMatchRepeat(task, cursor)) {
+      const date = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`
+      if (!completed.has(date)) return false
+    }
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return true
 }
 
 export const saveData = async (

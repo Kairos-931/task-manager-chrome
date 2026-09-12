@@ -16,6 +16,7 @@ interface Task {
   repeatType: RepeatType
   repeatDays: number[]
   repeatInterval: number
+  repeatEndDate?: string // 重复系列最后一个有效日期，YYYY-MM-DD；缺省表示历史任务按旧规则运行
   completed: boolean
   completedDates: string[] // 循环任务：记录每个实例的完成日期
   repeatStartDate?: string // 循环任务锚点日期，用于日历计算

@@ -14,6 +14,7 @@ export const isTaskDueOnDate = (task: Task, dateString: string): boolean => {
   if (!task.repeatType || task.repeatType === 'none') return task.dueDate === dateString
 
   const anchor = task.repeatStartDate || task.dueDate
+  if (task.repeatEndDate && dateString > task.repeatEndDate) return false
   if (anchor === dateString) return true
   const date = parseLocalDate(dateString)
   const anchorDate = parseLocalDate(anchor)

@@ -1,7 +1,7 @@
 import type { Task, Category, StorageData, AppState, Priority } from './types'
 import { generateId, getNextLocalSettingsUpdatedAt, loadData, saveData, syncIncrementally, defaultCategories, getSyncDeviceIdAsync } from './storage'
 import { markCloudSynced, markLocalSave, markSaveComplete, markRemoteUpdated, markSyncError } from './sync'
-import { isTaskDueOnDate } from './calendar'
+import { isTaskDueOnDate, isTaskCompletedOnDate } from './calendar'
 import { getTaskProgress, isExecutableTask } from './planning'
 export { getWeekDates, isTaskDueOnDate, isTaskCompletedOnDate, summarizeTaskDurationsForDates, shiftMonth } from './calendar'
 export { getTaskProgress } from './planning'
@@ -288,7 +288,13 @@ export const toggleTask = (id: string): void => {
     if (!task.repeatStartDate) {
       task.repeatStartDate = task.dueDate
     }
-    task.dueDate = getNextUncompletedDate(task, completedDate)
+    const nextDate = getNextUncompletedDate(task, completedDate)
+    if (nextDate) {
+      task.dueDate = nextDate
+    } else {
+      task.completed = true
+      task.completedAt = Date.now()
+    }
     task.updatedAt = Date.now()
   } else {
     task.completed = !task.completed
@@ -306,20 +312,46 @@ export const moveTaskToDate = (id: string, date: string): void => {
   }
 }
 
-const getNextUncompletedDate = (task: Task, afterDate?: string): string => {
+const isValidDateOnly = (value: unknown): value is string => {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const date = parseDate(value)
+  if (!Number.isFinite(date.getTime())) return false
+  return formatDate(date) === value
+}
+
+const getNextUncompletedDate = (task: Task, afterDate?: string): string | null => {
   const completed = task.completedDates || []
   const after = afterDate ? parseDate(afterDate) : parseDate(getTodayStr())
   const start = new Date(after)
   start.setDate(start.getDate() + 1)
-  for (let i = 0; i < 365; i++) {
+  const hasEnd = isValidDateOnly(task.repeatEndDate)
+  const end = hasEnd ? parseDate(task.repeatEndDate!) : null
+  for (let i = 0; ; i++) {
     const candidate = new Date(start)
     candidate.setDate(candidate.getDate() + i)
+    if (end && candidate > end) return null
+    if (!end && i >= 365) return formatDate(start)
     const dateStr = formatDate(candidate)
     if (isTaskDueOnDate(task, dateStr) && !completed.includes(dateStr)) {
       return dateStr
     }
   }
-  return formatDate(start)
+}
+
+const hasUncompletedRepeatOccurrence = (task: Task): boolean => {
+  if (!isValidDateOnly(task.repeatEndDate)) return true
+  const anchor = task.repeatStartDate || task.dueDate
+  if (!isValidDateOnly(anchor) || task.repeatEndDate! < anchor) return true
+
+  const completed = new Set(task.completedDates || [])
+  const cursor = parseDate(anchor)
+  const end = parseDate(task.repeatEndDate)
+  while (cursor <= end) {
+    const date = formatDate(cursor)
+    if (isTaskDueOnDate(task, date) && !completed.has(date)) return true
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return false
 }
 
 export const addCategory = (name: string, color: string): void => {
@@ -346,14 +378,28 @@ export const toggleTaskOnDate = (id: string, date: string): void => {
     return
   }
 
+  if (!isTaskDueOnDate(task, date)) return
   if (!task.repeatStartDate) task.repeatStartDate = task.dueDate || date
   const completedDates = task.completedDates || []
   if (completedDates.includes(date)) {
     task.completedDates = completedDates.filter(completedDate => completedDate !== date)
+    task.completed = false
+    task.completedAt = undefined
     if (!task.dueDate || date < task.dueDate) task.dueDate = date
   } else {
     task.completedDates = [...completedDates, date]
-    if (task.dueDate === date) task.dueDate = getNextUncompletedDate(task, date)
+    if (task.dueDate === date) {
+      const nextDate = getNextUncompletedDate(task, date)
+      if (nextDate) {
+        task.dueDate = nextDate
+      } else {
+        task.completed = true
+        task.completedAt = Date.now()
+      }
+    } else if (!hasUncompletedRepeatOccurrence(task)) {
+      task.completed = true
+      task.completedAt = Date.now()
+    }
   }
   task.updatedAt = Date.now()
 }
@@ -555,7 +601,9 @@ export const getWeeklyGoalStats = (): WeeklyGoalStats | null => {
         if (date < earliest) earliest = date
       }
       if (t.repeatType && t.repeatType !== 'none' && t.completedDates?.length > 0) {
-        const firstDate = parseDate(t.completedDates[0]).getTime()
+        const completedDates = t.completedDates.filter(date => isTaskDueOnDate(t, date))
+        if (completedDates.length === 0) continue
+        const firstDate = parseDate(completedDates[0]).getTime()
         if (firstDate < earliest) earliest = firstDate
       }
     }
@@ -577,8 +625,9 @@ export const getWeeklyGoalStats = (): WeeklyGoalStats | null => {
       completedCount++
     }
     if (t.repeatType && t.repeatType !== 'none' && t.completedDates?.length > 0) {
-      totalMinutes += t.duration * t.completedDates.length
-      completedCount += t.completedDates.length
+      const completedDates = t.completedDates.filter(date => isTaskDueOnDate(t, date))
+      totalMinutes += t.duration * completedDates.length
+      completedCount += completedDates.length
     }
   }
 
@@ -609,7 +658,7 @@ export const getStats = (ignoreFilters = false) => {
   const overdueCount = tasks.filter(t => !t.completed && !t.noTimeLimit && isOverdue(t.dueDate, false)).length
   const todayStr = formatDate(new Date())
   const todayTasks = tasks.filter(t => !t.noTimeLimit && isTaskDueOnDate(t, todayStr))
-  const todayDone = todayTasks.filter(t => t.completed).length
+  const todayDone = todayTasks.filter(t => isTaskCompletedOnDate(t, todayStr)).length
   return { pending, done, overdueCount, todayTotal: todayTasks.length, todayDone }
 }
 

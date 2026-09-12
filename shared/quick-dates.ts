@@ -14,6 +14,7 @@ export const bindTaskQuickDates = (taskModal: HTMLElement): (() => void) => {
       const input = taskModal.querySelector<HTMLInputElement>('input[name="dueDate"]')
       if (!date || !input) return
       input.value = date
+      input.dispatchEvent?.(new Event('change', { bubbles: true }))
       refresh()
     })
   })
