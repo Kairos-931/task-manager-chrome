@@ -96,7 +96,7 @@ export const getRemainingTime = (d: string, completed: boolean): string => {
   
   if (days < 0) {
     const overdueDays = Math.abs(days)
-    return overdueDays === 1 ? '已过期' : `已过期 ${overdueDays} 天`
+    return `已过期 ${overdueDays} 天`
   }
   return `${days} 天后到期`
 }

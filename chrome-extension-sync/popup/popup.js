@@ -1093,7 +1093,7 @@ var TaskManager = (() => {
         const days = Math.floor(diff / 864e5);
         if (days < 0) {
           const overdueDays = Math.abs(days);
-          return overdueDays === 1 ? "\u5DF2\u8FC7\u671F" : `\u5DF2\u8FC7\u671F ${overdueDays} \u5929`;
+          return `\u5DF2\u8FC7\u671F ${overdueDays} \u5929`;
         }
         return `${days} \u5929\u540E\u5230\u671F`;
       };
