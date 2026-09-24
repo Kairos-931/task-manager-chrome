@@ -1,8 +1,30 @@
 import type { StorageData, Category, Task, RemoteApplyOptions } from './types'
+import { TASKMASTER_API_BASE_URL } from './config'
 
 export const STORAGE_KEY = 'tm_data'
 
 const LOCAL_BACKUP_KEY = 'tm_local_backup'
+const INCREMENTAL_CURSOR_KEY = 'tm_incremental_sync_cursor'
+const INCREMENTAL_DEVICE_KEY = 'tm_incremental_sync_device'
+const INCREMENTAL_SHADOW_KEY = 'tm_incremental_sync_shadow'
+const INCREMENTAL_CLOCK_KEY = 'tm_incremental_sync_clock'
+const OUTGOING_SYNC_BATCH = 100
+let lastSyncTimestamp = 0
+let syncQueue: Promise<void> = Promise.resolve()
+
+let localMutationQueue: Promise<void> = Promise.resolve()
+
+const enqueueSync = <T>(operation: () => Promise<T>): Promise<T> => {
+  const next = syncQueue.then(operation, operation)
+  syncQueue = next.then(() => undefined, () => undefined)
+  return next
+}
+
+const enqueueLocalMutation = <T>(operation: () => Promise<T>): Promise<T> => {
+  const next = localMutationQueue.then(operation, operation)
+  localMutationQueue = next.then(() => undefined, () => undefined)
+  return next
+}
 
 // 生成唯一ID
 export const generateId = (): string => {
@@ -93,102 +115,128 @@ const isValidDateOnly = (value: unknown): value is string => {
   return normalized === value
 }
 
-const CLOUD_SYNC_SETTINGS_KEY = 'tm_sync_settings'
+const GOOGLE_SESSION_KEY = 'tm_google_account_session'
+const LAST_GOOGLE_SUB_KEY = 'tm_last_google_account_sub'
+const ACCOUNT_SWITCH_BACKUP_PREFIX = 'tm_account_switch_backup_'
 
-const getCloudSettings = async (): Promise<{ apiUrl?: string; apiToken?: string }> => {
-  return new Promise((resolve) => {
-    chrome.storage.local.get([CLOUD_SYNC_SETTINGS_KEY], (r) => {
-      resolve(r[CLOUD_SYNC_SETTINGS_KEY] || {})
-    })
-  })
+export interface GoogleAccountSession {
+  token: string
+  user: { sub: string; email?: string; name?: string }
 }
 
-// Cloud base version (optimistic lock): the updatedAt of the cloud snapshot the
-// local data is based on. Set after every successful pull/push, sent on every push.
-const CLOUD_BASE_AT_KEY = 'tm_cloud_base_at'
-
-const getCloudBaseAt = (): Promise<string | null> => {
-  return new Promise((resolve) => {
-    chrome.storage.local.get([CLOUD_BASE_AT_KEY], (r) => {
-      resolve(r[CLOUD_BASE_AT_KEY] || null)
-    })
-  })
+export const getGoogleAccountSession = async (): Promise<GoogleAccountSession | null> => {
+  const session = await getLocalValue<GoogleAccountSession | null>(GOOGLE_SESSION_KEY, null)
+  return session && typeof session.token === 'string' && typeof session.user?.sub === 'string'
+    ? session : null
 }
 
-const setCloudBaseAt = (at: string | null): Promise<void> => {
-  return new Promise((resolve) => {
-    if (at) {
-      chrome.storage.local.set({ [CLOUD_BASE_AT_KEY]: at }, () => resolve())
-    } else {
-      chrome.storage.local.remove([CLOUD_BASE_AT_KEY], () => resolve())
-    }
-  })
-}
-
-export const syncToCloud = async (
-  data: StorageData,
-  opts?: { force?: boolean }
-): Promise<{ success: boolean; conflict?: boolean; currentUpdatedAt?: string; error?: string; updatedAt?: string }> => {
-  try {
-    const settings = await getCloudSettings()
-    if (!settings.apiUrl || !settings.apiToken) {
-      return { success: false, error: '未配置同步设置' }
-    }
-    const baseUpdatedAt = await getCloudBaseAt()
-    const resp = await fetch(`${settings.apiUrl}/api/fullsync`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${settings.apiToken}`
-      },
-      body: JSON.stringify({ data, baseUpdatedAt, force: opts?.force === true })
-    })
-    if (resp.status === 409) {
-      const err = await resp.json().catch(() => ({ error: 'HTTP 409' }))
-      if (err.error === 'conflict') {
-        return { success: false, conflict: true, currentUpdatedAt: err.currentUpdatedAt, error: 'conflict' }
-      }
-      return { success: false, error: err.error || 'refused' }
-    }
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }))
-      return { success: false, error: err.error || `HTTP ${resp.status}` }
-    }
-    const result = await resp.json()
-    if (result.updatedAt) {
-      await setCloudBaseAt(result.updatedAt)
-    }
-    return { success: true, updatedAt: result.updatedAt }
-  } catch (e) {
-    return { success: false, error: String(e) }
+const accountStorageKeys = (sub: string) => {
+  const suffix = encodeURIComponent(sub)
+  return {
+    cursor: `${INCREMENTAL_CURSOR_KEY}_${suffix}`,
+    shadow: `${INCREMENTAL_SHADOW_KEY}_${suffix}`,
+    clock: `${INCREMENTAL_CLOCK_KEY}_${suffix}`
   }
 }
 
-export const syncFromCloud = async (): Promise<{ data: StorageData | null; updatedAt?: string; error?: string }> => {
+const accountFetch = async (session: GoogleAccountSession, path: string, init: RequestInit = {}): Promise<Response> => fetch(
+  `${TASKMASTER_API_BASE_URL}${path}`,
+  {
+    ...init,
+    headers: {
+      ...(init.headers || {}),
+      Authorization: `Bearer ${session.token}`,
+      ...(init.body ? { 'Content-Type': 'application/json' } : {})
+    },
+    cache: 'no-store'
+  }
+)
+
+const fetchAccountSnapshot = async (session: GoogleAccountSession): Promise<{ cursor: number; data: StorageData }> => {
+  const response = await accountFetch(session, '/api/account/snapshot')
+  const result = await response.json().catch(() => ({})) as { cursor?: number; data?: StorageData; error?: string }
+  if (!response.ok || !result.data) throw new Error(result.error || `账号数据读取失败 (HTTP ${response.status})`)
+  return { cursor: Number(result.cursor) || 0, data: normalizeStorageData(result.data) }
+}
+
+const createAccountSwitchBackup = (data: StorageData, oldSub: string): Record<string, string> => {
+  const key = `${ACCOUNT_SWITCH_BACKUP_PREFIX}${Date.now()}_${encodeURIComponent(oldSub || 'guest')}`
+  return { [key]: JSON.stringify({ createdAt: Date.now(), oldSub, data }) }
+}
+
+const activateGoogleAccountNow = async (
+  session: GoogleAccountSession,
+  switchMode?: 'merge' | 'replace'
+): Promise<{ success: boolean; requiresSwitchDecision?: boolean; error?: string }> => {
+  if (!session || typeof session.token !== 'string' || !session.token || typeof session.user?.sub !== 'string' || !session.user.sub) {
+    return { success: false, error: 'Google 登录返回的账号信息无效' }
+  }
+  const activeSession = await getGoogleAccountSession()
+  const lastSub = await getLocalValue<string>(LAST_GOOGLE_SUB_KEY, '')
+  const oldSub = activeSession?.user.sub || lastSub
+  const isSwitching = !!oldSub && oldSub !== session.user.sub
+  if (isSwitching && !switchMode) return { success: false, requiresSwitchDecision: true }
+
   try {
-    const settings = await getCloudSettings()
-    if (!settings.apiUrl || !settings.apiToken) {
-      return { data: null, error: '未配置同步设置' }
+    const localData = await loadData()
+    const keys = accountStorageKeys(session.user.sub)
+    const values: Record<string, unknown> = {
+      [GOOGLE_SESSION_KEY]: session,
+      [LAST_GOOGLE_SUB_KEY]: session.user.sub,
     }
-    const resp = await fetch(`${settings.apiUrl}/api/fullsync`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${settings.apiToken}` }
-    })
-    if (!resp.ok) {
-      return { data: null, error: `HTTP ${resp.status}` }
+    if (isSwitching) Object.assign(values, createAccountSwitchBackup(localData, oldSub))
+
+    if (isSwitching && switchMode === 'replace') {
+      const snapshot = await fetchAccountSnapshot(session)
+      const shadowRecords = buildCurrentRecords(snapshot.data, { records: {} })
+      values[LOCAL_BACKUP_KEY] = JSON.stringify(snapshot.data)
+      values[keys.cursor] = snapshot.cursor
+      values[keys.shadow] = { records: shadowRecords }
+      values[keys.clock] = Math.max(0, ...Object.values(shadowRecords).map(record => record.updatedAt))
+    } else if (isSwitching) {
+      // A forced bootstrap merges this device into the destination account and
+      // pulls its cloud-only records without interpreting them as deletions.
+      values[keys.cursor] = 0
+      values[keys.shadow] = { records: {} }
+      values[keys.clock] = 0
     }
-    const result = await resp.json()
-    if (!result.data) {
-      return { data: null }
+
+    // chrome.storage.local.set applies the account identity, optional backup,
+    // and replacement snapshot together so the next save cannot sync A's data
+    // under B after a partially completed account switch.
+    await setLocalValues(values)
+    if (isSwitching) lastSyncTimestamp = 0
+    if (activeSession && activeSession.user.sub !== session.user.sub) {
+      void accountFetch(activeSession, '/api/auth/logout', { method: 'POST' }).catch(() => {})
     }
-    if (result.updatedAt) {
-      await setCloudBaseAt(result.updatedAt)
-    }
-    return { data: result.data as StorageData, updatedAt: result.updatedAt }
-  } catch (e) {
-    return { data: null, error: String(e) }
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
   }
 }
+
+export const activateGoogleAccount = (
+  session: GoogleAccountSession,
+  switchMode?: 'merge' | 'replace'
+): Promise<{ success: boolean; requiresSwitchDecision?: boolean; error?: string }> =>
+  enqueueLocalMutation(() => enqueueSync(() => activateGoogleAccountNow(session, switchMode)))
+
+const logoutGoogleAccountNow = async (): Promise<void> => {
+  const session = await getGoogleAccountSession()
+  if (session) void accountFetch(session, '/api/auth/logout', { method: 'POST' }).catch(() => {})
+  await new Promise<void>((resolve, reject) => chrome.storage.local.remove([GOOGLE_SESSION_KEY], () => {
+    if (chrome.runtime.lastError) reject(chrome.runtime.lastError)
+    else resolve()
+  }))
+}
+
+export const logoutGoogleAccount = (): Promise<void> => enqueueLocalMutation(() => enqueueSync(logoutGoogleAccountNow))
+
+export const discardGoogleAccountSession = async (session: GoogleAccountSession): Promise<void> => {
+  await accountFetch(session, '/api/auth/logout', { method: 'POST' }).catch(() => {})
+}
+
+export const isGoogleAccountConnected = async (): Promise<boolean> => !!(await getGoogleAccountSession())
 
 export const normalizeStorageData = (data: StorageData): StorageData => {
   const categoryIdMap = new Map<string, string>()
@@ -260,14 +308,6 @@ interface SyncShadow {
   records: Record<string, SyncRecord>
 }
 
-const INCREMENTAL_CURSOR_KEY = 'tm_incremental_sync_cursor'
-const INCREMENTAL_DEVICE_KEY = 'tm_incremental_sync_device'
-const INCREMENTAL_SHADOW_KEY = 'tm_incremental_sync_shadow'
-const INCREMENTAL_CLOCK_KEY = 'tm_incremental_sync_clock'
-const OUTGOING_SYNC_BATCH = 400
-let lastSyncTimestamp = 0
-let syncQueue: Promise<void> = Promise.resolve()
-
 export const getNextLocalSettingsUpdatedAt = (current = 0, now = Date.now()): number =>
   Math.max(now, current + 1)
 
@@ -279,12 +319,6 @@ const nextSyncTimestamp = (): number => {
 }
 
 const cloneStorageData = (data: StorageData): StorageData => JSON.parse(JSON.stringify(data)) as StorageData
-
-const enqueueSync = <T>(operation: () => Promise<T>): Promise<T> => {
-  const next = syncQueue.then(operation, operation)
-  syncQueue = next.then(() => undefined, () => undefined)
-  return next
-}
 
 const getLocalValue = async <T>(key: string, fallback: T): Promise<T> => {
   return new Promise((resolve) => {
@@ -320,8 +354,8 @@ export const getSyncDeviceIdAsync = async (): Promise<string> => {
 
 export const getSyncDeviceId = getSyncDeviceIdAsync
 
-const getSyncShadow = async (): Promise<SyncShadow> => {
-  const shadow = await getLocalValue<SyncShadow | null>(INCREMENTAL_SHADOW_KEY, null)
+const getAccountSyncShadow = async (sub: string): Promise<SyncShadow> => {
+  const shadow = await getLocalValue<SyncShadow | null>(accountStorageKeys(sub).shadow, null)
   return shadow && shadow.records ? shadow : { records: {} }
 }
 
@@ -438,15 +472,16 @@ const isVirginDefaultData = (data: StorageData): boolean => {
     !data.darkMode && !data.weeklyGoalMinutes && !data.weeklyGoalAnchor
 }
 
-const syncIncrementallyNow = async (inputData: StorageData): Promise<{ success: boolean; data?: StorageData; hasForeignChanges?: boolean; error?: string }> => {
+const syncIncrementallyNow = async (inputData: StorageData): Promise<{ success: boolean; data?: StorageData; hasForeignChanges?: boolean; accountSub?: string; error?: string }> => {
   try {
     const data = normalizeStorageData(inputData)
-    const settings = await getCloudSettings()
-    if (!settings.apiUrl || !settings.apiToken) return { success: false, error: '未配置同步设置' }
+    const session = await getGoogleAccountSession()
+    if (!session) return { success: false, error: 'not_signed_in' }
+    const keys = accountStorageKeys(session.user.sub)
 
     const [deviceId, shadow, initialCursor, storedClock] = await Promise.all([
-      getSyncDeviceId(), getSyncShadow(), getLocalValue<number>(INCREMENTAL_CURSOR_KEY, 0),
-      getLocalValue<number>(INCREMENTAL_CLOCK_KEY, 0)
+      getSyncDeviceId(), getAccountSyncShadow(session.user.sub), getLocalValue<number>(keys.cursor, 0),
+      getLocalValue<number>(keys.clock, 0)
     ])
     lastSyncTimestamp = Math.max(lastSyncTimestamp, storedClock)
     let cursor = initialCursor
@@ -461,16 +496,17 @@ const syncIncrementallyNow = async (inputData: StorageData): Promise<{ success: 
 
     while (pending.length > 0 || hasMore) {
       const outgoing = pending.splice(0, OUTGOING_SYNC_BATCH)
-      const resp = await fetch(`${settings.apiUrl}/api/sync/incremental`, {
+      const resp = await accountFetch(session, '/api/account/sync/incremental', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${settings.apiToken}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceId, cursor, changes: outgoing })
       })
       if (!resp.ok) {
         const error = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }))
+        if (resp.status === 401) {
+          await new Promise<void>(resolve => chrome.storage.local.remove([GOOGLE_SESSION_KEY], () => resolve()))
+          return { success: false, error: 'session_expired' }
+        }
         return { success: false, error: error.error || `HTTP ${resp.status}` }
       }
       const result = await resp.json()
@@ -495,23 +531,28 @@ const syncIncrementallyNow = async (inputData: StorageData): Promise<{ success: 
     await Promise.all([
       saveToLocal(finalData),
       setLocalValues({
-        [INCREMENTAL_CURSOR_KEY]: cursor,
-        [INCREMENTAL_SHADOW_KEY]: { records: finalRecords },
-        [INCREMENTAL_CLOCK_KEY]: lastSyncTimestamp
+        [keys.cursor]: cursor,
+        [keys.shadow]: { records: finalRecords },
+        [keys.clock]: lastSyncTimestamp
       })
     ])
-    return { success: true, data: finalData, hasForeignChanges: sawForeignChanges }
+    return { success: true, data: finalData, hasForeignChanges: sawForeignChanges, accountSub: session.user.sub }
   } catch (e) {
     return { success: false, error: String(e) }
   }
 }
 
-export const syncIncrementally = (data: StorageData): Promise<{ success: boolean; data?: StorageData; hasForeignChanges?: boolean; error?: string }> =>
-  enqueueSync(() => syncIncrementallyNow(cloneStorageData(data)))
+export const syncIncrementally = async (data: StorageData): Promise<{ success: boolean; data?: StorageData; hasForeignChanges?: boolean; accountSub?: string; error?: string }> => {
+  const requestedSub = (await getGoogleAccountSession())?.user.sub || null
+  return enqueueSync(async () => {
+    const activeSub = (await getGoogleAccountSession())?.user.sub || null
+    if (activeSub !== requestedSub) return { success: false, error: 'account_changed' }
+    return syncIncrementallyNow(cloneStorageData(data))
+  })
+}
 
 export const isCloudConfigured = async (): Promise<boolean> => {
-  const settings = await getCloudSettings()
-  return !!(settings.apiUrl && settings.apiToken)
+  return isGoogleAccountConnected()
 }
 
 const isRecoverableNetworkError = (error?: string): boolean => {
@@ -520,7 +561,7 @@ const isRecoverableNetworkError = (error?: string): boolean => {
 }
 
 const warnForSyncFailure = (error?: string): void => {
-  if (!error || error === '未配置同步设置' || isRecoverableNetworkError(error)) return
+  if (!error || error === '未配置同步设置' || error === 'not_signed_in' || error === 'account_changed' || isRecoverableNetworkError(error)) return
   console.warn('[TaskMaster] incremental sync failed:', error)
 }
 
@@ -618,16 +659,28 @@ export const saveData = async (
 ): Promise<void> => {
   const localData = normalizeStorageData(data)
   localData.tasks = fixRecurringTasks(localData.tasks)
-  await saveToLocal(localData)
-  syncIncrementally(localData).then(result => {
-    if (result.success && result.data) {
-      getSyncDeviceIdAsync().then(deviceId => {
-        onRemoteData?.(result.data!, { ignoreDeviceId: deviceId })
-      })
+  const syncContext = await enqueueLocalMutation(async () => {
+    await saveToLocal(localData)
+    const requestedSub = (await getGoogleAccountSession())?.user.sub || null
+    // Enqueue before releasing the local mutation queue so a concurrent
+    // account switch cannot make this save upload under a different account.
+    return { requestedSub, syncPromise: enqueueSync(() => syncIncrementallyNow(localData)) }
+  })
+  const { requestedSub, syncPromise } = syncContext
+  syncPromise.then(async result => {
+    const sameAccount = async () => ((await getGoogleAccountSession())?.user.sub || null) === requestedSub
+    if (result.error === 'session_expired') {
+      onSyncResult?.(result)
+      return
     }
-    else warnForSyncFailure(result.error)
-    onSyncResult?.(result)
-  }).catch(e => warnForSyncFailure(String(e)))
+    if (result.success && result.data) {
+      if (!await sameAccount() || result.accountSub !== requestedSub) return
+      const deviceId = await getSyncDeviceIdAsync()
+      if (!await sameAccount()) return
+      onRemoteData?.(result.data, { ignoreDeviceId: deviceId })
+    } else warnForSyncFailure(result.error)
+    if (await sameAccount()) onSyncResult?.(result)
+  }).catch((e: unknown) => warnForSyncFailure(String(e)))
 }
 
 // ==================== 自动备份（保留最近 3 天）====================
@@ -641,6 +694,7 @@ export interface BackupInfo {
   dateStr: string
   taskCount: number
   categoryCount: number
+  kind?: 'automatic' | 'account-switch'
 }
 
 const formatDateKey = (ts: number): string => {
@@ -685,11 +739,13 @@ export const listBackups = async (): Promise<BackupInfo[]> => {
       }
       const backups: BackupInfo[] = []
       for (const key of Object.keys(all)) {
-        if (!key.startsWith(BACKUP_PREFIX)) continue
+        const isAutomatic = key.startsWith(BACKUP_PREFIX)
+        const isAccountSwitch = key.startsWith(ACCOUNT_SWITCH_BACKUP_PREFIX)
+        if (!isAutomatic && !isAccountSwitch) continue
         try {
           const parsed = typeof all[key] === 'string' ? JSON.parse(all[key]) : all[key]
           const d = parsed.data
-          const ts = parsed.timestamp || 0
+          const ts = parsed.timestamp || parsed.createdAt || 0
           const dd = new Date(ts)
           const dateStr = `${dd.getFullYear()}-${String(dd.getMonth() + 1).padStart(2, '0')}-${String(dd.getDate()).padStart(2, '0')} ${String(dd.getHours()).padStart(2, '0')}:${String(dd.getMinutes()).padStart(2, '0')}`
           backups.push({
@@ -697,7 +753,8 @@ export const listBackups = async (): Promise<BackupInfo[]> => {
             timestamp: ts,
             dateStr,
             taskCount: d?.tasks?.length || 0,
-            categoryCount: d?.categories?.length || 0
+            categoryCount: d?.categories?.length || 0,
+            kind: isAccountSwitch ? 'account-switch' : 'automatic'
           })
         } catch { /* skip corrupt */ }
       }
@@ -718,6 +775,12 @@ export const restoreBackup = async (key: string): Promise<{ success: boolean; er
     if (!result) return { success: false, error: '备份不存在' }
     const parsed = JSON.parse(result)
     if (!parsed.data?.tasks) return { success: false, error: '备份数据损坏' }
+    if (key.startsWith(ACCOUNT_SWITCH_BACKUP_PREFIX)) {
+      const session = await getGoogleAccountSession()
+      if (!session || session.user.sub !== parsed.oldSub) {
+        return { success: false, error: '为避免跨账号同步，请先登录此备份所属的原 Google 账号，再恢复本机数据' }
+      }
+    }
     await saveData(parsed.data)
     return { success: true }
   } catch (e) {
@@ -732,7 +795,7 @@ export const deleteBackup = async (key: string): Promise<void> => {
 }
 
 const cleanOldBackups = async (): Promise<void> => {
-  const backups = await listBackups()
+  const backups = (await listBackups()).filter(backup => backup.kind === 'automatic')
   if (backups.length <= MAX_BACKUPS) return
   const toRemove = backups.slice(MAX_BACKUPS).map(b => b.key)
   if (toRemove.length === 0) return

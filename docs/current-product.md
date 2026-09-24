@@ -1,6 +1,6 @@
 # TaskMaster 当前产品说明
 
-> 更新日期：2026-09-04 | 当前发布版本：3.16.0
+> 更新日期：2026-09-24 | 当前发布版本：3.16.0 | 下一版本开发基线：3.17.0（Issue #62，未发布）
 
 ## 产品目标
 
@@ -28,6 +28,10 @@ TaskMaster 是用于快速安排日常任务和追踪长期执行节奏的 Chrom
 | 手机快速添加 | `backend/index.js` 的 `MOBILE_HTML` | 部署 Cloudflare Worker |
 | 同步 API | `backend/index.js` + D1 | 同一次 Worker 部署 |
 | 数据协议 | `sync_records` / `sync_changes` | 按记录变更与服务端游标同步 |
+
+## 开发中：3.17.0（Issue #62）
+
+新增可选 Google 登录与按 Google `sub` 隔离的 Worker/D1 同步。访客仍只使用本机存储；手机页需使用相同账号。此能力尚未部署：生产启用前必须备份并迁移 D1、配置 OAuth、校验旧数据归属，并明确停用/迁移 Telegram 旧通道。新账号表与旧全局数据表保持隔离。
 
 ## 权威记录
 

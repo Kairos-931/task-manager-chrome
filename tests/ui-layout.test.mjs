@@ -29,7 +29,7 @@ assert.match(renderSource, /\.split-child-duration-control \.split-child-duratio
 assert.doesNotMatch(renderSource, /split-child-duration-field[\s\S]{0,160}class="flex items-center gap-1"/)
 assert.doesNotMatch(eventSource, /split-child-duration-field[\s\S]{0,160}class="flex items-center gap-1"/)
 assert.match(renderSource, /@media \(max-width: 520px\)[\s\S]*\.split-child-duration-field \{ grid-column: 1; grid-row: 1; \}[\s\S]*\.split-child-date-field \{ grid-column: 2; grid-row: 1; \}[\s\S]*\.split-quick-dates \{ grid-column: 1 \/ -1; grid-row: 2; \}/)
-assert.match(eventSource, /split-child-schedule[\s\S]*split-child-duration-field[\s\S]*split-quick-dates[\s\S]*split-child-date-field/)
+assert.match(renderSource, /split-child-schedule[\s\S]*split-child-duration-field[\s\S]*split-quick-dates[\s\S]*split-child-date-field/)
 assert.match(renderSource, /id="splitTaskModal"[\s\S]*role="dialog"[\s\S]*aria-modal="true"/)
 assert.match(eventSource, /splitTaskModal[\s\S]*addEventListener\('keydown',[\s\S]*key === 'Escape'[\s\S]*closeSplitModal\(\)/)
 assert.match(eventSource, /const invalidChildIndex = children\.findIndex\([\s\S]*Number\.isFinite\(child\.durationHours\)/)

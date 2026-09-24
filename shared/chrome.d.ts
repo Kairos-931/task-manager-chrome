@@ -31,6 +31,10 @@ declare const chrome: {
       addListener(callback: () => void): void
     }
   }
+  identity: {
+    getRedirectURL(path?: string): string
+    launchWebAuthFlow(details: { url: string; interactive: boolean }, callback: (responseUrl?: string) => void): void
+  }
   tabs: {
     create(options: { url: string; active?: boolean }, callback?: (tab: any) => void): void
   }

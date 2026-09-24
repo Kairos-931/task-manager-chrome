@@ -8,3 +8,7 @@
 2. **安全的历史清理**：`sync_changes` 和删除墓碑会保留，避免长期离线的设备复活已删除数据。清理前必须增加设备确认记录和不活跃设备保留策略；按时间直接删除历史会有数据复活风险。
 
 跟踪 Issue：[GitHub Issue #16](https://github.com/Kairos-931/task-manager-chrome/issues/16)。本文件保留产品上下文，确保不依赖 GitHub 时也能继续处理。
+
+## 开发中：可选 Google 登录与账号隔离同步
+
+Issue [#62](https://github.com/Kairos-931/task-manager-chrome/issues/62) 对应 3.17.0。源码增加访客本机模式、Google 会话、账号级 D1 表、手机同账号入口和旧数据认领保护。生产启用仍被以下外部前置条件阻塞：Google OAuth Client ID/Secret 与精确扩展回调 URI、非生产 D1 迁移演练、生产 D1 备份及所有权核验、Telegram 旧队列停用或迁移方案。未完成这些核验前不得部署、认领或停用旧通道。

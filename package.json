@@ -1,12 +1,12 @@
 {
   "name": "task-manager-extension",
-  "version": "3.16.0",
+  "version": "3.17.0",
   "type": "module",
   "scripts": {
     "build": "tsc && node scripts/generate-icons.js && npx tailwindcss -i ./styles/tailwind.css -o ./styles/main.css --minify && node scripts/bundle.mjs && node scripts/copy-assets.js && node scripts/check-release.mjs",
     "test": "node tests/run.mjs",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint shared backend/index.js demo scripts/serve-demo.mjs tests",
+    "lint": "eslint shared backend/index.js backend/account.js demo scripts/serve-demo.mjs tests",
     "check": "npm run typecheck && npm run lint && npm test",
     "watch": "tsc --watch",
     "demo": "node scripts/serve-demo.mjs",

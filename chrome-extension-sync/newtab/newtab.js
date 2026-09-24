@@ -21,39 +21,70 @@ var TaskManager = (() => {
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
+  // shared/config.ts
+  var TASKMASTER_API_BASE_URL;
+  var init_config = __esm({
+    "shared/config.ts"() {
+      "use strict";
+      TASKMASTER_API_BASE_URL = "https://taskmaster-api.yx9391.workers.dev";
+    }
+  });
+
   // shared/storage.ts
   var storage_exports = {};
   __export(storage_exports, {
     STORAGE_KEY: () => STORAGE_KEY,
+    activateGoogleAccount: () => activateGoogleAccount,
     createAutoBackup: () => createAutoBackup,
     defaultCategories: () => defaultCategories,
     deleteBackup: () => deleteBackup,
+    discardGoogleAccountSession: () => discardGoogleAccountSession,
     downloadExportFile: () => downloadExportFile,
     exportData: () => exportData,
     generateId: () => generateId,
     getDefaultData: () => getDefaultData,
+    getGoogleAccountSession: () => getGoogleAccountSession,
     getNextLocalSettingsUpdatedAt: () => getNextLocalSettingsUpdatedAt,
     getStorageUsage: () => getStorageUsage,
     getSyncDeviceId: () => getSyncDeviceId,
     getSyncDeviceIdAsync: () => getSyncDeviceIdAsync,
     importDataFromFile: () => importDataFromFile,
     isCloudConfigured: () => isCloudConfigured,
+    isGoogleAccountConnected: () => isGoogleAccountConnected,
     listBackups: () => listBackups,
     loadData: () => loadData,
+    logoutGoogleAccount: () => logoutGoogleAccount,
     normalizeStorageData: () => normalizeStorageData,
     restoreBackup: () => restoreBackup,
     saveData: () => saveData,
-    syncFromCloud: () => syncFromCloud,
     syncIncrementally: () => syncIncrementally,
-    syncToCloud: () => syncToCloud,
     validateImportData: () => validateImportData
   });
-  var STORAGE_KEY, LOCAL_BACKUP_KEY, generateId, DEFAULT_CATEGORY_DEFINITIONS, LEGACY_STARRED_CATEGORY_ID, defaultCategoryByName, createDefaultCategories, defaultCategories, getDefaultData, loadFromLocal, saveToLocal, dedupeCategories, isValidDateOnly, CLOUD_SYNC_SETTINGS_KEY, getCloudSettings, CLOUD_BASE_AT_KEY, getCloudBaseAt, setCloudBaseAt, syncToCloud, syncFromCloud, normalizeStorageData, INCREMENTAL_CURSOR_KEY, INCREMENTAL_DEVICE_KEY, INCREMENTAL_SHADOW_KEY, INCREMENTAL_CLOCK_KEY, OUTGOING_SYNC_BATCH, lastSyncTimestamp, syncQueue, getNextLocalSettingsUpdatedAt, recordKey, nextSyncTimestamp, cloneStorageData, enqueueSync, getLocalValue, setLocalValues, cachedDeviceId, getSyncDeviceIdAsync, getSyncDeviceId, getSyncShadow, getSettingsPayload, samePayload, buildCurrentRecords, buildLocalChanges, applyRemoteChanges, isVirginDefaultData, syncIncrementallyNow, syncIncrementally, isCloudConfigured, isRecoverableNetworkError, warnForSyncFailure, loadData, fixRecurringTasks, isTaskMatchRepeat, isRecurringSeriesComplete, saveData, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
+  var STORAGE_KEY, LOCAL_BACKUP_KEY, INCREMENTAL_CURSOR_KEY, INCREMENTAL_DEVICE_KEY, INCREMENTAL_SHADOW_KEY, INCREMENTAL_CLOCK_KEY, OUTGOING_SYNC_BATCH, lastSyncTimestamp, syncQueue, localMutationQueue, enqueueSync, enqueueLocalMutation, generateId, DEFAULT_CATEGORY_DEFINITIONS, LEGACY_STARRED_CATEGORY_ID, defaultCategoryByName, createDefaultCategories, defaultCategories, getDefaultData, loadFromLocal, saveToLocal, dedupeCategories, isValidDateOnly, GOOGLE_SESSION_KEY, LAST_GOOGLE_SUB_KEY, ACCOUNT_SWITCH_BACKUP_PREFIX, getGoogleAccountSession, accountStorageKeys, accountFetch, fetchAccountSnapshot, createAccountSwitchBackup, activateGoogleAccountNow, activateGoogleAccount, logoutGoogleAccountNow, logoutGoogleAccount, discardGoogleAccountSession, isGoogleAccountConnected, normalizeStorageData, getNextLocalSettingsUpdatedAt, recordKey, nextSyncTimestamp, cloneStorageData, getLocalValue, setLocalValues, cachedDeviceId, getSyncDeviceIdAsync, getSyncDeviceId, getAccountSyncShadow, getSettingsPayload, samePayload, buildCurrentRecords, buildLocalChanges, applyRemoteChanges, isVirginDefaultData, syncIncrementallyNow, syncIncrementally, isCloudConfigured, isRecoverableNetworkError, warnForSyncFailure, loadData, fixRecurringTasks, isTaskMatchRepeat, isRecurringSeriesComplete, saveData, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
   var init_storage = __esm({
     "shared/storage.ts"() {
       "use strict";
+      init_config();
       STORAGE_KEY = "tm_data";
       LOCAL_BACKUP_KEY = "tm_local_backup";
+      INCREMENTAL_CURSOR_KEY = "tm_incremental_sync_cursor";
+      INCREMENTAL_DEVICE_KEY = "tm_incremental_sync_device";
+      INCREMENTAL_SHADOW_KEY = "tm_incremental_sync_shadow";
+      INCREMENTAL_CLOCK_KEY = "tm_incremental_sync_clock";
+      OUTGOING_SYNC_BATCH = 100;
+      lastSyncTimestamp = 0;
+      syncQueue = Promise.resolve();
+      localMutationQueue = Promise.resolve();
+      enqueueSync = (operation) => {
+        const next = syncQueue.then(operation, operation);
+        syncQueue = next.then(() => void 0, () => void 0);
+        return next;
+      };
+      enqueueLocalMutation = (operation) => {
+        const next = localMutationQueue.then(operation, operation);
+        localMutationQueue = next.then(() => void 0, () => void 0);
+        return next;
+      };
       generateId = () => {
         return Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
       };
@@ -130,91 +161,106 @@ var TaskManager = (() => {
         const normalized = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
         return normalized === value;
       };
-      CLOUD_SYNC_SETTINGS_KEY = "tm_sync_settings";
-      getCloudSettings = async () => {
-        return new Promise((resolve) => {
-          chrome.storage.local.get([CLOUD_SYNC_SETTINGS_KEY], (r) => {
-            resolve(r[CLOUD_SYNC_SETTINGS_KEY] || {});
-          });
-        });
+      GOOGLE_SESSION_KEY = "tm_google_account_session";
+      LAST_GOOGLE_SUB_KEY = "tm_last_google_account_sub";
+      ACCOUNT_SWITCH_BACKUP_PREFIX = "tm_account_switch_backup_";
+      getGoogleAccountSession = async () => {
+        const session = await getLocalValue(GOOGLE_SESSION_KEY, null);
+        return session && typeof session.token === "string" && typeof session.user?.sub === "string" ? session : null;
       };
-      CLOUD_BASE_AT_KEY = "tm_cloud_base_at";
-      getCloudBaseAt = () => {
-        return new Promise((resolve) => {
-          chrome.storage.local.get([CLOUD_BASE_AT_KEY], (r) => {
-            resolve(r[CLOUD_BASE_AT_KEY] || null);
-          });
-        });
+      accountStorageKeys = (sub) => {
+        const suffix = encodeURIComponent(sub);
+        return {
+          cursor: `${INCREMENTAL_CURSOR_KEY}_${suffix}`,
+          shadow: `${INCREMENTAL_SHADOW_KEY}_${suffix}`,
+          clock: `${INCREMENTAL_CLOCK_KEY}_${suffix}`
+        };
       };
-      setCloudBaseAt = (at) => {
-        return new Promise((resolve) => {
-          if (at) {
-            chrome.storage.local.set({ [CLOUD_BASE_AT_KEY]: at }, () => resolve());
-          } else {
-            chrome.storage.local.remove([CLOUD_BASE_AT_KEY], () => resolve());
-          }
-        });
+      accountFetch = async (session, path, init = {}) => fetch(
+        `${TASKMASTER_API_BASE_URL}${path}`,
+        {
+          ...init,
+          headers: {
+            ...init.headers || {},
+            Authorization: `Bearer ${session.token}`,
+            ...init.body ? { "Content-Type": "application/json" } : {}
+          },
+          cache: "no-store"
+        }
+      );
+      fetchAccountSnapshot = async (session) => {
+        const response = await accountFetch(session, "/api/account/snapshot");
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.data)
+          throw new Error(result.error || `\u8D26\u53F7\u6570\u636E\u8BFB\u53D6\u5931\u8D25 (HTTP ${response.status})`);
+        return { cursor: Number(result.cursor) || 0, data: normalizeStorageData(result.data) };
       };
-      syncToCloud = async (data, opts) => {
+      createAccountSwitchBackup = (data, oldSub) => {
+        const key = `${ACCOUNT_SWITCH_BACKUP_PREFIX}${Date.now()}_${encodeURIComponent(oldSub || "guest")}`;
+        return { [key]: JSON.stringify({ createdAt: Date.now(), oldSub, data }) };
+      };
+      activateGoogleAccountNow = async (session, switchMode) => {
+        if (!session || typeof session.token !== "string" || !session.token || typeof session.user?.sub !== "string" || !session.user.sub) {
+          return { success: false, error: "Google \u767B\u5F55\u8FD4\u56DE\u7684\u8D26\u53F7\u4FE1\u606F\u65E0\u6548" };
+        }
+        const activeSession = await getGoogleAccountSession();
+        const lastSub = await getLocalValue(LAST_GOOGLE_SUB_KEY, "");
+        const oldSub = activeSession?.user.sub || lastSub;
+        const isSwitching = !!oldSub && oldSub !== session.user.sub;
+        if (isSwitching && !switchMode)
+          return { success: false, requiresSwitchDecision: true };
         try {
-          const settings = await getCloudSettings();
-          if (!settings.apiUrl || !settings.apiToken) {
-            return { success: false, error: "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" };
+          const localData = await loadData();
+          const keys = accountStorageKeys(session.user.sub);
+          const values = {
+            [GOOGLE_SESSION_KEY]: session,
+            [LAST_GOOGLE_SUB_KEY]: session.user.sub
+          };
+          if (isSwitching)
+            Object.assign(values, createAccountSwitchBackup(localData, oldSub));
+          if (isSwitching && switchMode === "replace") {
+            const snapshot = await fetchAccountSnapshot(session);
+            const shadowRecords = buildCurrentRecords(snapshot.data, { records: {} });
+            values[LOCAL_BACKUP_KEY] = JSON.stringify(snapshot.data);
+            values[keys.cursor] = snapshot.cursor;
+            values[keys.shadow] = { records: shadowRecords };
+            values[keys.clock] = Math.max(0, ...Object.values(shadowRecords).map((record) => record.updatedAt));
+          } else if (isSwitching) {
+            values[keys.cursor] = 0;
+            values[keys.shadow] = { records: {} };
+            values[keys.clock] = 0;
           }
-          const baseUpdatedAt = await getCloudBaseAt();
-          const resp = await fetch(`${settings.apiUrl}/api/fullsync`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${settings.apiToken}`
-            },
-            body: JSON.stringify({ data, baseUpdatedAt, force: opts?.force === true })
-          });
-          if (resp.status === 409) {
-            const err = await resp.json().catch(() => ({ error: "HTTP 409" }));
-            if (err.error === "conflict") {
-              return { success: false, conflict: true, currentUpdatedAt: err.currentUpdatedAt, error: "conflict" };
-            }
-            return { success: false, error: err.error || "refused" };
+          await setLocalValues(values);
+          if (isSwitching)
+            lastSyncTimestamp = 0;
+          if (activeSession && activeSession.user.sub !== session.user.sub) {
+            void accountFetch(activeSession, "/api/auth/logout", { method: "POST" }).catch(() => {
+            });
           }
-          if (!resp.ok) {
-            const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
-            return { success: false, error: err.error || `HTTP ${resp.status}` };
-          }
-          const result = await resp.json();
-          if (result.updatedAt) {
-            await setCloudBaseAt(result.updatedAt);
-          }
-          return { success: true, updatedAt: result.updatedAt };
-        } catch (e) {
-          return { success: false, error: String(e) };
+          return { success: true };
+        } catch (error) {
+          return { success: false, error: error instanceof Error ? error.message : String(error) };
         }
       };
-      syncFromCloud = async () => {
-        try {
-          const settings = await getCloudSettings();
-          if (!settings.apiUrl || !settings.apiToken) {
-            return { data: null, error: "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" };
-          }
-          const resp = await fetch(`${settings.apiUrl}/api/fullsync`, {
-            method: "GET",
-            headers: { "Authorization": `Bearer ${settings.apiToken}` }
+      activateGoogleAccount = (session, switchMode) => enqueueLocalMutation(() => enqueueSync(() => activateGoogleAccountNow(session, switchMode)));
+      logoutGoogleAccountNow = async () => {
+        const session = await getGoogleAccountSession();
+        if (session)
+          void accountFetch(session, "/api/auth/logout", { method: "POST" }).catch(() => {
           });
-          if (!resp.ok) {
-            return { data: null, error: `HTTP ${resp.status}` };
-          }
-          const result = await resp.json();
-          if (!result.data) {
-            return { data: null };
-          }
-          if (result.updatedAt) {
-            await setCloudBaseAt(result.updatedAt);
-          }
-          return { data: result.data, updatedAt: result.updatedAt };
-        } catch (e) {
-          return { data: null, error: String(e) };
-        }
+        await new Promise((resolve, reject) => chrome.storage.local.remove([GOOGLE_SESSION_KEY], () => {
+          if (chrome.runtime.lastError)
+            reject(chrome.runtime.lastError);
+          else
+            resolve();
+        }));
       };
+      logoutGoogleAccount = () => enqueueLocalMutation(() => enqueueSync(logoutGoogleAccountNow));
+      discardGoogleAccountSession = async (session) => {
+        await accountFetch(session, "/api/auth/logout", { method: "POST" }).catch(() => {
+        });
+      };
+      isGoogleAccountConnected = async () => !!await getGoogleAccountSession();
       normalizeStorageData = (data) => {
         const categoryIdMap = /* @__PURE__ */ new Map();
         const categoriesByName = /* @__PURE__ */ new Map();
@@ -259,13 +305,6 @@ var TaskManager = (() => {
           defaultCategory
         };
       };
-      INCREMENTAL_CURSOR_KEY = "tm_incremental_sync_cursor";
-      INCREMENTAL_DEVICE_KEY = "tm_incremental_sync_device";
-      INCREMENTAL_SHADOW_KEY = "tm_incremental_sync_shadow";
-      INCREMENTAL_CLOCK_KEY = "tm_incremental_sync_clock";
-      OUTGOING_SYNC_BATCH = 400;
-      lastSyncTimestamp = 0;
-      syncQueue = Promise.resolve();
       getNextLocalSettingsUpdatedAt = (current = 0, now = Date.now()) => Math.max(now, current + 1);
       recordKey = (type, id) => `${type}:${id}`;
       nextSyncTimestamp = () => {
@@ -273,11 +312,6 @@ var TaskManager = (() => {
         return lastSyncTimestamp;
       };
       cloneStorageData = (data) => JSON.parse(JSON.stringify(data));
-      enqueueSync = (operation) => {
-        const next = syncQueue.then(operation, operation);
-        syncQueue = next.then(() => void 0, () => void 0);
-        return next;
-      };
       getLocalValue = async (key, fallback) => {
         return new Promise((resolve) => {
           chrome.storage.local.get([key], (result) => resolve(result[key] || fallback));
@@ -308,8 +342,8 @@ var TaskManager = (() => {
         return id;
       };
       getSyncDeviceId = getSyncDeviceIdAsync;
-      getSyncShadow = async () => {
-        const shadow = await getLocalValue(INCREMENTAL_SHADOW_KEY, null);
+      getAccountSyncShadow = async (sub) => {
+        const shadow = await getLocalValue(accountStorageKeys(sub).shadow, null);
         return shadow && shadow.records ? shadow : { records: {} };
       };
       getSettingsPayload = (data) => ({
@@ -428,14 +462,15 @@ var TaskManager = (() => {
       syncIncrementallyNow = async (inputData) => {
         try {
           const data = normalizeStorageData(inputData);
-          const settings = await getCloudSettings();
-          if (!settings.apiUrl || !settings.apiToken)
-            return { success: false, error: "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" };
+          const session = await getGoogleAccountSession();
+          if (!session)
+            return { success: false, error: "not_signed_in" };
+          const keys = accountStorageKeys(session.user.sub);
           const [deviceId, shadow, initialCursor, storedClock] = await Promise.all([
             getSyncDeviceId(),
-            getSyncShadow(),
-            getLocalValue(INCREMENTAL_CURSOR_KEY, 0),
-            getLocalValue(INCREMENTAL_CLOCK_KEY, 0)
+            getAccountSyncShadow(session.user.sub),
+            getLocalValue(keys.cursor, 0),
+            getLocalValue(keys.clock, 0)
           ]);
           lastSyncTimestamp = Math.max(lastSyncTimestamp, storedClock);
           let cursor = initialCursor;
@@ -447,16 +482,17 @@ var TaskManager = (() => {
           const receivedChanges = [];
           while (pending.length > 0 || hasMore) {
             const outgoing = pending.splice(0, OUTGOING_SYNC_BATCH);
-            const resp = await fetch(`${settings.apiUrl}/api/sync/incremental`, {
+            const resp = await accountFetch(session, "/api/account/sync/incremental", {
               method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${settings.apiToken}`
-              },
+              headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ deviceId, cursor, changes: outgoing })
             });
             if (!resp.ok) {
               const error = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+              if (resp.status === 401) {
+                await new Promise((resolve) => chrome.storage.local.remove([GOOGLE_SESSION_KEY], () => resolve()));
+                return { success: false, error: "session_expired" };
+              }
               return { success: false, error: error.error || `HTTP ${resp.status}` };
             }
             const result = await resp.json();
@@ -476,20 +512,27 @@ var TaskManager = (() => {
           await Promise.all([
             saveToLocal(finalData),
             setLocalValues({
-              [INCREMENTAL_CURSOR_KEY]: cursor,
-              [INCREMENTAL_SHADOW_KEY]: { records: finalRecords },
-              [INCREMENTAL_CLOCK_KEY]: lastSyncTimestamp
+              [keys.cursor]: cursor,
+              [keys.shadow]: { records: finalRecords },
+              [keys.clock]: lastSyncTimestamp
             })
           ]);
-          return { success: true, data: finalData, hasForeignChanges: sawForeignChanges };
+          return { success: true, data: finalData, hasForeignChanges: sawForeignChanges, accountSub: session.user.sub };
         } catch (e) {
           return { success: false, error: String(e) };
         }
       };
-      syncIncrementally = (data) => enqueueSync(() => syncIncrementallyNow(cloneStorageData(data)));
+      syncIncrementally = async (data) => {
+        const requestedSub = (await getGoogleAccountSession())?.user.sub || null;
+        return enqueueSync(async () => {
+          const activeSub = (await getGoogleAccountSession())?.user.sub || null;
+          if (activeSub !== requestedSub)
+            return { success: false, error: "account_changed" };
+          return syncIncrementallyNow(cloneStorageData(data));
+        });
+      };
       isCloudConfigured = async () => {
-        const settings = await getCloudSettings();
-        return !!(settings.apiUrl && settings.apiToken);
+        return isGoogleAccountConnected();
       };
       isRecoverableNetworkError = (error) => {
         if (!error)
@@ -497,7 +540,7 @@ var TaskManager = (() => {
         return /(?:TypeError:\s*)?Failed to fetch|NetworkError when attempting to fetch resource|Load failed/i.test(error);
       };
       warnForSyncFailure = (error) => {
-        if (!error || error === "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" || isRecoverableNetworkError(error))
+        if (!error || error === "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" || error === "not_signed_in" || error === "account_changed" || isRecoverableNetworkError(error))
           return;
         console.warn("[TaskMaster] incremental sync failed:", error);
       };
@@ -585,15 +628,29 @@ var TaskManager = (() => {
       saveData = async (data, onRemoteData, onSyncResult) => {
         const localData = normalizeStorageData(data);
         localData.tasks = fixRecurringTasks(localData.tasks);
-        await saveToLocal(localData);
-        syncIncrementally(localData).then((result) => {
+        const syncContext = await enqueueLocalMutation(async () => {
+          await saveToLocal(localData);
+          const requestedSub2 = (await getGoogleAccountSession())?.user.sub || null;
+          return { requestedSub: requestedSub2, syncPromise: enqueueSync(() => syncIncrementallyNow(localData)) };
+        });
+        const { requestedSub, syncPromise } = syncContext;
+        syncPromise.then(async (result) => {
+          const sameAccount = async () => ((await getGoogleAccountSession())?.user.sub || null) === requestedSub;
+          if (result.error === "session_expired") {
+            onSyncResult?.(result);
+            return;
+          }
           if (result.success && result.data) {
-            getSyncDeviceIdAsync().then((deviceId) => {
-              onRemoteData?.(result.data, { ignoreDeviceId: deviceId });
-            });
+            if (!await sameAccount() || result.accountSub !== requestedSub)
+              return;
+            const deviceId = await getSyncDeviceIdAsync();
+            if (!await sameAccount())
+              return;
+            onRemoteData?.(result.data, { ignoreDeviceId: deviceId });
           } else
             warnForSyncFailure(result.error);
-          onSyncResult?.(result);
+          if (await sameAccount())
+            onSyncResult?.(result);
         }).catch((e) => warnForSyncFailure(String(e)));
       };
       BACKUP_PREFIX = "tm_auto_backup_";
@@ -638,12 +695,14 @@ var TaskManager = (() => {
             }
             const backups = [];
             for (const key of Object.keys(all)) {
-              if (!key.startsWith(BACKUP_PREFIX))
+              const isAutomatic = key.startsWith(BACKUP_PREFIX);
+              const isAccountSwitch = key.startsWith(ACCOUNT_SWITCH_BACKUP_PREFIX);
+              if (!isAutomatic && !isAccountSwitch)
                 continue;
               try {
                 const parsed = typeof all[key] === "string" ? JSON.parse(all[key]) : all[key];
                 const d = parsed.data;
-                const ts = parsed.timestamp || 0;
+                const ts = parsed.timestamp || parsed.createdAt || 0;
                 const dd = new Date(ts);
                 const dateStr = `${dd.getFullYear()}-${String(dd.getMonth() + 1).padStart(2, "0")}-${String(dd.getDate()).padStart(2, "0")} ${String(dd.getHours()).padStart(2, "0")}:${String(dd.getMinutes()).padStart(2, "0")}`;
                 backups.push({
@@ -651,7 +710,8 @@ var TaskManager = (() => {
                   timestamp: ts,
                   dateStr,
                   taskCount: d?.tasks?.length || 0,
-                  categoryCount: d?.categories?.length || 0
+                  categoryCount: d?.categories?.length || 0,
+                  kind: isAccountSwitch ? "account-switch" : "automatic"
                 });
               } catch {
               }
@@ -677,6 +737,12 @@ var TaskManager = (() => {
           const parsed = JSON.parse(result);
           if (!parsed.data?.tasks)
             return { success: false, error: "\u5907\u4EFD\u6570\u636E\u635F\u574F" };
+          if (key.startsWith(ACCOUNT_SWITCH_BACKUP_PREFIX)) {
+            const session = await getGoogleAccountSession();
+            if (!session || session.user.sub !== parsed.oldSub) {
+              return { success: false, error: "\u4E3A\u907F\u514D\u8DE8\u8D26\u53F7\u540C\u6B65\uFF0C\u8BF7\u5148\u767B\u5F55\u6B64\u5907\u4EFD\u6240\u5C5E\u7684\u539F Google \u8D26\u53F7\uFF0C\u518D\u6062\u590D\u672C\u673A\u6570\u636E" };
+            }
+          }
           await saveData(parsed.data);
           return { success: true };
         } catch (e) {
@@ -689,7 +755,7 @@ var TaskManager = (() => {
         });
       };
       cleanOldBackups = async () => {
-        const backups = await listBackups();
+        const backups = (await listBackups()).filter((backup) => backup.kind === "automatic");
         if (backups.length <= MAX_BACKUPS)
           return;
         const toRemove = backups.slice(MAX_BACKUPS).map((b) => b.key);
@@ -797,7 +863,7 @@ var TaskManager = (() => {
       toast.remove();
     }, 3e3);
   }
-  var syncStatus, statusChangeCallback, statusTimeoutId, getSyncStatus, setSyncStatus, onSyncStatusChange, shouldRefreshAppForSyncStatus, markLocalSave, markSaveComplete, markCloudSynced, markSyncError, markRemoteUpdated;
+  var syncStatus, statusChangeCallback, statusTimeoutId, getSyncStatus, setSyncStatus, onSyncStatusChange, shouldRefreshAppForSyncStatus, markLocalSave, markSaveComplete, markLocalOnly, markCloudSynced, markSyncError, markRemoteUpdated;
   var init_sync = __esm({
     "shared/sync.ts"() {
       "use strict";
@@ -818,6 +884,9 @@ var TaskManager = (() => {
       };
       markSaveComplete = () => {
         setSyncStatus("local-saved");
+      };
+      markLocalOnly = () => {
+        setSyncStatus("local-only");
       };
       markCloudSynced = () => {
         setSyncStatus("synced");
@@ -1154,7 +1223,8 @@ var TaskManager = (() => {
             applyStorageData(result.data, { ignoreDeviceId: deviceId });
             if (result.hasForeignChanges)
               markRemoteUpdated();
-          }
+          } else if (result.error === "not_signed_in")
+            markLocalOnly();
         }).catch(() => {
         });
       };
@@ -1178,6 +1248,8 @@ var TaskManager = (() => {
           }, (result) => {
             if (result.success)
               markCloudSynced();
+            else if (result.error === "not_signed_in")
+              markLocalOnly();
             else if (result.error !== "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E")
               markSyncError();
           });
@@ -1721,6 +1793,9 @@ var TaskManager = (() => {
       idle: "",
       saving: `<span id="syncIndicator" class="p-2 rounded-lg transition text-blue-500" title="\u6B63\u5728\u540C\u6B65...">
       <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+    </span>`,
+      "local-only": `<span id="syncIndicator" class="p-2 rounded-lg transition text-gray-400" title="\u4EC5\u4FDD\u5B58\u5728\u672C\u673A\uFF1B\u767B\u5F55 Google \u540E\u53EF\u8DE8\u8BBE\u5907\u540C\u6B65">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 20h14M7 16V8a5 5 0 0110 0v8M9 20v-4m6 4v-4"/></svg>
     </span>`,
       "local-saved": `<span id="syncIndicator" class="p-2 rounded-lg transition text-amber-500" title="\u5DF2\u4FDD\u5B58\u5728\u672C\u673A\uFF0C\u7B49\u5F85\u4E91\u540C\u6B65">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -2993,25 +3068,25 @@ var TaskManager = (() => {
               <svg style="width:18px;height:18px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
           </div>
-          <p style="font-size:12px;color:#9ca3af;margin-top:4px;">${tasks.length} \u4E2A\u4EFB\u52A1 \xB7 ${categories.length} \u4E2A\u5206\u7C7B \xB7 \u4E91\u7AEF\u540C\u6B65</p>
+          <p style="font-size:12px;color:#9ca3af;margin-top:4px;">${tasks.length} \u4E2A\u4EFB\u52A1 \xB7 ${categories.length} \u4E2A\u5206\u7C7B</p>
         </div>
         <div id="syncFeedback" style="margin:0 24px 0;padding:8px 12px;border-radius:8px;font-size:12px;display:none;"></div>
         <div style="padding:0 24px 20px;">
-          <div class="flex gap-3">
-            <button id="forceUploadBtn" class="sync-card card-upload">
-              <div class="icon-circle icon-upload">
-                <svg style="width:20px;height:20px;color:white;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+          <div class="rounded-xl border dark:border-gray-700 p-4">
+            <div id="googleAccountStatus" class="text-sm text-gray-600 dark:text-gray-300" aria-live="polite">\u68C0\u67E5\u8D26\u53F7\u72B6\u6001\u2026</div>
+            <div class="flex gap-2 mt-3">
+              <button id="googleLoginBtn" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm">\u4F7F\u7528 Google \u767B\u5F55</button>
+              <button id="googleLogoutBtn" class="hidden px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg text-sm">\u9000\u51FA\u767B\u5F55</button>
+            </div>
+            <div id="accountSwitchChoices" class="hidden mt-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+              <p class="text-sm text-amber-900 dark:text-amber-200">\u4E3A\u907F\u514D\u4E24\u4E2A\u8D26\u53F7\u7684\u6570\u636E\u6DF7\u5728\u4E00\u8D77\uFF0C\u8BF7\u9009\u62E9\u672C\u673A\u6570\u636E\u7684\u5904\u7406\u65B9\u5F0F\uFF1A</p>
+              <div class="grid gap-2 mt-3">
+                <button id="mergeAccountDataBtn" class="px-3 py-2 rounded-lg bg-blue-500 text-white text-sm">\u5408\u5E76\u672C\u673A\u4EFB\u52A1\u5230\u65B0\u8D26\u53F7</button>
+                <button id="replaceAccountDataBtn" class="px-3 py-2 rounded-lg bg-white dark:bg-gray-700 border dark:border-gray-600 text-sm">\u5907\u4EFD\u672C\u673A\u6570\u636E\u5E76\u6362\u6210\u65B0\u8D26\u53F7\u4E91\u7AEF\u6570\u636E</button>
+                <button id="cancelAccountSwitchBtn" class="px-3 py-2 rounded-lg text-gray-500 text-sm">\u53D6\u6D88\u5207\u6362</button>
               </div>
-              <div class="card-title">\u4E0A\u4F20\u5230\u4E91\u7AEF</div>
-              <div class="card-hint">\u672C\u673A \u2192 \u4E91\u7AEF</div>
-            </button>
-            <button id="forceDownloadBtn" class="sync-card card-download">
-              <div class="icon-circle icon-download">
-                <svg style="width:20px;height:20px;color:white;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/></svg>
-              </div>
-              <div class="card-title">\u4ECE\u4E91\u7AEF\u62C9\u53D6</div>
-              <div class="card-hint">\u4E91\u7AEF \u2192 \u672C\u673A</div>
-            </button>
+            </div>
+            <p class="mt-3 text-xs text-gray-400 dark:text-gray-500">\u672A\u767B\u5F55\u65F6\u4EFB\u52A1\u53EA\u4FDD\u5B58\u5728\u672C\u673A\uFF1B\u767B\u5F55\u540E\u4F1A\u81EA\u52A8\u5B89\u5168\u5408\u5E76\u5E76\u540C\u6B65\u3002</p>
           </div>
         </div>
         <div class="flex border-t dark:border-gray-700" style="padding:10px 24px;">
@@ -3052,28 +3127,19 @@ var TaskManager = (() => {
       <div class="fixed inset-0 bg-black/50" id="mobileSyncOverlay"></div>
       <div class="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md mx-8 p-10 max-h-[90%] overflow-y-auto">
         <div class="flex items-center justify-between mb-8">
-          <h3 class="text-xl font-semibold text-gray-900 dark:text-white">\u624B\u673A\u540C\u6B65\u8BBE\u7F6E</h3>
+          <h3 class="text-xl font-semibold text-gray-900 dark:text-white">\u624B\u673A\u540C\u6B65</h3>
           <button id="mobileSyncClose" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
-        <div class="space-y-6">
-          <div>
-            <label class="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-2.5">API \u5730\u5740</label>
-            <input type="url" id="mobileSyncApiUrl" class="w-full px-4 py-3 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" placeholder="https://your-worker.workers.dev">
+        <div class="space-y-4">
+          <p class="text-sm text-gray-600 dark:text-gray-300">\u624B\u673A\u6253\u5F00\u6B64\u9875\u9762\u540E\uFF0C\u4F7F\u7528\u4E0E\u7535\u8111\u76F8\u540C\u7684 Google \u8D26\u53F7\u767B\u5F55\u3002\u767B\u5F55\u524D\u4E0D\u4F1A\u8BFB\u53D6\u8D26\u53F7\u4EFB\u52A1\u3002</p>
+          <div class="flex items-center gap-2 p-3 rounded-lg bg-gray-50 dark:bg-gray-900/40">
+            <code id="mobileSyncAddress" class="min-w-0 flex-1 break-all text-xs text-gray-600 dark:text-gray-300">\u52A0\u8F7D\u4E2D\u2026</code>
+            <button id="copyMobileSyncAddress" class="flex-shrink-0 px-3 py-2 rounded-lg bg-blue-500 text-white text-xs">\u590D\u5236\u94FE\u63A5</button>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-2.5">API \u5BC6\u94A5</label>
-            <input type="text" id="mobileSyncApiToken" class="w-full px-4 py-3 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" placeholder="\u7C98\u8D34\u4F60\u7684 API Token" autocomplete="off">
-          </div>
-          <div class="flex gap-4 pt-2">
-            <button id="mobileSyncSaveBtn" class="flex-1 px-4 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm font-medium">\u4FDD\u5B58\u8BBE\u7F6E</button>
-            <button id="mobileSyncNowBtn" class="flex-1 px-4 py-3 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition text-sm font-medium">\u7ACB\u5373\u540C\u6B65</button>
-          </div>
-          <div id="mobileSyncStatus" class="text-xs text-gray-500 dark:text-gray-400 min-h-[1.25rem]"></div>
-          <div class="pt-4 border-t dark:border-gray-700">
-            <p class="text-xs text-gray-400 dark:text-gray-500 leading-relaxed">\u624B\u673A\u8BBF\u95EE\u4F60\u7684 Worker \u5730\u5740\u5373\u53EF\u6DFB\u52A0\u4EFB\u52A1\uFF0C\u4E5F\u53EF\u901A\u8FC7 Telegram Bot \u53D1\u6D88\u606F\u6DFB\u52A0\u3002</p>
-          </div>
+          <div id="mobileSyncStatus" class="text-xs text-gray-500 dark:text-gray-400" aria-live="polite"></div>
+          <p class="text-xs text-gray-400 dark:text-gray-500">\u624B\u673A\u65B0\u589E\u4EFB\u52A1\u540E\uFF0C\u4F1A\u81EA\u52A8\u51FA\u73B0\u5728\u5DF2\u767B\u5F55\u8BE5\u8D26\u53F7\u7684\u7535\u8111\u7AEF\u3002</p>
         </div>
       </div>
     </div>
@@ -4091,6 +4157,7 @@ var TaskManager = (() => {
   init_task();
   init_task();
   init_storage();
+  init_config();
   init_sync();
 
   // shared/quick-dates.ts
@@ -5280,6 +5347,7 @@ var TaskManager = (() => {
         <div class="flex items-center justify-between" style="padding:6px 0;border-bottom:1px solid #f3f4f6;" data-backup-key="${b.key}">
           <div>
             <span style="color:#374151;" class="dark:text-gray-300">${b.dateStr}</span>
+            ${b.kind === "account-switch" ? '<span style="margin-left:6px;color:#d97706;">\u8D26\u53F7\u5207\u6362\u5907\u4EFD</span>' : ""}
             <span style="color:#9ca3af;margin-left:8px;">${b.taskCount} \u4E2A\u4EFB\u52A1</span>
           </div>
           <div class="flex gap-2">
@@ -5314,10 +5382,106 @@ var TaskManager = (() => {
           });
         });
       };
+      let pendingGoogleSession = null;
+      const refreshGoogleAccountUI = async () => {
+        const status = container.querySelector("#googleAccountStatus");
+        const login = container.querySelector("#googleLoginBtn");
+        const logout = container.querySelector("#googleLogoutBtn");
+        const session = await getGoogleAccountSession();
+        if (status)
+          status.textContent = session ? `\u5DF2\u767B\u5F55\uFF1A${session.user.email || session.user.name || "Google \u8D26\u53F7"} \xB7 \u81EA\u52A8\u540C\u6B65\u5DF2\u5F00\u542F` : "\u5F53\u524D\u4E3A\u8BBF\u5BA2\u6A21\u5F0F\uFF0C\u4EFB\u52A1\u4EC5\u4FDD\u5B58\u5728\u672C\u673A";
+        login?.classList.toggle("hidden", !!session);
+        logout?.classList.toggle("hidden", !session);
+      };
+      const finishGoogleLogin = async (mode) => {
+        if (!pendingGoogleSession)
+          return;
+        const loginButton = container.querySelector("#googleLoginBtn");
+        if (loginButton)
+          loginButton.disabled = true;
+        showSyncFeedback(container, mode ? "\u6B63\u5728\u5B89\u5168\u5207\u6362\u8D26\u53F7\u2026" : "\u6B63\u5728\u8FDE\u63A5 Google \u8D26\u53F7\u2026", "info");
+        const result = await activateGoogleAccount(pendingGoogleSession, mode);
+        if (!result.success && result.requiresSwitchDecision) {
+          const choices = container.querySelector("#accountSwitchChoices");
+          choices?.classList.remove("hidden");
+          if (loginButton)
+            loginButton.classList.add("hidden");
+          const status = container.querySelector("#googleAccountStatus");
+          if (status)
+            status.textContent = `\u68C0\u6D4B\u5230\u6B64\u8BBE\u5907\u4E0A\u6B21\u4F7F\u7528\u7684\u662F\u53E6\u4E00\u4E2A\u8D26\u53F7${pendingGoogleSession.user.email ? `\uFF08${pendingGoogleSession.user.email}\uFF09` : ""}\u3002\u8BF7\u9009\u62E9\u5982\u4F55\u5904\u7406\u672C\u673A\u6570\u636E\u3002`;
+          const feedback = container.querySelector("#syncFeedback");
+          if (feedback)
+            feedback.style.display = "none";
+          return;
+        }
+        if (!result.success) {
+          showSyncFeedback(container, result.error || "Google \u767B\u5F55\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5", "error");
+          pendingGoogleSession = null;
+          if (loginButton)
+            loginButton.disabled = false;
+          await refreshGoogleAccountUI();
+          return;
+        }
+        pendingGoogleSession = null;
+        await loadState();
+        reRender();
+        showToast(container, "Google \u8D26\u53F7\u5DF2\u8FDE\u63A5\uFF0C\u6B63\u5728\u540C\u6B65", "success");
+      };
+      container.querySelector("#googleLoginBtn")?.addEventListener("click", async () => {
+        const button = container.querySelector("#googleLoginBtn");
+        if (button) {
+          button.disabled = true;
+          button.textContent = "\u6B63\u5728\u6253\u5F00 Google\u2026";
+        }
+        const result = await new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage({ action: "googleLogin" }, (response) => {
+            if (chrome.runtime.lastError)
+              reject(new Error(chrome.runtime.lastError.message));
+            else
+              resolve(response || {});
+          });
+        }).catch((error) => ({ session: void 0, error: error instanceof Error ? error.message : String(error) }));
+        if (button) {
+          button.disabled = false;
+          button.textContent = "\u4F7F\u7528 Google \u767B\u5F55";
+        }
+        if (!result.session) {
+          showSyncFeedback(container, result.error || "Google \u767B\u5F55\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC\u548C\u670D\u52A1\u914D\u7F6E", "error");
+          return;
+        }
+        pendingGoogleSession = result.session;
+        await finishGoogleLogin();
+      });
+      container.querySelector("#mergeAccountDataBtn")?.addEventListener("click", () => finishGoogleLogin("merge"));
+      container.querySelector("#replaceAccountDataBtn")?.addEventListener("click", () => finishGoogleLogin("replace"));
+      container.querySelector("#cancelAccountSwitchBtn")?.addEventListener("click", async () => {
+        if (pendingGoogleSession)
+          await discardGoogleAccountSession(pendingGoogleSession);
+        pendingGoogleSession = null;
+        container.querySelector("#accountSwitchChoices")?.classList.add("hidden");
+        await refreshGoogleAccountUI();
+        showSyncFeedback(container, "\u5DF2\u53D6\u6D88\u8D26\u53F7\u5207\u6362\uFF0C\u539F\u6709\u6570\u636E\u548C\u8D26\u53F7\u4FDD\u6301\u4E0D\u53D8", "info");
+      });
+      container.querySelector("#googleLogoutBtn")?.addEventListener("click", async () => {
+        const button = container.querySelector("#googleLogoutBtn");
+        if (button)
+          button.disabled = true;
+        try {
+          await logoutGoogleAccount();
+          showSyncFeedback(container, "\u5DF2\u9000\u51FA\u767B\u5F55\uFF1B\u672C\u673A\u4EFB\u52A1\u4FDD\u7559\uFF0C\u4E91\u540C\u6B65\u5DF2\u505C\u6B62", "success");
+          await refreshGoogleAccountUI();
+        } catch (error) {
+          showSyncFeedback(container, error instanceof Error ? error.message : "\u9000\u51FA\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5", "error");
+        } finally {
+          if (button)
+            button.disabled = false;
+        }
+      });
       container.querySelector("#syncDataBtn")?.addEventListener("click", () => {
         const modal = container.querySelector("#syncModal");
         modal?.classList.remove("hidden");
         refreshBackupUI();
+        refreshGoogleAccountUI();
       });
       container.querySelector("#createBackupBtn")?.addEventListener("click", async () => {
         const btn = container.querySelector("#createBackupBtn");
@@ -5337,13 +5501,13 @@ var TaskManager = (() => {
       container.querySelector("#mobileSyncSettingsBtn")?.addEventListener("click", () => {
         const modal = container.querySelector("#mobileSyncModal");
         modal?.classList.remove("hidden");
-        chrome.runtime.sendMessage({ action: "getSyncSettings" }, (settings) => {
-          const urlInput = container.querySelector("#mobileSyncApiUrl");
-          const tokenInput = container.querySelector("#mobileSyncApiToken");
-          if (urlInput && settings?.apiUrl)
-            urlInput.value = settings.apiUrl;
-          if (tokenInput && settings?.apiToken)
-            tokenInput.value = settings.apiToken;
+        const address = container.querySelector("#mobileSyncAddress");
+        const status = container.querySelector("#mobileSyncStatus");
+        if (address)
+          address.textContent = TASKMASTER_API_BASE_URL;
+        getGoogleAccountSession().then((session) => {
+          if (status)
+            status.textContent = session ? `\u7535\u8111\u7AEF\u5DF2\u767B\u5F55\uFF1A${session.user.email || "Google \u8D26\u53F7"}\u3002\u8BF7\u5728\u624B\u673A\u4E0A\u767B\u5F55\u540C\u4E00\u8D26\u53F7\u3002` : "\u7535\u8111\u7AEF\u5F53\u524D\u4E3A\u8BBF\u5BA2\u6A21\u5F0F\uFF1B\u8981\u540C\u6B65\u5230\u624B\u673A\uFF0C\u8BF7\u5148\u5728\u6570\u636E\u540C\u6B65\u4E2D\u767B\u5F55 Google\u3002";
         });
       });
       container.querySelector("#mobileSyncClose")?.addEventListener("click", () => {
@@ -5352,35 +5516,13 @@ var TaskManager = (() => {
       container.querySelector("#mobileSyncOverlay")?.addEventListener("click", () => {
         container.querySelector("#mobileSyncModal")?.classList.add("hidden");
       });
-      container.querySelector("#mobileSyncSaveBtn")?.addEventListener("click", () => {
-        const apiUrl = container.querySelector("#mobileSyncApiUrl")?.value.replace(/\/+$/, "").trim();
-        const apiToken = container.querySelector("#mobileSyncApiToken")?.value.trim();
-        if (!apiUrl || !apiToken) {
-          syncToast("\u8BF7\u586B\u5199 API \u5730\u5740\u548C\u5BC6\u94A5", "error");
-          return;
+      container.querySelector("#copyMobileSyncAddress")?.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(TASKMASTER_API_BASE_URL);
+          syncToast("\u624B\u673A\u9875\u9762\u94FE\u63A5\u5DF2\u590D\u5236", "success");
+        } catch {
+          syncToast("\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u590D\u5236\u9875\u9762\u5730\u5740", "error");
         }
-        chrome.runtime.sendMessage({ action: "saveSyncSettings", settings: { apiUrl, apiToken } }, () => {
-          syncToast("\u8BBE\u7F6E\u5DF2\u4FDD\u5B58", "success");
-        });
-      });
-      container.querySelector("#mobileSyncNowBtn")?.addEventListener("click", () => {
-        const statusEl = container.querySelector("#mobileSyncStatus");
-        if (statusEl)
-          statusEl.textContent = "\u540C\u6B65\u4E2D...";
-        chrome.runtime.sendMessage({ action: "syncRemoteTasks" }, (result) => {
-          if ((result?.synced ?? 0) > 0) {
-            syncToast(`\u5DF2\u540C\u6B65 ${result.synced} \u4E2A\u4EFB\u52A1`, "success");
-            if (statusEl)
-              statusEl.textContent = `\u4E0A\u6B21\u540C\u6B65: \u6210\u529F\uFF0C${result.synced} \u4E2A\u4EFB\u52A1`;
-          } else if (result?.error) {
-            syncToast("\u540C\u6B65\u5931\u8D25: " + result.error, "error");
-            if (statusEl)
-              statusEl.textContent = "\u540C\u6B65\u5931\u8D25: " + result.error;
-          } else {
-            if (statusEl)
-              statusEl.textContent = "\u6CA1\u6709\u65B0\u7684\u5F85\u540C\u6B65\u4EFB\u52A1";
-          }
-        });
       });
     }
     setupWeeklyGoalEvents(container);
@@ -5556,19 +5698,6 @@ var TaskManager = (() => {
 
   // shared/entry.ts
   init_sync();
-  function syncActionToast(message, type = "success") {
-    document.querySelectorAll(".sync-action-toast").forEach((el) => el.remove());
-    const toast = document.createElement("div");
-    toast.className = "sync-action-toast";
-    const bgColor = type === "success" ? "#22c55e" : "#ef4444";
-    toast.style.cssText = `position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);padding:0.75rem 1.5rem;border-radius:0.75rem;box-shadow:0 10px 25px rgba(0,0,0,0.15);color:#fff;font-size:0.875rem;font-weight:500;z-index:10000;background:${bgColor};transition:opacity 0.3s;white-space:nowrap;`;
-    toast.textContent = message;
-    document.body.appendChild(toast);
-    setTimeout(() => {
-      toast.style.opacity = "0";
-      setTimeout(() => toast.remove(), 300);
-    }, 3e3);
-  }
   function autoInit() {
     const container = document.getElementById("app");
     if (!container) {
@@ -5579,17 +5708,21 @@ var TaskManager = (() => {
       renderApp(container);
       attachEventListeners(container);
     };
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== "local" || !changes.tm_google_account_session)
+        return;
+      const oldSub = changes.tm_google_account_session.oldValue?.user?.sub || null;
+      const newSub = changes.tm_google_account_session.newValue?.user?.sub || null;
+      if (oldSub === newSub)
+        return;
+      loadState().then(reRender2).catch((error) => console.warn("[TaskMaster] account state refresh failed:", error));
+    });
     loadState().then(() => {
       if (window.location.pathname.includes("popup")) {
         setState({ currentView: "focus" });
       }
       renderApp(container);
       attachEventListeners(container);
-      chrome.runtime.sendMessage({ action: "syncRemoteTasks" }, (result) => {
-        if ((result?.synced ?? 0) > 0) {
-          syncActionToast(`\u5DF2\u4ECE\u624B\u673A\u540C\u6B65 ${result.synced} \u4E2A\u4EFB\u52A1`, "success");
-        }
-      });
       onSyncStatusChange((status) => {
         const indicatorSlot = container.querySelector("#syncIndicatorSlot");
         if (indicatorSlot) {

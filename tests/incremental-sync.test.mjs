@@ -275,7 +275,11 @@ const syncedCategoryData = await syncedCategoryResponse.json()
 assert.ok(syncedCategoryData.categories.some(category => category.id === 'project-category'))
 assert.equal(syncedCategoryData.defaultCategory, 'project-category')
 
-const storageSource = await readFile(new URL('../shared/storage.ts', import.meta.url), 'utf8')
+const storageSource = (await readFile(new URL('../shared/storage.ts', import.meta.url), 'utf8'))
+  .replace(
+    "import { TASKMASTER_API_BASE_URL } from './config'",
+    "const TASKMASTER_API_BASE_URL = 'https://taskmaster-api.yx9391.workers.dev'"
+  )
 const storageJavaScript = ts.transpileModule(storageSource, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }
 }).outputText
@@ -316,7 +320,8 @@ const [backgroundSource, taskSource, eventSource, storageModuleSource, entrySour
   readFile(new URL('../shared/entry.ts', import.meta.url), 'utf8')
 ])
 assert.doesNotMatch(backgroundSource, /lt\.title === \(rt\.title as string\)/)
-assert.match(backgroundSource, /localData\.tasks\.some\(local => local\.id === task\.id\)/)
+assert.match(backgroundSource, /chrome\.identity\.launchWebAuthFlow/)
+assert.match(backgroundSource, /code_challenge_method: 'S256'/)
 assert.match(taskSource, /setLocalSettings[\s\S]*syncSettingsUpdatedAt = getNextLocalSettingsUpdatedAt/)
 assert.match(eventSource, /#hideCompleted[\s\S]*setLocalSettings\(\{ hideCompleted:/)
 assert.match(storageModuleSource, /isRecoverableNetworkError[\s\S]*Failed to fetch/)

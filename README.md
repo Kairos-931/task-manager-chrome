@@ -2,7 +2,7 @@
 
 # TaskMaster - Chrome 任务管理插件
 
-一款功能完整的 Chrome 浏览器任务管理扩展，支持四种视图、分类管理、深色模式、多设备数据同步。
+一款离线优先的 Chrome 浏览器任务管理扩展，支持四种视图、分类管理、深色模式和可选的 Google 账号同步。当前代码基线为 3.17.0（开发中，尚未发布）；线上 Worker 仍需完成 OAuth 配置、D1 迁移与安全演练后才能启用登录。
 
 ## 功能特性
 
@@ -13,8 +13,11 @@
 - **筛选过滤** — 按优先级/分类筛选，隐藏已完成或过期任务
 - **拖拽操作** — 任务拖拽到不同日期
 - **深色模式** — 明暗主题一键切换
-- **数据同步** — 通过 Cloudflare Worker 实现离线优先的跨设备增量同步，支持 Telegram Bot 添加任务
-- **同步管理面板** — 手动上传到云端、从云端拉取、导出文件、导入文件
+- **访客模式** — 无需注册或登录，任务先保存在本机，离线可用
+- **Google 账号同步** — 用户主动登录后，通过 Cloudflare Worker + D1 按 Google 账号隔离增量同步
+- **安全切换账号** — 切换账号前明确选择合并本机数据，或备份后改用新账号的云端数据
+- **手机快速添加** — 手机页使用相同 Google 账号，只能读取和写入当前账号的任务
+- **同步与备份面板** — 查看账号和同步状态，并导出/导入本地 JSON 备份
 - **冲突合并** — 多设备离线编辑时按任务时间戳自动合并，删除不会被旧设备复活
 - **数据导入导出** — JSON 格式备份与恢复
 - **双模式使用** — 弹窗快速查看 + 全屏管理页面
@@ -66,7 +69,7 @@ npm run demo
 | Chrome Extension MV3 | 浏览器扩展框架 |
 | Tailwind CSS | UI 样式 |
 | esbuild | IIFE 打包 |
-| Cloudflare Worker + D1 | 跨设备数据同步 & Telegram Bot |
+| Google Identity + Cloudflare Worker + D1 | 可选登录与账号隔离同步 |
 | chrome.storage.local | 本地数据存储与备份 |
 
 ## 项目结构
@@ -78,12 +81,12 @@ npm run demo
 ├── tailwind.config.js         # Tailwind CSS 配置
 ├── shared/                    # TypeScript 源码
 │   ├── types.ts               # 类型定义
-│   ├── storage.ts             # 存储层（分块 sync + local 备份）
+│   ├── storage.ts             # 本机优先存储与 Google 账号增量同步
 │   ├── task.ts                # 状态管理与业务逻辑
 │   ├── render.ts              # UI 渲染
 │   ├── events.ts              # 事件监听
 │   ├── entry.ts               # 打包入口
-│   ├── background.ts          # Service Worker
+│   ├── background.ts          # Service Worker 与 Google OAuth 授权
 │   └── chrome.d.ts            # Chrome API 类型声明
 ├── backend/                   # Cloudflare Worker 后端（D1 数据库）
 ├── chrome-extension-sync/     # 可直接加载的构建产物（推荐）
@@ -96,81 +99,51 @@ npm run demo
 
 ## 数据同步说明
 
-插件通过 **Cloudflare Worker + D1 数据库** 实现跨设备同步，不依赖 chrome.storage.sync。
+TaskMaster 默认是访客模式：任务、分类和设置保存在 `chrome.storage.local`，无需 Google、API 密钥或网络即可使用。用户从新标签页的「数据同步」主动登录 Google 后，扩展才会通过 Cloudflare Worker + D1 同步；Worker 只根据验签后的 Google `sub` 选择账号数据空间。新标签页与手机页可以使用同一个 Google 账号。
 
 ### 同步架构
 
 ```
-设备 A（Chrome 插件）
-  → 增删改任务 → POST /api/sync/incremental → Cloudflare D1 变更日志
-                                                    ↓
-设备 B（Chrome 插件）
-  ← 游标拉取增量变更 ← POST /api/sync/incremental
+扩展（Google 账号 A） ── Bearer 会话 ──┐
+                                      ├─ /api/account/* ── D1（user_sub=A）
+手机页（同一账号 A） ── HttpOnly Cookie ┘
+
+旧 API_TOKEN / Telegram 管理通道 ── 旧全局表（与账号表完全分离）
 ```
 
-| 功能 | API | 说明 |
-|------|-----|------|
-| 增量同步 | `POST /api/sync/incremental` | 每次操作自动发送变更并按游标接收远端更新 |
-| 旧版兼容 | `GET/POST /api/fullsync` | 仅供未升级的扩展继续使用 |
-| 创建任务 | `POST /api/tasks` | 手机网页 / Telegram Bot 使用 |
-| Telegram Bot | `POST /api/telegram/webhook` | 通过 Telegram 消息添加任务 |
+未登录时编辑只影响本机；登录后自动同步。首次登录会合并本机与账号云端的独有记录。换 Google 账号时，必须明确选择合并本机数据到新账号，或先备份本机数据再替换为新账号的云端数据。退出登录不会删除本机任务。
 
-### 后端部署（Cloudflare Worker）
+### 3.17.0 启用前置条件（尚未发布）
 
-后端代码在 `backend/` 目录，部署步骤：
+当前生产 Worker 仍是旧版，直接构建/加载本分支不会启用 Google 登录。正式开放前，管理员必须依次完成：
 
-1. **创建 D1 数据库**
-   ```bash
-   npx wrangler d1 create taskmaster-db
-   ```
+1. 备份生产 D1，并在非生产库演练 `backend/migrations/0002-google-account-sync.sql`；迁移只新增账号表，不修改旧全局表。
+2. 配置 Google OAuth Web Client：授权回调必须精确匹配此扩展稳定 ID 的 `chrome.identity.getRedirectURL()`；同时将手机 Worker 页面来源加入 Google Identity 的授权来源。
+3. 在 Worker secret/config 中设置 `GOOGLE_CLIENT_ID`、`GOOGLE_CLIENT_SECRET` 和 `GOOGLE_EXTENSION_REDIRECT_URI`。旧数据管理员认领前，另经人工确认归属后才设置 `LEGACY_CLAIM_GOOGLE_SUB`；不要把任何真实值写入仓库。
+4. 部署 Worker 并验证 Google 验签、账号 A/B 隔离、手机同账号读写和旧 Telegram 隔离后，才发布扩展。
+5. 旧全局数据完成备份、认领和数量/关键任务校验后，可设置 `LEGACY_API_DISABLED=true` 停用旧 `/api/tasks`、`/api/categories`、`/api/sync/incremental` 与 `/api/fullsync` 通道。
 
-2. **初始化或迁移数据库表结构**
-   ```bash
-   npx wrangler d1 execute taskmaster-db --remote --file=backend/schema.sql
-   ```
+Google 登录使用单独账号表；旧 `sync_records`、`user_data` 与 `pending_tasks` 不会自动认领或暴露给新账号。管理员认领仅覆盖旧增量/快照任务、分类和设置，不包含归属不明确的 Telegram `pending_tasks`。
 
-3. **配置 wrangler.toml**
-   - `backend/wrangler.toml` 中填入 D1 database_id
-   - 设置环境变量：`API_TOKEN`（自定义密钥，插件设置中填写同一个值）、`TELEGRAM_BOT_TOKEN`（可选）
+Telegram 仍是独立的旧管理员通道，不会同步到 Google 账号。升级前管理员必须停用旧 Bot Webhook，或另行完成经过确认的 Telegram 迁移方案；否则新扩展不会自动读取该旧队列，待处理消息可能留在 `pending_tasks` 中。不要通过旧全局 API 密钥读取或写入任何账号表。
 
-4. **部署**
-   ```bash
-   cd backend
-   npx wrangler deploy
-   ```
+### 用户使用
 
-   部署成功后会得到 Worker URL（如 `https://taskmaster-api.your-name.workers.dev`）。
+- **电脑访客模式**：安装后直接添加和管理任务，数据仅保存在本机。
+- **开启跨设备同步**：在新标签页打开「数据同步」并点击「使用 Google 登录」；登录成功后自动合并，另一台电脑登录同一账号即可恢复。
+- **手机快速添加**：在新标签页打开「手机同步」，复制页面链接到手机；手机登录相同 Google 账号后才能读取或新增该账号任务。
+- **离线**：继续本机编辑；恢复联网后自动同步。认证失效时重新登录，不会清除本机数据。
 
-### 插件端配置
-
-1. 打开 TaskMaster 弹窗 → 点击齿轮进入设置
-2. 在「手机同步设置」中填入：
-   - **API 地址**：你的 Worker URL（如 `https://taskmaster-api.your-name.workers.dev`）
-   - **API 密钥**：你设置的 `API_TOKEN`
-3. 保存后即可使用同步功能
-
-### Telegram Bot（可选）
-
-1. 通过 [@BotFather](https://t.me/BotFather) 创建 Bot，获取 Token
-2. 在 Cloudflare Worker 环境变量中设置 `TELEGRAM_BOT_TOKEN`
-3. 设置 Webhook：`https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://your-worker.workers.dev/api/telegram/webhook?secret=<TOKEN>`
-4. 在 Telegram 中发送 `/token <你的API密钥>` 绑定账号
-5. 之后直接发消息即可添加任务
-
-**注意事项**：
-- 扩展会在联网后自动收敛任务、分类和设置；同一任务并发编辑时采用较新的修改
-- 删除任务会同步为墓碑记录，旧设备恢复联网后不会把它重新创建
-- `workers.dev` 在部分网络环境中可能无法直连；使用 Clash 规则模式时需将 Worker 域名分流到代理
-- 建议定期使用"导出数据"功能备份重要数据
+**兼容边界**：旧 API Token 与 Telegram 仍指向旧全局表。不要把 API Token 当作 Google 登录或账号授权；确认旧数据归属和备份之前，不要执行数据认领或停用旧 Worker。
 
 ## 常见问题
 
-### 同步不生效
+### Google 登录或同步不可用
 
-1. **确认 API 地址和密钥正确** — 打开设置面板检查是否填写
-2. **确认 Worker 已部署** — 直接访问 Worker URL，应返回 `{"error":"Not Found"}`（说明 Worker 在线）
-3. **确认 D1 数据库已绑定** — 检查 wrangler.toml 中的 database_id 是否正确
-4. **区分网络错误和认证错误** — `TypeError: Failed to fetch` 表示请求未收到 HTTP 响应，优先检查网络、TLS 和代理；密钥错误会返回 `401`
+1. **访客模式仍可使用** — 任务保存在本机；Google 登录服务未配置或 Worker 尚未升级时，不会退回旧 API Token 同步。
+2. **确认 Worker 已部署并完成 D1 新表迁移** — 开发中的 3.17.0 代码不会自动部署；OAuth 配置和数据库迁移缺一不可。
+3. **登录反复失败** — 检查 Google OAuth Client ID、扩展稳定 ID 的回调 URI，以及 Worker 的 `GOOGLE_EXTENSION_REDIRECT_URI` 是否完全一致。
+4. **网络错误与认证错误不同** — `TypeError: Failed to fetch` 表示请求未收到 HTTP 响应，优先检查网络、TLS 和代理；过期登录需重新登录。
 5. **Clash 规则模式覆盖 Worker** — 在当前订阅关联的 Rules 覆写中，将以下规则放在 `GEOIP`、`GEOSITE` 和 `MATCH` 等兜底规则之前，然后重新加载配置：
 
    ```yaml

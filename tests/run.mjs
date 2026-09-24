@@ -1,4 +1,5 @@
 await import('./incremental-sync.test.mjs')
+await import('./account-sync.test.mjs')
 await import('./demo-page.test.mjs')
 await import('./top-summary.test.mjs')
 await import('./weekly-goal-settings.test.mjs')

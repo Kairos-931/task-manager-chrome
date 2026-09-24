@@ -1,6 +1,6 @@
 import type { Task, Category, StorageData, AppState, Priority } from './types'
 import { generateId, getNextLocalSettingsUpdatedAt, loadData, saveData, syncIncrementally, defaultCategories, getSyncDeviceIdAsync } from './storage'
-import { markCloudSynced, markLocalSave, markSaveComplete, markRemoteUpdated, markSyncError } from './sync'
+import { markCloudSynced, markLocalOnly, markLocalSave, markSaveComplete, markRemoteUpdated, markSyncError } from './sync'
 import { isTaskDueOnDate, isTaskCompletedOnDate } from './calendar'
 import { getTaskProgress, isExecutableTask } from './planning'
 export { getWeekDates, isTaskDueOnDate, isTaskCompletedOnDate, summarizeTaskDurationsForDates, shiftMonth } from './calendar'
@@ -168,7 +168,7 @@ export const loadState = async (): Promise<void> => {
       // Only a genuinely foreign update should refresh the app. Echoing this
       // device's own upload back would close popovers and reset the view.
       if (result.hasForeignChanges) markRemoteUpdated()
-    }
+    } else if (result.error === 'not_signed_in') markLocalOnly()
   }).catch(() => {})
 }
 
@@ -191,6 +191,7 @@ export const persistState = async (): Promise<boolean> => {
       applyStorageData(remoteData, { ignoreDeviceId: deviceId })
     }, (result) => {
       if (result.success) markCloudSynced()
+      else if (result.error === 'not_signed_in') markLocalOnly()
       else if (result.error !== '未配置同步设置') markSyncError()
     })
     markSaveComplete()

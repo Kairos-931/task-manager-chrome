@@ -1,4 +1,4 @@
-export type SyncStatus = 'idle' | 'saving' | 'local-saved' | 'synced' | 'remote-updated' | 'error'
+export type SyncStatus = 'idle' | 'saving' | 'local-only' | 'local-saved' | 'synced' | 'remote-updated' | 'error'
 
 let syncStatus: SyncStatus = 'idle'
 let statusChangeCallback: ((status: SyncStatus) => void) | null = null
@@ -26,6 +26,10 @@ export const markLocalSave = () => {
 
 export const markSaveComplete = () => {
   setSyncStatus('local-saved')
+}
+
+export const markLocalOnly = () => {
+  setSyncStatus('local-only')
 }
 
 export const markCloudSynced = () => {

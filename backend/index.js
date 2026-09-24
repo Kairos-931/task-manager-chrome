@@ -1,5 +1,6 @@
 // TaskMaster API — Cloudflare Worker
 // Handles: mobile web page, task CRUD, Telegram bot webhook
+import { handleAccountRoute, handleGoogleAuthRoute, shouldPauseLegacyWrites } from './account.js';
 
 export default {
   async fetch(request, env) {
@@ -27,9 +28,29 @@ export default {
       return handleTelegramWebhook(request, env);
     }
 
+    if (url.pathname.startsWith('/api/auth/')) {
+      const authResponse = await handleGoogleAuthRoute(request, env);
+      if (authResponse) return authResponse;
+    }
+    if (url.pathname.startsWith('/api/account/') || url.pathname === '/api/admin/legacy-claim') {
+      return handleAccountRoute(request, env);
+    }
+
+    const legacyApiPaths = ['/api/tasks', '/api/tasks/sync', '/api/categories', '/api/sync/incremental', '/api/fullsync'];
+    if (env.LEGACY_API_DISABLED === 'true' && legacyApiPaths.includes(url.pathname)) {
+      return jsonResp({ error: '旧同步通道已停用；请通过 Google 账号使用 TaskMaster' }, 410);
+    }
+
     // API routes — require auth
     const authError = checkAuth(request, env);
     if (authError) return authError;
+
+    // Keep the pre-account global namespace separate, and freeze its writes
+    // while a source fingerprint is being claimed into one verified account.
+    if (method === 'POST' && await shouldPauseLegacyWrites(env) &&
+        ['/api/tasks', '/api/tasks/sync', '/api/categories', '/api/sync/incremental', '/api/fullsync'].includes(url.pathname)) {
+      return jsonResp({ error: '旧同步数据正在迁移，旧通道暂时只读' }, 423);
+    }
 
     if (url.pathname === '/api/tasks' && method === 'POST') {
       return handleCreateTask(request, env);
@@ -700,6 +721,7 @@ const MOBILE_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>TaskMaster 添加任务</title>
 <link rel="manifest" href="/manifest.json">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <meta name="theme-color" content="#3b82f6">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -806,6 +828,7 @@ const MOBILE_HTML = `<!DOCTYPE html>
   .settings-toggle button:hover { color: #64748b; }
   .settings-panel { display: none; }
   .settings-panel.active { display: block; }
+  .hidden { display: none !important; }
   .toast {
     position: fixed;
     top: 20px;
@@ -890,24 +913,15 @@ const MOBILE_HTML = `<!DOCTYPE html>
   <p>快速添加任务</p>
 </div>
 
-<div class="settings-toggle">
-  <button id="settingsBtn">设置</button>
+<div class="card" id="accountPanel">
+  <div class="card-title">TaskMaster 云同步</div>
+  <p id="accountStatus" style="font-size:13px;color:#64748b;margin-bottom:12px;">正在检查登录状态…</p>
+  <div id="googleSignInButton"></div>
+  <button class="btn btn-secondary hidden" id="logoutBtn" type="button">退出登录</button>
+  <p id="accountFeedback" style="font-size:12px;color:#64748b;margin-top:10px;" aria-live="polite"></p>
 </div>
 
-<div class="card settings-panel" id="settingsPanel">
-  <div class="card-title">连接设置</div>
-  <div class="input-group">
-    <label>API 地址</label>
-    <input type="url" id="apiUrl" placeholder="https://your-worker.workers.dev">
-  </div>
-  <div class="input-group">
-    <label>API 密钥</label>
-    <input type="text" id="apiToken" placeholder="粘贴你的 API Token" autocomplete="off">
-  </div>
-  <button class="btn btn-secondary" id="saveSettings">保存设置</button>
-</div>
-
-<div class="card" id="taskForm">
+<div class="card hidden" id="taskForm">
   <div class="input-group">
     <label>任务名称 *</label>
     <input type="text" id="title" placeholder="输入任务..." autofocus>
@@ -960,34 +974,23 @@ const MOBILE_HTML = `<!DOCTYPE html>
   <button class="btn btn-primary" id="submitBtn">添加任务</button>
 </div>
 
+<div class="card hidden" id="accountTasks">
+  <div class="card-title">此账号的任务</div>
+  <div id="accountTaskList" style="font-size:13px;color:#475569;">加载中…</div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
 (function() {
-  var SETTINGS_KEY = 'taskmaster_settings';
+  var loginNonce = '';
+  var currentUser = null;
 
-  function loadSettings() {
-    try {
-      var s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-      document.getElementById('apiUrl').value = s.apiUrl || '';
-      document.getElementById('apiToken').value = s.apiToken || '';
-      if (s.apiUrl) {
-        document.getElementById('settingsPanel').classList.remove('active');
-      } else {
-        document.getElementById('settingsPanel').classList.add('active');
-      }
-    } catch(e) {}
-  }
-
-  function saveSettings() {
-    var settings = {
-      apiUrl: document.getElementById('apiUrl').value.replace(/\\/+$/, ''),
-      apiToken: document.getElementById('apiToken').value.trim()
-    };
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-    showToast('设置已保存', 'success');
-    document.getElementById('settingsPanel').classList.remove('active');
-    loadCategories();
+  function setLoginNonce() {
+    var bytes = crypto.getRandomValues(new Uint8Array(32));
+    var binary = '';
+    bytes.forEach(function(byte) { binary += String.fromCharCode(byte); });
+    loginNonce = btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
   }
 
   function showToast(msg, type) {
@@ -1026,15 +1029,9 @@ const MOBILE_HTML = `<!DOCTYPE html>
     state.textContent = isCompleted ? '已完成' : '未完成';
   }
 
-  function toggleSettings() {
-    document.getElementById('settingsPanel').classList.toggle('active');
-  }
-
   async function submitTask() {
-    var settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-    if (!settings.apiUrl || !settings.apiToken) {
-      showToast('请先完成设置', 'error');
-      document.getElementById('settingsPanel').classList.add('active');
+    if (!currentUser) {
+      showToast('请先使用 Google 登录', 'error');
       return;
     }
 
@@ -1062,12 +1059,9 @@ const MOBILE_HTML = `<!DOCTYPE html>
     btn.textContent = '添加中...';
 
     try {
-      var res = await fetch(settings.apiUrl + '/api/tasks', {
+      var res = await fetch('/api/account/tasks', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + settings.apiToken
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
 
@@ -1078,9 +1072,10 @@ const MOBILE_HTML = `<!DOCTYPE html>
         document.getElementById('completed').checked = false;
         updateCompletedToggle();
         document.getElementById('title').focus();
+        await loadAccountTasks();
       } else {
         var err = await res.json().catch(function() { return {}; });
-        showToast('添加失败: ' + (err.error || res.status), 'error');
+        showToast(res.status === 401 ? '登录已过期，请重新登录' : '添加失败: ' + (err.error || res.status), 'error');
       }
     } catch(e) {
       showToast('网络错误，请检查设置', 'error');
@@ -1090,12 +1085,109 @@ const MOBILE_HTML = `<!DOCTYPE html>
     }
   }
 
+  function setSignedIn(user) {
+    currentUser = user;
+    document.getElementById('accountStatus').textContent = '已登录' + (user.email ? '：' + user.email : '');
+    document.getElementById('googleSignInButton').classList.add('hidden');
+    document.getElementById('logoutBtn').classList.remove('hidden');
+    document.getElementById('taskForm').classList.remove('hidden');
+    document.getElementById('accountTasks').classList.remove('hidden');
+    loadCategories();
+    loadAccountTasks();
+  }
+
+  function setSignedOut(message) {
+    currentUser = null;
+    document.getElementById('accountStatus').textContent = message || '登录后可在手机和电脑之间同步任务';
+    document.getElementById('googleSignInButton').classList.remove('hidden');
+    document.getElementById('logoutBtn').classList.add('hidden');
+    document.getElementById('taskForm').classList.add('hidden');
+    document.getElementById('accountTasks').classList.add('hidden');
+  }
+
+  async function handleGoogleCredential(result) {
+    var feedback = document.getElementById('accountFeedback');
+    feedback.textContent = '正在验证 Google 账号…';
+    try {
+      var response = await fetch('/api/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken: result.credential, nonce: loginNonce })
+      });
+      var data = await response.json().catch(function() { return {}; });
+      if (!response.ok) throw new Error(data.error || 'Google 登录失败');
+      feedback.textContent = '';
+      setSignedIn(data.user || {});
+      showToast('已安全连接此 Google 账号', 'success');
+    } catch (error) {
+      feedback.textContent = error.message || '登录失败，请重试';
+      setLoginNonce();
+      initializeGoogleButton(window.taskMasterGoogleClientId);
+    }
+  }
+
+  function waitForGoogle(clientId, attempts) {
+    if (window.google && google.accounts && google.accounts.id) {
+      initializeGoogleButton(clientId);
+      return;
+    }
+    if (attempts <= 0) {
+      document.getElementById('accountStatus').textContent = 'Google 登录组件加载失败，请检查网络后刷新页面';
+      return;
+    }
+    setTimeout(function() { waitForGoogle(clientId, attempts - 1); }, 100);
+  }
+
+  function initializeGoogleButton(clientId) {
+    setLoginNonce();
+    google.accounts.id.initialize({
+      client_id: clientId,
+      nonce: loginNonce,
+      callback: handleGoogleCredential,
+      auto_select: false,
+      cancel_on_tap_outside: false
+    });
+    var target = document.getElementById('googleSignInButton');
+    target.replaceChildren();
+    google.accounts.id.renderButton(target, { theme: 'outline', size: 'large', text: 'signin_with', shape: 'rectangular', width: 280 });
+  }
+
+  async function loadAccountTasks() {
+    var list = document.getElementById('accountTaskList');
+    try {
+      var response = await fetch('/api/account/tasks', { cache: 'no-store' });
+      if (!response.ok) throw new Error(response.status === 401 ? '登录已过期，请重新登录' : '暂时无法读取任务');
+      var data = await response.json();
+      list.replaceChildren();
+      if (!Array.isArray(data.tasks) || data.tasks.length === 0) {
+        list.textContent = '还没有任务';
+        return;
+      }
+      data.tasks.slice(0, 20).forEach(function(task) {
+        var row = document.createElement('div');
+        row.style.cssText = 'padding:9px 0;border-bottom:1px solid #e2e8f0;';
+        row.textContent = (task.completed ? '✓ ' : '○ ') + task.title + (task.dueDate ? ' · ' + task.dueDate : ' · 任务池');
+        list.appendChild(row);
+      });
+      if (data.tasks.length > 20) {
+        var more = document.createElement('div');
+        more.style.cssText = 'padding-top:8px;color:#94a3b8;';
+        more.textContent = '仅显示最近 20 项';
+        list.appendChild(more);
+      }
+    } catch (error) {
+      list.textContent = error.message || '暂时无法读取任务';
+    }
+  }
+
   // Event listeners (no inline handlers — CSP safe)
-  document.getElementById('settingsBtn').addEventListener('click', toggleSettings);
-  document.getElementById('saveSettings').addEventListener('click', saveSettings);
   document.getElementById('noDate').addEventListener('change', toggleNoDate);
   document.getElementById('completed').addEventListener('change', updateCompletedToggle);
   document.getElementById('submitBtn').addEventListener('click', submitTask);
+  document.getElementById('logoutBtn').addEventListener('click', async function() {
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(function() {});
+    setSignedOut('已退出登录。手机任务仍保存在原 Google 账号中。');
+  });
 
   // Submit on Enter in title field
   document.getElementById('title').addEventListener('keydown', function(e) {
@@ -1105,16 +1197,11 @@ const MOBILE_HTML = `<!DOCTYPE html>
     }
   });
 
-  loadSettings();
   initDate();
   updateCompletedToggle();
 
   function loadCategories() {
-    var s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-    if (!s.apiUrl || !s.apiToken) return;
-    fetch(s.apiUrl + '/api/categories', {
-      headers: { 'Authorization': 'Bearer ' + (s.apiToken || '') }
-    })
+    fetch('/api/account/categories', { cache: 'no-store' })
       .then(function(r) {
         if (!r.ok) throw new Error('Unable to load categories');
         return r.json();
@@ -1138,7 +1225,26 @@ const MOBILE_HTML = `<!DOCTYPE html>
       .catch(function() {});
   }
 
-  loadCategories();
+  async function initializePage() {
+    try {
+      var sessionResponse = await fetch('/api/auth/session', { cache: 'no-store' });
+      if (sessionResponse.ok) {
+        var session = await sessionResponse.json();
+        setSignedIn(session.user || {});
+        return;
+      }
+      setSignedOut('登录后可在手机和电脑之间同步任务');
+      var configResponse = await fetch('/api/auth/mobile-config', { cache: 'no-store' });
+      var config = await configResponse.json().catch(function() { return {}; });
+      if (!configResponse.ok || !config.clientId) throw new Error(config.error || 'Google 登录暂不可用');
+      window.taskMasterGoogleClientId = config.clientId;
+      waitForGoogle(config.clientId, 50);
+    } catch (error) {
+      document.getElementById('accountStatus').textContent = error.message || '无法连接同步服务，请稍后重试';
+    }
+  }
+
+  initializePage();
 })();
 </script>
 </body>

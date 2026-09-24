@@ -2,7 +2,8 @@ import type { Priority, Task, ViewMode } from './types'
 import { getState, setState, setLocalSettings, resetEditingTask, formatDate, persistState, moveTaskToDate, loadState, shiftMonth } from './task'
 import { toggleTask as toggleTaskAction, toggleTaskOnDate, deleteTask as deleteTaskAction, addTask, updateTask, addCategory, updateCategory, deleteCategory as deleteCategoryAction, focusTaskToday, replanTask, moveTaskToPool, splitTask, createParentWithChildrenPersisted } from './task'
 import { renderApp, renderSplitChildRow } from './render'
-import { downloadExportFile, importDataFromFile } from './storage'
+import { activateGoogleAccount, discardGoogleAccountSession, downloadExportFile, getGoogleAccountSession, importDataFromFile, logoutGoogleAccount } from './storage'
+import { TASKMASTER_API_BASE_URL } from './config'
 import { showToast } from './sync'
 import { bindTaskQuickDates, bindSplitQuickDates, createSubmissionGuard, createResettableSubmissionGuard } from './quick-dates'
 import { getTodayScrollBehavior, isAnchorVisible } from './list-navigation'
@@ -1172,6 +1173,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
         <div class="flex items-center justify-between" style="padding:6px 0;border-bottom:1px solid #f3f4f6;" data-backup-key="${b.key}">
           <div>
             <span style="color:#374151;" class="dark:text-gray-300">${b.dateStr}</span>
+            ${b.kind === 'account-switch' ? '<span style="margin-left:6px;color:#d97706;">账号切换备份</span>' : ''}
             <span style="color:#9ca3af;margin-left:8px;">${b.taskCount} 个任务</span>
           </div>
           <div class="flex gap-2">
@@ -1210,11 +1212,102 @@ export const attachEventListeners = (container: HTMLElement): void => {
       })
     }
 
+    let pendingGoogleSession: { token: string; user: { sub: string; email?: string; name?: string } } | null = null
+    const refreshGoogleAccountUI = async () => {
+      const status = container.querySelector('#googleAccountStatus') as HTMLElement
+      const login = container.querySelector('#googleLoginBtn') as HTMLButtonElement
+      const logout = container.querySelector('#googleLogoutBtn') as HTMLButtonElement
+      const session = await getGoogleAccountSession()
+      if (status) status.textContent = session
+        ? `已登录：${session.user.email || session.user.name || 'Google 账号'} · 自动同步已开启`
+        : '当前为访客模式，任务仅保存在本机'
+      login?.classList.toggle('hidden', !!session)
+      logout?.classList.toggle('hidden', !session)
+    }
+
+    const finishGoogleLogin = async (mode?: 'merge' | 'replace') => {
+      if (!pendingGoogleSession) return
+      const loginButton = container.querySelector('#googleLoginBtn') as HTMLButtonElement
+      if (loginButton) loginButton.disabled = true
+      showSyncFeedback(container, mode ? '正在安全切换账号…' : '正在连接 Google 账号…', 'info')
+      const result = await activateGoogleAccount(pendingGoogleSession, mode)
+      if (!result.success && result.requiresSwitchDecision) {
+        const choices = container.querySelector('#accountSwitchChoices') as HTMLElement
+        choices?.classList.remove('hidden')
+        if (loginButton) loginButton.classList.add('hidden')
+        const status = container.querySelector('#googleAccountStatus') as HTMLElement
+        if (status) status.textContent = `检测到此设备上次使用的是另一个账号${pendingGoogleSession.user.email ? `（${pendingGoogleSession.user.email}）` : ''}。请选择如何处理本机数据。`
+        const feedback = container.querySelector('#syncFeedback') as HTMLElement
+        if (feedback) feedback.style.display = 'none'
+        return
+      }
+      if (!result.success) {
+        showSyncFeedback(container, result.error || 'Google 登录失败，请重试', 'error')
+        pendingGoogleSession = null
+        if (loginButton) loginButton.disabled = false
+        await refreshGoogleAccountUI()
+        return
+      }
+      pendingGoogleSession = null
+      await loadState()
+      reRender()
+      showToast(container, 'Google 账号已连接，正在同步', 'success')
+    }
+
+    container.querySelector('#googleLoginBtn')?.addEventListener('click', async () => {
+      const button = container.querySelector('#googleLoginBtn') as HTMLButtonElement
+      if (button) {
+        button.disabled = true
+        button.textContent = '正在打开 Google…'
+      }
+      const result: { session?: { token: string; user: { sub: string; email?: string; name?: string } }; error?: string } = await new Promise<{ session?: { token: string; user: { sub: string; email?: string; name?: string } }; error?: string }>((resolve, reject) => {
+        chrome.runtime.sendMessage({ action: 'googleLogin' }, response => {
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message))
+          else resolve(response || {})
+        })
+      }).catch(error => ({ session: undefined, error: error instanceof Error ? error.message : String(error) }))
+      if (button) {
+        button.disabled = false
+        button.textContent = '使用 Google 登录'
+      }
+      if (!result.session) {
+        showSyncFeedback(container, result.error || 'Google 登录失败，请检查网络和服务配置', 'error')
+        return
+      }
+      pendingGoogleSession = result.session
+      await finishGoogleLogin()
+    })
+
+    container.querySelector('#mergeAccountDataBtn')?.addEventListener('click', () => finishGoogleLogin('merge'))
+    container.querySelector('#replaceAccountDataBtn')?.addEventListener('click', () => finishGoogleLogin('replace'))
+    container.querySelector('#cancelAccountSwitchBtn')?.addEventListener('click', async () => {
+      if (pendingGoogleSession) await discardGoogleAccountSession(pendingGoogleSession)
+      pendingGoogleSession = null
+      container.querySelector('#accountSwitchChoices')?.classList.add('hidden')
+      await refreshGoogleAccountUI()
+      showSyncFeedback(container, '已取消账号切换，原有数据和账号保持不变', 'info')
+    })
+
+    container.querySelector('#googleLogoutBtn')?.addEventListener('click', async () => {
+      const button = container.querySelector('#googleLogoutBtn') as HTMLButtonElement
+      if (button) button.disabled = true
+      try {
+        await logoutGoogleAccount()
+        showSyncFeedback(container, '已退出登录；本机任务保留，云同步已停止', 'success')
+        await refreshGoogleAccountUI()
+      } catch (error) {
+        showSyncFeedback(container, error instanceof Error ? error.message : '退出失败，请重试', 'error')
+      } finally {
+        if (button) button.disabled = false
+      }
+    })
+
     // When sync modal opens, refresh backup UI
     container.querySelector('#syncDataBtn')?.addEventListener('click', () => {
       const modal = container.querySelector('#syncModal') as HTMLElement
       modal?.classList.remove('hidden')
       refreshBackupUI()
+      refreshGoogleAccountUI()
     })
 
     // Create backup button
@@ -1236,11 +1329,13 @@ export const attachEventListeners = (container: HTMLElement): void => {
     container.querySelector('#mobileSyncSettingsBtn')?.addEventListener('click', () => {
       const modal = container.querySelector('#mobileSyncModal') as HTMLElement
       modal?.classList.remove('hidden')
-      chrome.runtime.sendMessage({ action: 'getSyncSettings' }, (settings) => {
-        const urlInput = container.querySelector('#mobileSyncApiUrl') as HTMLInputElement
-        const tokenInput = container.querySelector('#mobileSyncApiToken') as HTMLInputElement
-        if (urlInput && settings?.apiUrl) urlInput.value = settings.apiUrl
-        if (tokenInput && settings?.apiToken) tokenInput.value = settings.apiToken
+      const address = container.querySelector('#mobileSyncAddress') as HTMLElement
+      const status = container.querySelector('#mobileSyncStatus') as HTMLElement
+      if (address) address.textContent = TASKMASTER_API_BASE_URL
+      getGoogleAccountSession().then(session => {
+        if (status) status.textContent = session
+          ? `电脑端已登录：${session.user.email || 'Google 账号'}。请在手机上登录同一账号。`
+          : '电脑端当前为访客模式；要同步到手机，请先在数据同步中登录 Google。'
       })
     })
 
@@ -1252,33 +1347,15 @@ export const attachEventListeners = (container: HTMLElement): void => {
       container.querySelector('#mobileSyncModal')?.classList.add('hidden')
     })
 
-    container.querySelector('#mobileSyncSaveBtn')?.addEventListener('click', () => {
-      const apiUrl = (container.querySelector('#mobileSyncApiUrl') as HTMLInputElement)?.value.replace(/\/+$/, '').trim()
-      const apiToken = (container.querySelector('#mobileSyncApiToken') as HTMLInputElement)?.value.trim()
-      if (!apiUrl || !apiToken) {
-        syncToast('请填写 API 地址和密钥', 'error')
-        return
+    container.querySelector('#copyMobileSyncAddress')?.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(TASKMASTER_API_BASE_URL)
+        syncToast('手机页面链接已复制', 'success')
+      } catch {
+        syncToast('复制失败，请手动复制页面地址', 'error')
       }
-      chrome.runtime.sendMessage({ action: 'saveSyncSettings', settings: { apiUrl, apiToken } }, () => {
-        syncToast('设置已保存', 'success')
-      })
     })
 
-    container.querySelector('#mobileSyncNowBtn')?.addEventListener('click', () => {
-      const statusEl = container.querySelector('#mobileSyncStatus') as HTMLElement
-      if (statusEl) statusEl.textContent = '同步中...'
-      chrome.runtime.sendMessage({ action: 'syncRemoteTasks' }, (result: { synced?: number; error?: string }) => {
-        if ((result?.synced ?? 0) > 0) {
-          syncToast(`已同步 ${result.synced} 个任务`, 'success')
-          if (statusEl) statusEl.textContent = `上次同步: 成功，${result.synced} 个任务`
-        } else if (result?.error) {
-          syncToast('同步失败: ' + result.error, 'error')
-          if (statusEl) statusEl.textContent = '同步失败: ' + result.error
-        } else {
-          if (statusEl) statusEl.textContent = '没有新的待同步任务'
-        }
-      })
-    })
   }
 
   // 每周目标卡片 + 设置

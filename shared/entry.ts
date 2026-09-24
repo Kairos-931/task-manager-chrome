@@ -6,21 +6,6 @@ import { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, re
 import { attachEventListeners } from './events'
 import { onSyncStatusChange, shouldRefreshAppForSyncStatus } from './sync'
 
-// 同步操作反馈 toast（独立定义避免循环依赖）
-function syncActionToast(message: string, type: 'success' | 'error' = 'success') {
-  document.querySelectorAll('.sync-action-toast').forEach(el => el.remove())
-  const toast = document.createElement('div')
-  toast.className = 'sync-action-toast'
-  const bgColor = type === 'success' ? '#22c55e' : '#ef4444'
-  toast.style.cssText = `position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);padding:0.75rem 1.5rem;border-radius:0.75rem;box-shadow:0 10px 25px rgba(0,0,0,0.15);color:#fff;font-size:0.875rem;font-weight:500;z-index:10000;background:${bgColor};transition:opacity 0.3s;white-space:nowrap;`
-  toast.textContent = message
-  document.body.appendChild(toast)
-  setTimeout(() => {
-    toast.style.opacity = '0'
-    setTimeout(() => toast.remove(), 300)
-  }, 3000)
-}
-
 // Export for external use
 export { loadState, persistState, getState, setState, resetEditingTask, getFilteredTasks, getStats, getWeeklyGoalStats, addTask, updateTask, deleteTask, toggleTask, moveTaskToDate, addCategory, deleteCategory, formatDate, parseDate, formatHours, getDateLabel, getRemainingTime, isOverdue, isTaskDueOnDate, getPriorityColor, getCatColor, getCatName, escapeHtml }
 export { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, renderPoolView, renderListView, renderDayView, renderWeekView, renderMonthView, renderTaskList, renderModal, renderCategoryModal, renderGoalSettingsModal, renderSyncModal, renderMobileSyncPanel, renderWeeklyGoalCard }
@@ -39,19 +24,22 @@ function autoInit() {
     attachEventListeners(container)
   }
 
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local' || !changes.tm_google_account_session) return
+    const oldSub = (changes.tm_google_account_session.oldValue as { user?: { sub?: string } } | undefined)?.user?.sub || null
+    const newSub = (changes.tm_google_account_session.newValue as { user?: { sub?: string } } | undefined)?.user?.sub || null
+    if (oldSub === newSub) return
+    // Other extension pages may remain open during an account switch. Reload
+    // their state from local storage before they can save under the new account.
+    loadState().then(reRender).catch(error => console.warn('[TaskMaster] account state refresh failed:', error))
+  })
+
   loadState().then(() => {
     if (window.location.pathname.includes('popup')) {
       setState({ currentView: 'focus' })
     }
     renderApp(container)
     attachEventListeners(container)
-
-    // Auto-sync mobile tasks with toast feedback
-    chrome.runtime.sendMessage({ action: 'syncRemoteTasks' }, (result: { synced?: number }) => {
-      if ((result?.synced ?? 0) > 0) {
-        syncActionToast(`已从手机同步 ${result.synced} 个任务`, 'success')
-      }
-    })
 
     onSyncStatusChange((status) => {
       const indicatorSlot = container.querySelector('#syncIndicatorSlot')

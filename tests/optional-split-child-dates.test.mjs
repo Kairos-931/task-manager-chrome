@@ -224,6 +224,8 @@ assert.match(renderSource, /allowUnscheduled/)
 assert.match(renderSource, /renderSplitChildRow\(index, child, child\?\.dueDate \|\| ''/)
 assert.match(eventsSource, /waitingCount = children\.filter\(child => !child\.dueDate\)\.length/)
 assert.match(eventsSource, /splitTaskSnapshot/)
-assert.doesNotMatch(eventsSource, /invalidChildIndex[\s\S]*!child\.dueDate/)
+const invalidChildValidation = eventsSource.match(/const invalidChildIndex = children\.findIndex\([\s\S]*?\n    \)/)?.[0] || ''
+assert.ok(invalidChildValidation, 'child validation should remain scoped to title and duration')
+assert.doesNotMatch(invalidChildValidation, /!child\.dueDate/)
 
 console.log('Optional split child date tests passed')
