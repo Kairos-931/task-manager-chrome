@@ -1,5 +1,9 @@
 # 开放事项
 
+## 新设备云端恢复失败（P1）
+
+已登录 Chrome/Cloudflare 账号的新电脑，TaskMaster 仍缺少产品 API 连接配置；“从云端拉取”未恢复已有任务，且按钮实际可能同时上传本地变更。要求提供产品内认证/恢复引导、明确失败反馈与只读拉取语义。详见 [BUG-20260930-new-device-cloud-recovery.md](requirements/BUG-20260930-new-device-cloud-recovery.md)。状态：待修复，未进入开发；实现前关联独立 GitHub Issue。
+
 ## 同步协议后续优化
 
 当前增量同步已保护记录级写入、删除和手机导入。仍有两项刻意保留的后续工作：
