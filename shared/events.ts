@@ -4,6 +4,7 @@ import { toggleTask as toggleTaskAction, toggleTaskOnDate, deleteTask as deleteT
 import { renderApp, renderSplitChildRow } from './render'
 import { downloadExportFile, importDataFromFile } from './storage'
 import { showToast } from './sync'
+import { isValidLocalDate } from './replan-policy.js'
 import { bindTaskQuickDates, bindSplitQuickDates, createSubmissionGuard, createResettableSubmissionGuard } from './quick-dates'
 import { getTodayScrollBehavior, isAnchorVisible } from './list-navigation'
 
@@ -606,15 +607,19 @@ export const attachEventListeners = (container: HTMLElement): void => {
   const setReplanError = (message: string) => {
     if (replanError) replanError.textContent = message
   }
+  const getReplanDateError = (date: string): string => {
+    if (!isValidLocalDate(date)) return '请选择一个计划日期。'
+    return ''
+  }
   const syncReplanQuickDateSelection = (date: string) => {
     container.querySelectorAll<HTMLElement>('.popup-replan-quick-dates .quick-date-btn').forEach(button => {
       const selected = button.dataset.date === date
       button.classList.toggle('selected', selected)
       button.setAttribute('aria-pressed', String(selected))
     })
-    if (replanConfirmButton) replanConfirmButton.disabled = !date || date < formatDate(new Date())
+    if (replanConfirmButton) replanConfirmButton.disabled = !isValidLocalDate(date)
   }
-  if (popupReplan && replanDateInput) {
+  if (replanDateInput) {
     container.querySelectorAll<HTMLElement>('.popup-replan-quick-dates .quick-date-btn').forEach(button => {
       button.addEventListener('click', () => {
         const date = button.dataset.date || ''
@@ -625,9 +630,8 @@ export const attachEventListeners = (container: HTMLElement): void => {
     })
     replanDateInput.addEventListener('change', () => {
       const date = replanDateInput.value
-      const today = formatDate(new Date())
       syncReplanQuickDateSelection(date)
-      setReplanError(date && date < today ? '不能安排到过去日期。' : '')
+      setReplanError(date ? getReplanDateError(date) : '')
     })
   }
   container.querySelector('#replanForm')?.addEventListener('submit', async (e) => {
@@ -635,15 +639,28 @@ export const attachEventListeners = (container: HTMLElement): void => {
     const { replanningTaskId } = getState()
     if (!replanningTaskId || replanSubmitting) return
     const date = new FormData(e.target as HTMLFormElement).get('replanDate') as string
-    if (popupReplan && (!date || date < formatDate(new Date()))) {
-      setReplanError(!date ? '请选择一个计划日期。' : '不能安排到过去日期。')
+    const dateError = getReplanDateError(date)
+    if (dateError) {
+      setReplanError(dateError)
       return
     }
+    const taskBefore = getState().tasks.find(task => task.id === replanningTaskId)
+    if (!taskBefore || taskBefore.isParent) return
+    const taskSnapshot = { ...taskBefore }
     replanSubmitting = true
     if (replanConfirmButton) replanConfirmButton.disabled = true
     replanTask(replanningTaskId, date)
+    const saved = await persistState()
+    if (!saved) {
+      setState({
+        tasks: getState().tasks.map(task => task.id === replanningTaskId ? taskSnapshot : task),
+        replanningTaskId
+      })
+      reRender()
+      showToast(container, '本地保存失败，请重试', 'error')
+      return
+    }
     setState({ replanningTaskId: null })
-    await persistState()
     reRender()
     showToast(container, date === formatDate(new Date()) ? '已重新安排到今天并加入聚焦' : '计划日期已更新', 'success')
   })
