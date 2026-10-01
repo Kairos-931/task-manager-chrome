@@ -1278,6 +1278,27 @@ export const renderCategoryModal = (): string => {
   `
 }
 
+const renderGoogleAccountPanel = (): string => `
+  <section class="google-account-panel rounded-xl border border-blue-100 bg-blue-50/60 dark:border-blue-900 dark:bg-blue-950/30" style="margin:0 24px 16px;padding:14px 16px;">
+    <div class="flex items-center justify-between gap-3">
+      <div class="min-w-0">
+        <div class="text-sm font-semibold text-gray-800 dark:text-gray-100">Google 账号同步</div>
+        <p class="google-account-status mt-1 text-xs text-gray-500 dark:text-gray-400" aria-live="polite">正在读取账号状态…</p>
+      </div>
+      <button type="button" class="google-sign-in shrink-0 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700">使用 Google 登录</button>
+      <button type="button" class="google-sign-out hidden shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs text-gray-600 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200">退出登录</button>
+    </div>
+    <div class="google-account-switch hidden mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+      <p class="google-account-switch-copy text-xs leading-5 text-amber-900 dark:text-amber-100"></p>
+      <div class="mt-2 flex gap-2">
+        <button type="button" class="google-account-switch-confirm rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white">切换并加载此账号</button>
+        <button type="button" class="google-account-switch-cancel rounded-md bg-white px-3 py-1.5 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-200">取消</button>
+      </div>
+    </div>
+    <p class="google-account-feedback mt-2 text-xs" role="status" aria-live="polite"></p>
+  </section>
+`
+
 export const renderSyncModal = (): string => {
   const { tasks, categories } = getState()
   return `
@@ -1369,6 +1390,7 @@ export const renderSyncModal = (): string => {
           </div>
           <p style="font-size:12px;color:#9ca3af;margin-top:4px;">${tasks.length} 个任务 · ${categories.length} 个分类 · 云端同步</p>
         </div>
+        ${renderGoogleAccountPanel()}
         <div id="syncFeedback" style="margin:0 24px 0;padding:8px 12px;border-radius:8px;font-size:12px;display:none;"></div>
         <div style="padding:0 24px 20px;">
           <div class="flex gap-3">
@@ -1427,29 +1449,27 @@ export const renderMobileSyncPanel = (): string => {
       <div class="fixed inset-0 bg-black/50" id="mobileSyncOverlay"></div>
       <div class="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md mx-8 p-10 max-h-[90%] overflow-y-auto">
         <div class="flex items-center justify-between mb-8">
-          <h3 class="text-xl font-semibold text-gray-900 dark:text-white">手机同步设置</h3>
+          <h3 class="text-xl font-semibold text-gray-900 dark:text-white">账号与云同步</h3>
           <button id="mobileSyncClose" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
-        <div class="space-y-6">
-          <div>
-            <label class="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-2.5">API 地址</label>
-            <input type="url" id="mobileSyncApiUrl" class="w-full px-4 py-3 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" placeholder="https://your-worker.workers.dev">
+        ${renderGoogleAccountPanel().replace('margin:0 24px 16px;', 'margin:0;')}
+        <p class="mt-4 border-t border-gray-200 pt-4 text-xs leading-relaxed text-gray-400 dark:border-gray-700 dark:text-gray-500">登录后，手机快速添加页和电脑端使用同一账号空间。未登录时，电脑任务仍保存在本机。</p>
+        <details class="mt-5 border-t border-gray-200 pt-4 text-xs dark:border-gray-700">
+          <summary class="cursor-pointer text-gray-400 dark:text-gray-500">旧版管理员连接设置</summary>
+          <div class="mt-4">
+            <label class="mb-2 block text-gray-600 dark:text-gray-400" for="mobileSyncApiUrl">API 地址</label>
+            <input type="url" id="mobileSyncApiUrl" class="mb-4 w-full rounded-lg border px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white" placeholder="https://your-worker.workers.dev">
+            <label class="mb-2 block text-gray-600 dark:text-gray-400" for="mobileSyncApiToken">API 密钥</label>
+            <input type="text" id="mobileSyncApiToken" class="mb-3 w-full rounded-lg border px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white" placeholder="粘贴管理员 API Token" autocomplete="off">
+            <div class="flex gap-3">
+              <button id="mobileSyncSaveBtn" class="flex-1 rounded-lg bg-gray-100 px-3 py-2 text-gray-700 dark:bg-gray-700 dark:text-gray-200">保存旧版连接</button>
+              <button id="mobileSyncNowBtn" class="flex-1 rounded-lg bg-gray-100 px-3 py-2 text-gray-700 dark:bg-gray-700 dark:text-gray-200">立即同步</button>
+            </div>
+            <div id="mobileSyncStatus" class="mt-2 min-h-5 text-gray-500 dark:text-gray-400"></div>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-2.5">API 密钥</label>
-            <input type="text" id="mobileSyncApiToken" class="w-full px-4 py-3 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" placeholder="粘贴你的 API Token" autocomplete="off">
-          </div>
-          <div class="flex gap-4 pt-2">
-            <button id="mobileSyncSaveBtn" class="flex-1 px-4 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm font-medium">保存设置</button>
-            <button id="mobileSyncNowBtn" class="flex-1 px-4 py-3 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition text-sm font-medium">立即同步</button>
-          </div>
-          <div id="mobileSyncStatus" class="text-xs text-gray-500 dark:text-gray-400 min-h-[1.25rem]"></div>
-          <div class="pt-4 border-t dark:border-gray-700">
-            <p class="text-xs text-gray-400 dark:text-gray-500 leading-relaxed">手机访问你的 Worker 地址即可添加任务，也可通过 Telegram Bot 发消息添加。</p>
-          </div>
-        </div>
+        </details>
       </div>
     </div>
   `

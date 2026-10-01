@@ -94,6 +94,16 @@ const isValidDateOnly = (value: unknown): value is string => {
 }
 
 const CLOUD_SYNC_SETTINGS_KEY = 'tm_sync_settings'
+const GOOGLE_ACCOUNT_KEY = 'tm_google_account'
+const GOOGLE_ACCOUNT_DATA_PREFIX = 'tm_google_account_data_v1_'
+const TASKMASTER_API_URL = 'https://taskmaster-api.yx9391.workers.dev'
+
+export interface GoogleAccountProfile {
+  sub: string
+  email: string
+  name?: string
+  connected: boolean
+}
 
 const getCloudSettings = async (): Promise<{ apiUrl?: string; apiToken?: string }> => {
   return new Promise((resolve) => {
@@ -301,6 +311,139 @@ const setLocalValues = async (values: Record<string, unknown>): Promise<void> =>
   })
 }
 
+const getGoogleAccountValue = async (): Promise<GoogleAccountProfile | null> => {
+  const account = await getLocalValue<GoogleAccountProfile | null>(GOOGLE_ACCOUNT_KEY, null)
+  if (!account || typeof account.sub !== 'string' || !account.sub) return null
+  return account
+}
+
+export const getGoogleAccount = getGoogleAccountValue
+
+const getGoogleAccessToken = (interactive: boolean): Promise<string> => new Promise((resolve, reject) => {
+  const manifest = chrome.runtime.getManifest() as unknown as {
+    oauth2?: { client_id?: string; scopes?: string[] }
+  }
+  if (!manifest.oauth2?.client_id || manifest.oauth2.client_id.startsWith('YOUR_')) {
+    reject(new Error('Google 登录尚未配置，请管理员先设置扩展 OAuth 客户端'))
+    return
+  }
+  const identityApi = chrome.identity as unknown as {
+    getAuthToken: (details: { interactive: boolean }, callback: (result: unknown) => void) => void
+  }
+  if (!identityApi?.getAuthToken) {
+    reject(new Error('此扩展未配置 Google 登录'))
+    return
+  }
+  identityApi.getAuthToken({ interactive }, (result) => {
+    const token = typeof result === 'string'
+      ? result
+      : (result && typeof result === 'object' && typeof (result as { token?: unknown }).token === 'string'
+          ? (result as { token: string }).token
+          : '')
+    if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message || 'Google 登录失败'))
+    else if (!token) reject(new Error('Google 登录未返回授权凭证'))
+    else resolve(token)
+  })
+})
+
+const requestGoogleIdentity = async (interactive: boolean): Promise<{ token: string; user: Omit<GoogleAccountProfile, 'connected'> }> => {
+  const token = await getGoogleAccessToken(interactive)
+  let response: Response
+  try {
+    response = await fetch(`${TASKMASTER_API_URL}/api/google/identity`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: 'no-store'
+    })
+  } catch {
+    throw new Error('无法连接 TaskMaster 同步服务，请检查网络后重试')
+  }
+  const result = await response.json().catch(() => ({})) as {
+    user?: { sub?: string; email?: string; name?: string }
+    error?: string
+  }
+  if (!response.ok || typeof result.user?.sub !== 'string' || !result.user.sub) {
+    if (response.status === 401) {
+      await removeGoogleAccessToken(token)
+      throw new Error('Google 授权已失效，请重新登录')
+    }
+    throw new Error(result.error || 'Google 登录暂不可用，请稍后重试')
+  }
+  return {
+    token,
+    user: {
+      sub: result.user.sub,
+      email: typeof result.user.email === 'string' ? result.user.email : '',
+      ...(typeof result.user.name === 'string' ? { name: result.user.name } : {})
+    }
+  }
+}
+
+const removeGoogleAccessToken = async (token: string): Promise<void> => new Promise((resolve) => {
+  const identityApi = chrome.identity as unknown as {
+    removeCachedAuthToken?: (details: { token: string }, callback: () => void) => void
+  }
+  if (!identityApi?.removeCachedAuthToken) return resolve()
+  identityApi.removeCachedAuthToken({ token }, () => resolve())
+})
+
+const flagGoogleAuthorizationExpired = async (account: GoogleAccountProfile, token = ''): Promise<void> => {
+  if (token) await removeGoogleAccessToken(token)
+  await setLocalValues({ [GOOGLE_ACCOUNT_KEY]: { ...account, connected: false } })
+  chrome.runtime.sendMessage({ action: 'googleAccountAuthExpired' }).catch(() => {})
+}
+
+/** Starts the interactive consent flow only when the user presses the sign-in button. */
+export const identifyGoogleAccount = async (): Promise<Omit<GoogleAccountProfile, 'connected'>> => {
+  const { user } = await requestGoogleIdentity(true)
+  return user
+}
+
+const googleAccountDataKey = (sub: string): string => `${GOOGLE_ACCOUNT_DATA_PREFIX}${encodeURIComponent(sub)}`
+
+/**
+ * Bind local data to the verified Google subject. When switching subjects,
+ * snapshot the old account and load only the target account's own local copy.
+ */
+export const activateGoogleAccount = (expectedSub: string): Promise<GoogleAccountProfile> => enqueueSync(async () => {
+  const { user } = await requestGoogleIdentity(false)
+  if (user.sub !== expectedSub) throw new Error('当前 Google 账号与刚才选择的账号不一致，请重新登录')
+
+  const previous = await getGoogleAccountValue()
+  const localValues: Record<string, unknown> = {
+    [GOOGLE_ACCOUNT_KEY]: { ...user, connected: true } satisfies GoogleAccountProfile
+  }
+  if (previous?.sub && previous.sub !== user.sub) {
+    const previousData = await loadFromLocal()
+    if (previousData) {
+      localValues[googleAccountDataKey(previous.sub)] = normalizeStorageData(previousData)
+    }
+    const targetData = await getLocalValue<StorageData | null>(googleAccountDataKey(user.sub), null)
+    const nextData = targetData ? normalizeStorageData(targetData) : getDefaultData()
+    localValues[LOCAL_BACKUP_KEY] = JSON.stringify(nextData)
+  } else if (!previous?.sub) {
+    // First sign-in keeps this device's guest tasks, so the account's first
+    // sync can merge local records with any records already in that account.
+  }
+
+  await setLocalValues(localValues)
+  return localValues[GOOGLE_ACCOUNT_KEY] as GoogleAccountProfile
+})
+
+export const disconnectGoogleAccount = (): Promise<void> => enqueueSync(async () => {
+  const account = await getGoogleAccountValue()
+  if (account) await setLocalValues({ [GOOGLE_ACCOUNT_KEY]: { ...account, connected: false } })
+  const identityApi = chrome.identity as unknown as {
+    clearAllCachedAuthTokens?: (callback: () => void) => void
+  }
+  if (identityApi?.clearAllCachedAuthTokens) {
+    await new Promise<void>(resolve => identityApi.clearAllCachedAuthTokens?.(() => resolve()))
+  }
+})
+
+export const saveLocalData = async (data: StorageData): Promise<void> => {
+  await saveToLocal(normalizeStorageData(data))
+}
+
 let cachedDeviceId: string | null = null
 
 // applyRemoteChanges runs synchronously and needs the device id to filter out
@@ -320,8 +463,12 @@ export const getSyncDeviceIdAsync = async (): Promise<string> => {
 
 export const getSyncDeviceId = getSyncDeviceIdAsync
 
-const getSyncShadow = async (): Promise<SyncShadow> => {
-  const shadow = await getLocalValue<SyncShadow | null>(INCREMENTAL_SHADOW_KEY, null)
+const getScopedSyncKey = (key: string, accountSub: string | null): string =>
+  accountSub ? `${key}_${encodeURIComponent(accountSub)}` : key
+
+const getSyncShadow = async (accountSub: string | null): Promise<SyncShadow> => {
+  const key = getScopedSyncKey(INCREMENTAL_SHADOW_KEY, accountSub)
+  const shadow = await getLocalValue<SyncShadow | null>(key, null)
   return shadow && shadow.records ? shadow : { records: {} }
 }
 
@@ -438,15 +585,45 @@ const isVirginDefaultData = (data: StorageData): boolean => {
     !data.darkMode && !data.weeklyGoalMinutes && !data.weeklyGoalAnchor
 }
 
-const syncIncrementallyNow = async (inputData: StorageData): Promise<{ success: boolean; data?: StorageData; hasForeignChanges?: boolean; error?: string }> => {
+const sameSyncAccount = (left: GoogleAccountProfile | null, right: GoogleAccountProfile | null): boolean =>
+  left === null || right === null
+    ? left === right
+    : left.sub === right.sub && left.connected === right.connected
+
+const syncIncrementallyNow = async (
+  inputData: StorageData,
+  requestedAccount: GoogleAccountProfile | null
+): Promise<{ success: boolean; data?: StorageData; hasForeignChanges?: boolean; error?: string }> => {
   try {
     const data = normalizeStorageData(inputData)
+    const account = await getGoogleAccountValue()
+    if (!sameSyncAccount(account, requestedAccount)) {
+      return { success: false, error: 'Google 账号已切换，本次同步已取消，请稍后重试' }
+    }
+    if (account && !account.connected) return { success: false, error: 'Google 登录已退出' }
     const settings = await getCloudSettings()
-    if (!settings.apiUrl || !settings.apiToken) return { success: false, error: '未配置同步设置' }
+    const accountSub = account?.connected ? account.sub : null
+    if (!accountSub && (!settings.apiUrl || !settings.apiToken)) return { success: false, error: '未配置同步设置' }
+    let accessToken: string | null = null
+    if (accountSub) {
+      try {
+        accessToken = await getGoogleAccessToken(false)
+      } catch (error) {
+        if (account) await flagGoogleAuthorizationExpired(account)
+        throw error
+      }
+    }
+    const syncUrl = accountSub
+      ? `${TASKMASTER_API_URL}/api/account/sync/incremental`
+      : `${settings.apiUrl}/api/sync/incremental`
+    const authorization = accountSub ? (accessToken || '') : (settings.apiToken || '')
+    const cursorKey = getScopedSyncKey(INCREMENTAL_CURSOR_KEY, accountSub)
+    const clockKey = getScopedSyncKey(INCREMENTAL_CLOCK_KEY, accountSub)
+    const shadowKey = getScopedSyncKey(INCREMENTAL_SHADOW_KEY, accountSub)
 
     const [deviceId, shadow, initialCursor, storedClock] = await Promise.all([
-      getSyncDeviceId(), getSyncShadow(), getLocalValue<number>(INCREMENTAL_CURSOR_KEY, 0),
-      getLocalValue<number>(INCREMENTAL_CLOCK_KEY, 0)
+      getSyncDeviceId(), getSyncShadow(accountSub), getLocalValue<number>(cursorKey, 0),
+      getLocalValue<number>(clockKey, 0)
     ])
     lastSyncTimestamp = Math.max(lastSyncTimestamp, storedClock)
     let cursor = initialCursor
@@ -461,16 +638,19 @@ const syncIncrementallyNow = async (inputData: StorageData): Promise<{ success: 
 
     while (pending.length > 0 || hasMore) {
       const outgoing = pending.splice(0, OUTGOING_SYNC_BATCH)
-      const resp = await fetch(`${settings.apiUrl}/api/sync/incremental`, {
+      const resp = await fetch(syncUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${settings.apiToken}`
+          'Authorization': `Bearer ${authorization}`
         },
         body: JSON.stringify({ deviceId, cursor, changes: outgoing })
       })
       if (!resp.ok) {
         const error = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }))
+        if (accountSub && resp.status === 401 && account) {
+          await flagGoogleAuthorizationExpired(account, accessToken || '')
+        }
         return { success: false, error: error.error || `HTTP ${resp.status}` }
       }
       const result = await resp.json()
@@ -487,6 +667,10 @@ const syncIncrementallyNow = async (inputData: StorageData): Promise<{ success: 
     // A later local save may have happened while this request was in flight.
     // Merge server data onto that newer backup, but keep the shadow limited to
     // records this request actually reconciled with the server.
+    const currentAccount = await getGoogleAccountValue()
+    if (!sameSyncAccount(currentAccount, account)) {
+      return { success: false, error: 'Google 账号已切换，本次同步已取消，请稍后重试' }
+    }
     const latestLocal = await loadFromLocal()
     const finalData = latestLocal
       ? applyRemoteChanges(normalizeStorageData(latestLocal), receivedChanges)
@@ -495,9 +679,9 @@ const syncIncrementallyNow = async (inputData: StorageData): Promise<{ success: 
     await Promise.all([
       saveToLocal(finalData),
       setLocalValues({
-        [INCREMENTAL_CURSOR_KEY]: cursor,
-        [INCREMENTAL_SHADOW_KEY]: { records: finalRecords },
-        [INCREMENTAL_CLOCK_KEY]: lastSyncTimestamp
+        [cursorKey]: cursor,
+        [shadowKey]: { records: finalRecords },
+        [clockKey]: lastSyncTimestamp
       })
     ])
     return { success: true, data: finalData, hasForeignChanges: sawForeignChanges }
@@ -506,10 +690,16 @@ const syncIncrementallyNow = async (inputData: StorageData): Promise<{ success: 
   }
 }
 
-export const syncIncrementally = (data: StorageData): Promise<{ success: boolean; data?: StorageData; hasForeignChanges?: boolean; error?: string }> =>
-  enqueueSync(() => syncIncrementallyNow(cloneStorageData(data)))
+export const syncIncrementally = (data: StorageData): Promise<{ success: boolean; data?: StorageData; hasForeignChanges?: boolean; error?: string }> => {
+  const snapshot = cloneStorageData(data)
+  return getGoogleAccountValue().then(requestedAccount =>
+    enqueueSync(() => syncIncrementallyNow(snapshot, requestedAccount))
+  )
+}
 
 export const isCloudConfigured = async (): Promise<boolean> => {
+  const account = await getGoogleAccountValue()
+  if (account) return account.connected
   const settings = await getCloudSettings()
   return !!(settings.apiUrl && settings.apiToken)
 }
@@ -520,7 +710,7 @@ const isRecoverableNetworkError = (error?: string): boolean => {
 }
 
 const warnForSyncFailure = (error?: string): void => {
-  if (!error || error === '未配置同步设置' || isRecoverableNetworkError(error)) return
+  if (!error || error === '未配置同步设置' || error === 'Google 登录已退出' || isRecoverableNetworkError(error)) return
   console.warn('[TaskMaster] incremental sync failed:', error)
 }
 
@@ -657,8 +847,11 @@ export const createAutoBackup = async (): Promise<{ success: boolean; error?: st
   try {
     const data = await loadData()
     const now = Date.now()
-    const key = BACKUP_PREFIX + formatDateKey(now)
-    const payload = JSON.stringify({ timestamp: now, data })
+    const account = await getGoogleAccountValue()
+    const ownerSub = account?.sub || null
+    const ownerKey = ownerSub ? `account_${encodeURIComponent(ownerSub)}_` : 'guest_'
+    const key = BACKUP_PREFIX + ownerKey + formatDateKey(now)
+    const payload = JSON.stringify({ timestamp: now, ownerSub, data })
 
     await new Promise<void>((resolve, reject) => {
       chrome.storage.local.set({ [key]: payload }, () => {
@@ -677,6 +870,8 @@ export const createAutoBackup = async (): Promise<{ success: boolean; error?: st
 }
 
 export const listBackups = async (): Promise<BackupInfo[]> => {
+  const account = await getGoogleAccountValue()
+  const ownerSub = account?.sub || null
   return new Promise((resolve) => {
     chrome.storage.local.get(null, (all) => {
       if (chrome.runtime.lastError) {
@@ -688,6 +883,7 @@ export const listBackups = async (): Promise<BackupInfo[]> => {
         if (!key.startsWith(BACKUP_PREFIX)) continue
         try {
           const parsed = typeof all[key] === 'string' ? JSON.parse(all[key]) : all[key]
+          if ((parsed.ownerSub || null) !== ownerSub) continue
           const d = parsed.data
           const ts = parsed.timestamp || 0
           const dd = new Date(ts)
@@ -717,6 +913,10 @@ export const restoreBackup = async (key: string): Promise<{ success: boolean; er
     })
     if (!result) return { success: false, error: '备份不存在' }
     const parsed = JSON.parse(result)
+    const account = await getGoogleAccountValue()
+    if ((parsed.ownerSub || null) !== (account?.sub || null)) {
+      return { success: false, error: '备份属于其他账号，不能恢复到当前任务空间' }
+    }
     if (!parsed.data?.tasks) return { success: false, error: '备份数据损坏' }
     await saveData(parsed.data)
     return { success: true }

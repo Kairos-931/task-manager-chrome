@@ -98,6 +98,8 @@ npm run demo
 
 插件通过 **Cloudflare Worker + D1 数据库** 实现跨设备同步，不依赖 chrome.storage.sync。
 
+> **Google 登录同步仍在开发，尚未部署到正式 Worker。** 目标是在不登录时保留完整本机使用，并在主动登录 Google 后由 TaskMaster Worker 按账号隔离并自动同步。当前正式版本仍按下方 API 地址与密钥方式使用；OAuth 客户端、D1 迁移和旧数据归属认领仍是上线前条件。范围见[当前需求](docs/requirements/REQ-20260930-google-account-sync.md)，配置与数据边界见[同步配置说明](docs/google-account-sync.md)。
+
 ### 同步架构
 
 ```

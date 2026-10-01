@@ -1,12 +1,15 @@
 // Background script for Chrome extension
-import { createAutoBackup, loadData, saveData } from './storage'
+import { createAutoBackup, getGoogleAccount, loadData, saveData, syncIncrementally } from './storage'
 
 const ALARM_NAME = 'tm_daily_backup'
 const ALARM_PERIOD_MINUTES = 24 * 60 // once per day
+const ACCOUNT_SYNC_ALARM_NAME = 'tm_google_account_sync'
+const ACCOUNT_SYNC_PERIOD_MINUTES = 2
 
 // Register alarm on install / startup
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(ALARM_NAME, { periodInMinutes: ALARM_PERIOD_MINUTES })
+  chrome.alarms.create(ACCOUNT_SYNC_ALARM_NAME, { periodInMinutes: ACCOUNT_SYNC_PERIOD_MINUTES })
   console.log('[TaskMaster BG] daily backup alarm registered')
   // Create initial backup
   triggerBackup()
@@ -18,12 +21,17 @@ chrome.runtime.onStartup.addListener(() => {
       chrome.alarms.create(ALARM_NAME, { periodInMinutes: ALARM_PERIOD_MINUTES })
     }
   })
+  chrome.alarms.get(ACCOUNT_SYNC_ALARM_NAME, (alarm) => {
+    if (!alarm) chrome.alarms.create(ACCOUNT_SYNC_ALARM_NAME, { periodInMinutes: ACCOUNT_SYNC_PERIOD_MINUTES })
+  })
 })
 
 // Handle alarm
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) {
     triggerBackup()
+  } else if (alarm.name === ACCOUNT_SYNC_ALARM_NAME) {
+    triggerGoogleAccountSync()
   }
 })
 
@@ -37,6 +45,20 @@ async function triggerBackup() {
     }
   } catch (e) {
     console.error('[TaskMaster BG] backup error:', e)
+  }
+}
+
+async function triggerGoogleAccountSync(): Promise<void> {
+  try {
+    const account = await getGoogleAccount()
+    if (!account?.connected) return
+    const data = await loadData()
+    const result = await syncIncrementally(data)
+    if (result.success && result.hasForeignChanges) {
+      chrome.runtime.sendMessage({ action: 'googleAccountSyncUpdated' }).catch(() => {})
+    }
+  } catch (error) {
+    console.warn('[TaskMaster BG] account sync deferred:', error instanceof Error ? error.message : 'sync failed')
   }
 }
 
@@ -63,7 +85,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === 'syncRemoteTasks') {
-    handleRemoteSync().then(sendResponse).catch(e => sendResponse({ error: String(e) }))
+    getGoogleAccount().then(account => {
+      if (account) {
+        sendResponse({ synced: 0 })
+        return
+      }
+      handleRemoteSync().then(sendResponse).catch(e => sendResponse({ error: String(e) }))
+    }).catch(e => sendResponse({ error: String(e) }))
     return true
   }
 

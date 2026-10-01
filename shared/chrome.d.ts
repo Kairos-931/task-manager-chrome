@@ -20,7 +20,11 @@ declare const chrome: {
     lastError?: { message: string }
     id?: string
     getURL(path: string): string
-    sendMessage(message: any, responseCallback?: (response: any) => void): void
+    getManifest(): { oauth2?: { client_id?: string; scopes?: string[] } }
+    sendMessage: {
+      (message: any, responseCallback: (response: any) => void): void
+      (message: any): Promise<any>
+    }
     onMessage: {
       addListener(callback: (message: any, sender: any, sendResponse: (response?: any) => void) => void): void
     }
@@ -47,5 +51,10 @@ declare const chrome: {
     onAlarm: {
       addListener(callback: (alarm: ChromeAlarm) => void): void
     }
+  }
+  identity: {
+    getAuthToken(details: { interactive: boolean }, callback: (result: unknown) => void): void
+    removeCachedAuthToken(details: { token: string }, callback: () => void): void
+    clearAllCachedAuthTokens(callback: () => void): void
   }
 }

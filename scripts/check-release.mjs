@@ -19,6 +19,16 @@ if (packageJson.version !== sourceManifest.version || sourceManifest.version !==
   )
 }
 
+const extensionOAuthClientId = sourceManifest.oauth2?.client_id
+if (typeof extensionOAuthClientId !== 'string' ||
+    !/^[a-z0-9-]+\.apps\.googleusercontent\.com$/i.test(extensionOAuthClientId) ||
+    extensionOAuthClientId.startsWith('YOUR_')) {
+  throw new Error('Set a real Chrome Extension OAuth client ID in manifest.json before building a release')
+}
+if (releaseManifest.oauth2?.client_id !== extensionOAuthClientId) {
+  throw new Error('Built extension OAuth client ID does not match manifest.json')
+}
+
 if (!packageSource.includes('-i ./styles/tailwind.css -o ./styles/main.css')) {
   throw new Error('Tailwind build must use separate source and output files')
 }

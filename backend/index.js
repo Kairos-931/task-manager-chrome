@@ -1,5 +1,15 @@
 // TaskMaster API — Cloudflare Worker
 // Handles: mobile web page, task CRUD, Telegram bot webhook
+import {
+  GoogleAuthError,
+  MAX_ACCOUNT_SYNC_CHANGES,
+  applyAccountSyncRecord,
+  createAccountTaskRecord,
+  getGoogleIdentityFromRequest,
+  listAccountCategories,
+  normalizeAccountSyncRecord,
+} from './account-sync.js'
+import { renderAccountMobilePage } from './account-mobile.js'
 
 export default {
   async fetch(request, env) {
@@ -11,8 +21,20 @@ export default {
       return new Response(null, { headers: corsHeaders() });
     }
 
-    // Serve mobile web page (no auth)
-    if (url.pathname === '/' || url.pathname === '/index.html') {
+    // Google-account mobile entry point. Keep the prior administrator page
+    // available separately during the legacy API transition.
+    if (url.pathname === '/' && method === 'GET') {
+      return new Response(renderAccountMobilePage(env), {
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
+          'X-Content-Type-Options': 'nosniff',
+          'Referrer-Policy': 'no-referrer',
+        },
+      })
+    }
+    if (url.pathname === '/legacy' || url.pathname === '/index.html') {
       return serveStatic('index.html');
     }
     if (url.pathname === '/manifest.json') {
@@ -25,6 +47,18 @@ export default {
     // Telegram webhook (auth via bot token in URL path)
     if (url.pathname === '/api/telegram/webhook' && method === 'POST') {
       return handleTelegramWebhook(request, env);
+    }
+
+    // New Google-authenticated endpoints derive the account from a credential
+    // verified with Google. They never use the legacy global API_TOKEN lane.
+    if (url.pathname === '/api/google/identity' && method === 'GET') {
+      return handleGoogleIdentity(request, env)
+    }
+    if (url.pathname.startsWith('/api/account/') &&
+        ((url.pathname === '/api/account/sync/incremental' && method === 'POST') ||
+         (url.pathname === '/api/account/tasks' && method === 'POST') ||
+         (url.pathname === '/api/account/categories' && method === 'GET'))) {
+      return handleGoogleAccountApi(request, env, url.pathname)
     }
 
     // API routes — require auth
@@ -63,6 +97,101 @@ export default {
     return jsonResp({ error: 'Not Found' }, 404);
   }
 };
+
+async function handleGoogleIdentity(request, env) {
+  try {
+    const user = await getGoogleIdentityFromRequest(request, env)
+    return accountJson({ user })
+  } catch (error) {
+    return googleAuthErrorResponse(error)
+  }
+}
+
+async function handleGoogleAccountApi(request, env, pathname) {
+  let user
+  try {
+    user = await getGoogleIdentityFromRequest(request, env)
+  } catch (error) {
+    return googleAuthErrorResponse(error)
+  }
+
+  try {
+    if (!env.DB) return accountJson({ error: 'Account sync storage is not configured' }, 503)
+    if (pathname === '/api/account/sync/incremental') {
+      return await handleAccountIncrementalSync(request, env.DB, user.sub)
+    }
+    if (pathname === '/api/account/tasks') {
+      let body
+      try { body = await request.json() } catch { return accountJson({ error: 'invalid JSON body' }, 400) }
+      const result = await createAccountTaskRecord(env.DB, user.sub, body)
+      if (result.error) return accountJson({ error: result.error }, result.status)
+      return accountJson({ ok: true, task: result.task }, 201)
+    }
+    if (pathname === '/api/account/categories') {
+      return accountJson({ categories: await listAccountCategories(env.DB, user.sub) })
+    }
+    return accountJson({ error: 'Not Found' }, 404)
+  } catch (error) {
+    console.error('Google account API failed:', error?.name || 'Error')
+    return accountJson({ error: 'Account sync is temporarily unavailable' }, 503)
+  }
+}
+
+async function handleAccountIncrementalSync(request, db, userSub) {
+  let body
+  try {
+    const raw = await request.text()
+    if (raw.length > 2_000_000) return accountJson({ error: 'request body is too large' }, 413)
+    body = JSON.parse(raw)
+  } catch { return accountJson({ error: 'invalid JSON body' }, 400) }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return accountJson({ error: 'JSON object required' }, 400)
+  const sourceDevice = typeof body.deviceId === 'string' && body.deviceId.length > 0 && body.deviceId.length <= 128
+    ? body.deviceId
+    : ''
+  if (!sourceDevice) return accountJson({ error: 'deviceId is required' }, 400)
+  const cursor = Number.isSafeInteger(body.cursor) && body.cursor >= 0 ? body.cursor : 0
+  if (!Array.isArray(body.changes) || body.changes.length > MAX_ACCOUNT_SYNC_CHANGES) {
+    return accountJson({ error: `changes must be an array of at most ${MAX_ACCOUNT_SYNC_CHANGES}` }, 400)
+  }
+
+  const rejectedChanges = []
+  for (const raw of body.changes) {
+    const record = normalizeAccountSyncRecord(raw, sourceDevice)
+    if (!record) return accountJson({ error: 'invalid sync record' }, 400)
+    const outcome = await applyAccountSyncRecord(db, userSub, record)
+    if (!outcome.accepted && outcome.canonical) rejectedChanges.push(outcome.canonical)
+  }
+
+  const { results } = await db.prepare(
+    `SELECT revision, record_type, record_id, payload, deleted, updated_at, source_device
+     FROM account_sync_changes WHERE user_sub = ? AND revision > ? ORDER BY revision ASC LIMIT ?`
+  ).bind(userSub, cursor, MAX_ACCOUNT_SYNC_CHANGES + 1).all()
+  const hasMore = results.length > MAX_ACCOUNT_SYNC_CHANGES
+  const page = hasMore ? results.slice(0, MAX_ACCOUNT_SYNC_CHANGES) : results
+  const nextCursor = page.length > 0 ? Number(page[page.length - 1].revision) : cursor
+  const changes = page.map(row => ({
+    type: row.record_type,
+    id: row.record_id,
+    payload: row.payload ? JSON.parse(row.payload) : null,
+    deleted: row.deleted === 1,
+    updatedAt: Number(row.updated_at),
+    sourceDevice: row.source_device,
+  }))
+  return accountJson({ changes, rejectedChanges, cursor: nextCursor, hasMore })
+}
+
+function accountJson(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...corsHeaders(), 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
+  })
+}
+
+function googleAuthErrorResponse(error) {
+  if (error instanceof GoogleAuthError) return accountJson({ error: error.message }, error.status)
+  console.error('Google identity check failed:', error?.name || 'Error')
+  return accountJson({ error: 'Google identity verification is temporarily unavailable' }, 503)
+}
 
 // ── Auth ──────────────────────────────────────────────
 

@@ -26,6 +26,14 @@ export { loadState, persistState, getState, setState, resetEditingTask, getFilte
 export { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, renderPoolView, renderListView, renderDayView, renderWeekView, renderMonthView, renderTaskList, renderModal, renderCategoryModal, renderGoalSettingsModal, renderSyncModal, renderMobileSyncPanel, renderWeeklyGoalCard }
 export { attachEventListeners }
 
+/** Remote updates must not replace an active task/split editor and discard its form values. */
+export const isInteractiveTaskModalOpen = (container: HTMLElement): boolean => {
+  const taskModal = container.querySelector('#taskModal')
+  const splitTaskModal = container.querySelector('#splitTaskModal')
+  return [taskModal, splitTaskModal]
+    .some(modal => !!modal && !modal.classList.contains('hidden'))
+}
+
 // Auto-initialize when DOM is ready
 function autoInit() {
   const container = document.getElementById('app')
@@ -59,10 +67,21 @@ function autoInit() {
         indicatorSlot.innerHTML = renderSyncIndicator()
       }
 
-      const taskModal = container.querySelector('#taskModal')
-      const isTaskModalOpen = !!taskModal && !taskModal.classList.contains('hidden')
+      const isTaskModalOpen = isInteractiveTaskModalOpen(container)
       if (shouldRefreshAppForSyncStatus(status, isTaskModalOpen)) {
         reRender()
+      }
+    })
+
+    chrome.runtime.onMessage.addListener((message) => {
+      if (message?.action === 'googleAccountAuthExpired') {
+        if (!isInteractiveTaskModalOpen(container)) reRender()
+        return
+      }
+      if (message?.action === 'googleAccountSyncUpdated') {
+        void loadState().then(() => {
+          if (!isInteractiveTaskModalOpen(container)) reRender()
+        })
       }
     })
   }).catch(err => {

@@ -109,6 +109,129 @@ function reRender() {
   renderApp(currentContainer)
   attachEventListeners(currentContainer)
 }
+
+const bindGoogleAccountPanels = (container: HTMLElement): void => {
+  const panels = [...container.querySelectorAll<HTMLElement>('.google-account-panel')]
+  if (panels.length === 0) return
+
+  const refresh = async (panel: HTMLElement): Promise<void> => {
+    const { getGoogleAccount } = await import('./storage')
+    const account = await getGoogleAccount()
+    const status = panel.querySelector<HTMLElement>('.google-account-status')
+    const signIn = panel.querySelector<HTMLButtonElement>('.google-sign-in')
+    const signOut = panel.querySelector<HTMLButtonElement>('.google-sign-out')
+    if (account?.connected) {
+      if (status) status.textContent = account.email ? `已连接 · ${account.email}` : '已连接 Google 账号'
+      if (signIn) signIn.hidden = true
+      if (signOut) signOut.hidden = false
+    } else if (account?.sub) {
+      if (status) status.textContent = `已退出 · ${account.email || '本机任务仍保留'}`
+      if (signIn) {
+        signIn.hidden = false
+        signIn.textContent = '重新登录并同步'
+      }
+      if (signOut) signOut.hidden = true
+    } else {
+      if (status) status.textContent = '未登录 · 任务仍保存在本机'
+      if (signIn) {
+        signIn.hidden = false
+        signIn.textContent = '使用 Google 登录'
+      }
+      if (signOut) signOut.hidden = true
+    }
+  }
+
+  const setFeedback = (panel: HTMLElement, text: string, isError = false): void => {
+    const feedback = panel.querySelector<HTMLElement>('.google-account-feedback')
+    if (!feedback) return
+    feedback.textContent = text
+    feedback.classList.toggle('text-red-600', isError)
+    feedback.classList.toggle('text-green-700', !isError && !!text)
+  }
+
+  for (const panel of panels) {
+    void refresh(panel)
+    const switchPanel = panel.querySelector<HTMLElement>('.google-account-switch')
+    const switchCopy = panel.querySelector<HTMLElement>('.google-account-switch-copy')
+    const signIn = panel.querySelector<HTMLButtonElement>('.google-sign-in')
+    const switchConfirm = panel.querySelector<HTMLButtonElement>('.google-account-switch-confirm')
+    const switchCancel = panel.querySelector<HTMLButtonElement>('.google-account-switch-cancel')
+    let pendingSub = ''
+
+    const activate = async (sub: string): Promise<void> => {
+      const { activateGoogleAccount } = await import('./storage')
+      await activateGoogleAccount(sub)
+      if (switchPanel) switchPanel.classList.add('hidden')
+      await loadState()
+      reRender()
+      syncToast('已连接 Google，正在同步此账号的任务')
+    }
+
+    if (signIn) signIn.addEventListener('click', async () => {
+      const signInButton = signIn
+      signInButton.disabled = true
+      setFeedback(panel, '正在打开 Google 登录…')
+      try {
+        const [{ identifyGoogleAccount, getGoogleAccount }] = await Promise.all([import('./storage')])
+        const [selectedAccount, activeAccount] = await Promise.all([
+          identifyGoogleAccount(), getGoogleAccount()
+        ])
+        if (activeAccount?.sub && activeAccount.sub !== selectedAccount.sub) {
+          pendingSub = selectedAccount.sub
+          if (switchCopy) {
+            switchCopy.textContent = `当前本机任务属于 ${activeAccount.email || '另一个 Google 账号'}。切换后会保留原账号的本机副本，显示 ${selectedAccount.email || '所选账号'} 自己的数据，并只与该账号同步。`
+          }
+          switchPanel?.classList.remove('hidden')
+          setFeedback(panel, '请确认如何切换本机账号。')
+        } else {
+          await activate(selectedAccount.sub)
+        }
+      } catch (error) {
+        setFeedback(panel, error instanceof Error ? error.message : 'Google 登录失败，请重试', true)
+      } finally {
+        signInButton.disabled = false
+      }
+    })
+
+    if (switchConfirm) switchConfirm.addEventListener('click', async () => {
+      const confirmButton = switchConfirm
+      if (!pendingSub) return
+      confirmButton.disabled = true
+      setFeedback(panel, '正在切换账号并加载本机数据…')
+      try {
+        await activate(pendingSub)
+        pendingSub = ''
+      } catch (error) {
+        setFeedback(panel, error instanceof Error ? error.message : '切换失败，请重试', true)
+      } finally {
+        confirmButton.disabled = false
+      }
+    })
+
+    switchCancel?.addEventListener('click', () => {
+      pendingSub = ''
+      switchPanel?.classList.add('hidden')
+      setFeedback(panel, '已保留当前账号和本机任务。')
+    })
+
+    panel.querySelector<HTMLButtonElement>('.google-sign-out')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget as HTMLButtonElement
+      button.disabled = true
+      try {
+        const { disconnectGoogleAccount } = await import('./storage')
+        await disconnectGoogleAccount()
+        await refresh(panel)
+        setFeedback(panel, '已退出。任务仍保存在本机；重新登录后可继续同步。')
+        syncToast('已退出 Google 同步')
+      } catch (error) {
+        setFeedback(panel, error instanceof Error ? error.message : '退出失败，请重试', true)
+      } finally {
+        button.disabled = false
+      }
+    })
+  }
+}
+
 const repeatEndDateErrorFor = (dueDate: string, repeatEndDate: string): string => {
   if (!repeatEndDate) return '请选择重复截止日期'
   if (!dueDate) return '请选择首次计划日期'
@@ -120,6 +243,7 @@ const repeatEndDateErrorFor = (dueDate: string, repeatEndDate: string): string =
 export const attachEventListeners = (container: HTMLElement): void => {
   currentContainer = container
   bindPopupTaskMenus(container)
+  bindGoogleAccountPanels(container)
   const jumpToToday = container.querySelector<HTMLButtonElement>('#jumpToTodayBtn')
   const todayAnchor = container.querySelector<HTMLElement>('#todayAnchor')
   if (listScrollHandler) window.removeEventListener('scroll', listScrollHandler)
