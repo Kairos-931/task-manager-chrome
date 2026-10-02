@@ -6,6 +6,7 @@ import { downloadExportFile, importDataFromFile } from './storage'
 import { showToast } from './sync'
 import { isValidLocalDate } from './replan-policy.js'
 import { bindTaskQuickDates, bindSplitQuickDates, createSubmissionGuard, createResettableSubmissionGuard } from './quick-dates'
+import { applyTaskEntryMode } from './task-form'
 import { getTodayScrollBehavior, isAnchorVisible } from './list-navigation'
 import type { PendingGoogleAuthorization } from './storage'
 
@@ -466,14 +467,12 @@ export const attachEventListeners = (container: HTMLElement): void => {
   const parentSubmitGuard = createResettableSubmissionGuard()
   const setTaskMode = (mode: 'normal' | 'parent') => {
     taskMode = mode
-    container.querySelector('#normalTaskFields')?.classList.toggle('hidden', mode === 'parent')
-    container.querySelector('#parentChildrenFields')?.classList.toggle('hidden', mode !== 'parent')
-    container.querySelector('#taskCompletedField')?.classList.toggle('hidden', mode === 'parent')
-    container.querySelectorAll<HTMLElement>('[data-task-mode]').forEach(button => button.classList.toggle('active', button.dataset.taskMode === mode))
-    const submit = container.querySelector<HTMLButtonElement>('#taskSubmitBtn')
-    if (submit) submit.textContent = mode === 'parent' ? '创建大任务' : '添加'
+    if (taskForm) applyTaskEntryMode(taskForm, mode)
   }
   container.querySelectorAll<HTMLElement>('[data-task-mode]').forEach(button => button.addEventListener('click', () => setTaskMode(button.dataset.taskMode === 'parent' ? 'parent' : 'normal')))
+  // Hidden required controls still participate in native form validation unless disabled.
+  // Initialize only new-task forms; edit forms must keep their existing save label and fields.
+  if (taskForm && !getState().editingTask) setTaskMode('normal')
   const parentChildren = container.querySelector<HTMLElement>('#newParentChildren')
   const bindParentChildControls = () => {
     if (!parentChildren) return
