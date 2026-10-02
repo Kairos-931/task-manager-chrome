@@ -95,14 +95,21 @@ const isValidDateOnly = (value: unknown): value is string => {
 
 const CLOUD_SYNC_SETTINGS_KEY = 'tm_sync_settings'
 const GOOGLE_ACCOUNT_KEY = 'tm_google_account'
+const GOOGLE_SESSION_KEY = 'tm_google_session_token_v1'
 const GOOGLE_ACCOUNT_DATA_PREFIX = 'tm_google_account_data_v1_'
 const TASKMASTER_API_URL = 'https://taskmaster-api.yx9391.workers.dev'
+const GOOGLE_EXTENSION_CALLBACK_URI = 'https://gjifmpjgedleemhkikajgepickfphflo.chromiumapp.org/google-auth'
 
 export interface GoogleAccountProfile {
   sub: string
   email: string
   name?: string
   connected: boolean
+}
+
+export interface PendingGoogleAuthorization {
+  user: Omit<GoogleAccountProfile, 'connected'>
+  grant: { code: string; state: string; codeVerifier: string }
 }
 
 const getCloudSettings = async (): Promise<{ apiUrl?: string; apiToken?: string }> => {
@@ -311,6 +318,15 @@ const setLocalValues = async (values: Record<string, unknown>): Promise<void> =>
   })
 }
 
+const removeLocalValues = async (keys: string | string[]): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.remove(keys, () => {
+      if (chrome.runtime.lastError) reject(chrome.runtime.lastError)
+      else resolve()
+    })
+  })
+}
+
 const getGoogleAccountValue = async (): Promise<GoogleAccountProfile | null> => {
   const account = await getLocalValue<GoogleAccountProfile | null>(GOOGLE_ACCOUNT_KEY, null)
   if (!account || typeof account.sub !== 'string' || !account.sub) return null
@@ -319,83 +335,128 @@ const getGoogleAccountValue = async (): Promise<GoogleAccountProfile | null> => 
 
 export const getGoogleAccount = getGoogleAccountValue
 
-const getGoogleAccessToken = (interactive: boolean): Promise<string> => new Promise((resolve, reject) => {
-  const manifest = chrome.runtime.getManifest() as unknown as {
-    oauth2?: { client_id?: string; scopes?: string[] }
-  }
-  if (!manifest.oauth2?.client_id || manifest.oauth2.client_id.startsWith('YOUR_')) {
-    reject(new Error('Google 登录尚未配置，请管理员先设置扩展 OAuth 客户端'))
-    return
-  }
-  const identityApi = chrome.identity as unknown as {
-    getAuthToken: (details: { interactive: boolean }, callback: (result: unknown) => void) => void
-  }
-  if (!identityApi?.getAuthToken) {
-    reject(new Error('此扩展未配置 Google 登录'))
-    return
-  }
-  identityApi.getAuthToken({ interactive }, (result) => {
-    const token = typeof result === 'string'
-      ? result
-      : (result && typeof result === 'object' && typeof (result as { token?: unknown }).token === 'string'
-          ? (result as { token: string }).token
-          : '')
-    if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message || 'Google 登录失败'))
-    else if (!token) reject(new Error('Google 登录未返回授权凭证'))
-    else resolve(token)
-  })
-})
+const base64Url = (bytes: Uint8Array): string => {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
 
-const requestGoogleIdentity = async (interactive: boolean): Promise<{ token: string; user: Omit<GoogleAccountProfile, 'connected'> }> => {
-  const token = await getGoogleAccessToken(interactive)
+const randomVerifier = (): string => {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  return base64Url(bytes)
+}
+
+const postExtensionAuth = async <T>(path: string, body: Record<string, string>): Promise<T> => {
   let response: Response
   try {
-    response = await fetch(`${TASKMASTER_API_URL}/api/google/identity`, {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: 'no-store'
+    response = await fetch(`${TASKMASTER_API_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+      redirect: 'error',
     })
   } catch {
     throw new Error('无法连接 TaskMaster 同步服务，请检查网络后重试')
   }
-  const result = await response.json().catch(() => ({})) as {
-    user?: { sub?: string; email?: string; name?: string }
-    error?: string
-  }
-  if (!response.ok || typeof result.user?.sub !== 'string' || !result.user.sub) {
-    if (response.status === 401) {
-      await removeGoogleAccessToken(token)
-      throw new Error('Google 授权已失效，请重新登录')
-    }
-    throw new Error(result.error || 'Google 登录暂不可用，请稍后重试')
-  }
-  return {
-    token,
-    user: {
-      sub: result.user.sub,
-      email: typeof result.user.email === 'string' ? result.user.email : '',
-      ...(typeof result.user.name === 'string' ? { name: result.user.name } : {})
-    }
+  const result = await response.json().catch(() => ({})) as T & { error?: string }
+  if (!response.ok) throw new Error(result.error || 'Google 登录暂不可用，请稍后重试')
+  return result
+}
+
+export const cancelGoogleAuthorization = async (grant: PendingGoogleAuthorization['grant']): Promise<void> => {
+  try {
+    await postExtensionAuth('/api/google/extension-auth/cancel', grant)
+  } catch { /* The pending code expires after 60 seconds even if cancellation is offline. */ }
+}
+
+const revokeGoogleSessionToken = async (token: string): Promise<boolean> => {
+  try {
+    const response = await fetch(`${TASKMASTER_API_URL}/api/google/session/logout`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-TaskMaster-Client': 'extension',
+      },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(8000),
+    })
+    return response.ok || response.status === 401
+  } catch {
+    return false
   }
 }
 
-const removeGoogleAccessToken = async (token: string): Promise<void> => new Promise((resolve) => {
-  const identityApi = chrome.identity as unknown as {
-    removeCachedAuthToken?: (details: { token: string }, callback: () => void) => void
-  }
-  if (!identityApi?.removeCachedAuthToken) return resolve()
-  identityApi.removeCachedAuthToken({ token }, () => resolve())
-})
-
-const flagGoogleAuthorizationExpired = async (account: GoogleAccountProfile, token = ''): Promise<void> => {
-  if (token) await removeGoogleAccessToken(token)
-  await setLocalValues({ [GOOGLE_ACCOUNT_KEY]: { ...account, connected: false } })
+const flagGoogleAuthorizationExpired = async (account: GoogleAccountProfile): Promise<void> => {
+  await Promise.all([
+    setLocalValues({ [GOOGLE_ACCOUNT_KEY]: { ...account, connected: false } }),
+    removeLocalValues(GOOGLE_SESSION_KEY),
+  ])
   chrome.runtime.sendMessage({ action: 'googleAccountAuthExpired' }).catch(() => {})
 }
 
 /** Starts the interactive consent flow only when the user presses the sign-in button. */
-export const identifyGoogleAccount = async (): Promise<Omit<GoogleAccountProfile, 'connected'>> => {
-  const { user } = await requestGoogleIdentity(true)
-  return user
+export const identifyGoogleAccount = async (): Promise<PendingGoogleAuthorization> => {
+  const identityApi = chrome.identity as unknown as {
+    launchWebAuthFlow?: (details: { url: string; interactive: boolean }, callback: (redirectUrl?: string) => void) => void
+    getRedirectURL?: (path?: string) => string
+  }
+  if (!identityApi?.launchWebAuthFlow || !identityApi?.getRedirectURL) {
+    throw new Error('此扩展未配置 Chrome 身份授权能力')
+  }
+  if (identityApi.getRedirectURL('google-auth') !== GOOGLE_EXTENSION_CALLBACK_URI) {
+    throw new Error('当前扩展 ID 与 Google 登录配置不匹配，请重新加载正式扩展包')
+  }
+
+  const codeVerifier = randomVerifier()
+  const challenge = base64Url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(codeVerifier))))
+  const started = await postExtensionAuth<{ authorizeUrl?: string; state?: string }>(
+    '/api/google/extension-auth/start', { codeChallenge: challenge }
+  )
+  if (typeof started.authorizeUrl !== 'string' || typeof started.state !== 'string') {
+    throw new Error('Google 登录暂不可用，请稍后重试')
+  }
+  const authorizeUrl = new URL(started.authorizeUrl)
+  if (authorizeUrl.origin !== TASKMASTER_API_URL || authorizeUrl.pathname !== '/api/google/extension-auth/authorize') {
+    throw new Error('Google 登录返回了无效的授权地址')
+  }
+
+  const redirectUrl = await new Promise<string>((resolve, reject) => {
+    identityApi.launchWebAuthFlow?.({ url: authorizeUrl.toString(), interactive: true }, result => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message || 'Google 登录已取消'))
+      else if (result) resolve(result)
+      else reject(new Error('Google 登录已取消'))
+    })
+  })
+  const callback = new URL(redirectUrl)
+  if (`${callback.origin}${callback.pathname}` !== GOOGLE_EXTENSION_CALLBACK_URI ||
+      callback.searchParams.get('state') !== started.state) {
+    throw new Error('Google 登录返回的状态无效，请重新登录')
+  }
+  if (callback.searchParams.has('error')) {
+    const error = callback.searchParams.get('error')
+    throw new Error(error === 'access_denied' ? '已取消 Google 登录' : 'Google 登录暂不可用，请重试')
+  }
+  const code = callback.searchParams.get('code') || ''
+  const grant = { code, state: started.state, codeVerifier }
+  try {
+    const result = await postExtensionAuth<{
+      user?: { sub?: string; email?: string; name?: string }
+    }>('/api/google/extension-auth/pending', grant)
+    if (typeof result.user?.sub !== 'string' || !result.user.sub) throw new Error('无法确认 Google 账号，请重试')
+    return {
+      user: {
+        sub: result.user.sub,
+        email: typeof result.user.email === 'string' ? result.user.email : '',
+        ...(typeof result.user.name === 'string' ? { name: result.user.name } : {}),
+      },
+      grant,
+    }
+  } catch (error) {
+    await cancelGoogleAuthorization(grant)
+    throw error
+  }
 }
 
 const googleAccountDataKey = (sub: string): string => `${GOOGLE_ACCOUNT_DATA_PREFIX}${encodeURIComponent(sub)}`
@@ -404,13 +465,29 @@ const googleAccountDataKey = (sub: string): string => `${GOOGLE_ACCOUNT_DATA_PRE
  * Bind local data to the verified Google subject. When switching subjects,
  * snapshot the old account and load only the target account's own local copy.
  */
-export const activateGoogleAccount = (expectedSub: string): Promise<GoogleAccountProfile> => enqueueSync(async () => {
-  const { user } = await requestGoogleIdentity(false)
-  if (user.sub !== expectedSub) throw new Error('当前 Google 账号与刚才选择的账号不一致，请重新登录')
+export const activateGoogleAccount = (authorization: PendingGoogleAuthorization): Promise<GoogleAccountProfile> => enqueueSync(async () => {
+  const exchanged = await postExtensionAuth<{
+    user?: { sub?: string; email?: string; name?: string }
+    sessionToken?: string
+  }>('/api/google/extension-auth/exchange', authorization.grant)
+  if (typeof exchanged.user?.sub !== 'string' || typeof exchanged.sessionToken !== 'string') {
+    throw new Error('Google 授权已失效，请重新登录')
+  }
+  if (exchanged.user.sub !== authorization.user.sub) {
+    await revokeGoogleSessionToken(exchanged.sessionToken)
+    throw new Error('当前 Google 账号与刚才选择的账号不一致，请重新登录')
+  }
 
+  const user: Omit<GoogleAccountProfile, 'connected'> = {
+    sub: exchanged.user.sub,
+    email: typeof exchanged.user.email === 'string' ? exchanged.user.email : '',
+    ...(typeof exchanged.user.name === 'string' ? { name: exchanged.user.name } : {}),
+  }
   const previous = await getGoogleAccountValue()
+  const previousSessionToken = await getLocalValue<string>(GOOGLE_SESSION_KEY, '')
   const localValues: Record<string, unknown> = {
-    [GOOGLE_ACCOUNT_KEY]: { ...user, connected: true } satisfies GoogleAccountProfile
+    [GOOGLE_ACCOUNT_KEY]: { ...user, connected: true } satisfies GoogleAccountProfile,
+    [GOOGLE_SESSION_KEY]: exchanged.sessionToken,
   }
   if (previous?.sub && previous.sub !== user.sub) {
     const previousData = await loadFromLocal()
@@ -425,19 +502,33 @@ export const activateGoogleAccount = (expectedSub: string): Promise<GoogleAccoun
     // sync can merge local records with any records already in that account.
   }
 
-  await setLocalValues(localValues)
+  if (previousSessionToken && previousSessionToken !== exchanged.sessionToken) {
+    const oldSessionRevoked = await revokeGoogleSessionToken(previousSessionToken)
+    if (!oldSessionRevoked) {
+      await revokeGoogleSessionToken(exchanged.sessionToken)
+      throw new Error('无法确认旧账号会话已退出，请检查网络后重新登录切换')
+    }
+  }
+
+  try {
+    await setLocalValues(localValues)
+  } catch (error) {
+    await revokeGoogleSessionToken(exchanged.sessionToken)
+    throw error
+  }
   return localValues[GOOGLE_ACCOUNT_KEY] as GoogleAccountProfile
 })
 
-export const disconnectGoogleAccount = (): Promise<void> => enqueueSync(async () => {
-  const account = await getGoogleAccountValue()
-  if (account) await setLocalValues({ [GOOGLE_ACCOUNT_KEY]: { ...account, connected: false } })
-  const identityApi = chrome.identity as unknown as {
-    clearAllCachedAuthTokens?: (callback: () => void) => void
-  }
-  if (identityApi?.clearAllCachedAuthTokens) {
-    await new Promise<void>(resolve => identityApi.clearAllCachedAuthTokens?.(() => resolve()))
-  }
+export const disconnectGoogleAccount = (): Promise<boolean> => enqueueSync(async () => {
+  const [account, sessionToken] = await Promise.all([
+    getGoogleAccountValue(), getLocalValue<string>(GOOGLE_SESSION_KEY, ''),
+  ])
+  const revoked = sessionToken ? await revokeGoogleSessionToken(sessionToken) : true
+  await Promise.all([
+    account ? setLocalValues({ [GOOGLE_ACCOUNT_KEY]: { ...account, connected: false } }) : Promise.resolve(),
+    removeLocalValues(GOOGLE_SESSION_KEY),
+  ])
+  return revoked
 })
 
 export const saveLocalData = async (data: StorageData): Promise<void> => {
@@ -604,19 +695,18 @@ const syncIncrementallyNow = async (
     const settings = await getCloudSettings()
     const accountSub = account?.connected ? account.sub : null
     if (!accountSub && (!settings.apiUrl || !settings.apiToken)) return { success: false, error: '未配置同步设置' }
-    let accessToken: string | null = null
+    let sessionToken: string | null = null
     if (accountSub) {
-      try {
-        accessToken = await getGoogleAccessToken(false)
-      } catch (error) {
+      sessionToken = await getLocalValue<string>(GOOGLE_SESSION_KEY, '')
+      if (!sessionToken) {
         if (account) await flagGoogleAuthorizationExpired(account)
-        throw error
+        throw new Error('Google 登录已失效，请重新登录')
       }
     }
     const syncUrl = accountSub
       ? `${TASKMASTER_API_URL}/api/account/sync/incremental`
       : `${settings.apiUrl}/api/sync/incremental`
-    const authorization = accountSub ? (accessToken || '') : (settings.apiToken || '')
+    const authorization = accountSub ? (sessionToken || '') : (settings.apiToken || '')
     const cursorKey = getScopedSyncKey(INCREMENTAL_CURSOR_KEY, accountSub)
     const clockKey = getScopedSyncKey(INCREMENTAL_CLOCK_KEY, accountSub)
     const shadowKey = getScopedSyncKey(INCREMENTAL_SHADOW_KEY, accountSub)
@@ -642,14 +732,15 @@ const syncIncrementallyNow = async (
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authorization}`
+          'Authorization': `Bearer ${authorization}`,
+          ...(accountSub ? { 'X-TaskMaster-Client': 'extension' } : {}),
         },
         body: JSON.stringify({ deviceId, cursor, changes: outgoing })
       })
       if (!resp.ok) {
         const error = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }))
         if (accountSub && resp.status === 401 && account) {
-          await flagGoogleAuthorizationExpired(account, accessToken || '')
+          await flagGoogleAuthorizationExpired(account)
         }
         return { success: false, error: error.error || `HTTP ${resp.status}` }
       }

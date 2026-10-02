@@ -1,5 +1,6 @@
 await import('./incremental-sync.test.mjs')
 await import('./google-account-sync.test.mjs')
+await import('./google-auth-bridge.test.mjs')
 await import('./legacy-account-claim.test.mjs')
 await import('./demo-page.test.mjs')
 await import('./top-summary.test.mjs')

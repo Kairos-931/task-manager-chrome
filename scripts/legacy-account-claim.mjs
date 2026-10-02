@@ -292,25 +292,25 @@ export const createD1ApiClient = ({ accountId, databaseId, apiToken, fetchImpl =
   }
 }
 
-export const verifyTargetGoogleIdentity = async (token, workerUrl = DEFAULT_WORKER_URL, fetchImpl = fetch) => {
+export const verifyTargetGoogleIdentity = async (token, _workerUrl = DEFAULT_WORKER_URL, fetchImpl = fetch) => {
   if (typeof token !== 'string' || !token || /\s/.test(token)) {
     throw new Error('TASKMASTER_GOOGLE_ACCESS_TOKEN is required for verified account identity')
   }
   let response
   try {
-    response = await fetchImpl(`${workerUrl.replace(/\/$/, '')}/api/google/identity`, {
+    response = await fetchImpl('https://openidconnect.googleapis.com/v1/userinfo', {
       headers: { Authorization: `Bearer ${token}` },
       cache: 'no-store',
       signal: AbortSignal.timeout(10000),
     })
   } catch {
-    throw new Error('The TaskMaster Worker could not verify the target Google account')
+    throw new Error('Google could not verify the target account')
   }
   const result = await response.json().catch(() => ({}))
-  if (!response.ok || typeof result.user?.sub !== 'string' || !result.user.sub) {
-    throw new Error(`The TaskMaster Worker rejected the target Google identity (HTTP ${response.status})`)
+  if (!response.ok || typeof result.sub !== 'string' || !result.sub) {
+    throw new Error(`Google rejected the target Google identity (HTTP ${response.status})`)
   }
-  return { sub: result.user.sub }
+  return { sub: result.sub }
 }
 
 const sourceVersionGuardSql = `

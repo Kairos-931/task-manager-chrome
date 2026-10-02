@@ -7,8 +7,8 @@
 - Shared checkout: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER`
 - Initialized: `2026-09-04`
 - Status: active
-- Active developer requirement: none (execution slot released 2026-10-02)
-- Awaiting configuration: docs/requirements/REQ-20260930-google-account-sync.md (Issue #62; status `awaiting_configuration`, not completed)
+- Active developer requirement: docs/requirements/REQ-20260930-google-account-sync.md (Issue #62; local implementation resumed 2026-10-02)
+- Awaiting external configuration and live acceptance: Google callback URI, Worker secret, D1 migration, deployment, and real sign-in (Issue #62; not completed)
 - Security blocker: Issue #64 (status `blocked_identity_migration`; current extension identity is incompatible with the correct public key, gates #62 release)
 - Last completed requirement: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER\docs\requirements\REQ-20260922-newtab-list-todo-favicon.md` (`2026-09-23`, implemented; awaiting user acceptance)
 - Queue: empty
@@ -64,3 +64,10 @@
 - Issue #62 状态为 `awaiting_configuration`；本地开发执行槽释放，等待真实扩展身份、Google OAuth 客户端和 Cloudflare/Wrangler 非生产验证条件。
 - Issue #64 状态为 `blocked_identity_migration`，保持开放；用户已提供实际扩展 ID，核验确认正确公钥会改变 ID。等待产品确认迁移边界及配置方案；#62 不得宣告生产可用。
 - 不存在运行中的开发实现任务；配置与身份材料准备好后，再恢复 #62 开发和验收。队列保持为空。
+
+## 2026-10-02 Google 登录桥本地接续
+
+- 按产品决定 D-20261002-03 实现 Worker Web OAuth 回调、手机 GIS nonce、扩展固定 chromiumapp.org 回调、PKCE 一次码交换和按客户端隔离的七天 TaskMaster 会话。
+- 账号 API 改为仅接受 TaskMaster 会话；旧 Google access token/UserInfo 认证不再授权账号路由。Google token 不持久化。
+- 增加 `0004-google-auth-sessions.sql`；自动验证覆盖 state、nonce、受众、固定回调、verifier、并发单次消费、会话期限/撤销和跨端隔离，并在 SQLite 中实际执行迁移和关键 D1 查询。
+- SemVer 修复版本更新为 3.16.1；`npm run check` 和隔离的新身份候选包 `npm run build` 均通过。未写入 D1、配置 Wrangler secret、push、部署或进行真实 OAuth/GUI 演练；Issue #62 继续开放，等待配置与线上验收。

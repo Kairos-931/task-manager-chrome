@@ -7,6 +7,7 @@ import { showToast } from './sync'
 import { isValidLocalDate } from './replan-policy.js'
 import { bindTaskQuickDates, bindSplitQuickDates, createSubmissionGuard, createResettableSubmissionGuard } from './quick-dates'
 import { getTodayScrollBehavior, isAnchorVisible } from './list-navigation'
+import type { PendingGoogleAuthorization } from './storage'
 
 let draggedTaskId: string | null = null
 let currentContainer: HTMLElement | null = null
@@ -156,37 +157,52 @@ const bindGoogleAccountPanels = (container: HTMLElement): void => {
     const signIn = panel.querySelector<HTMLButtonElement>('.google-sign-in')
     const switchConfirm = panel.querySelector<HTMLButtonElement>('.google-account-switch-confirm')
     const switchCancel = panel.querySelector<HTMLButtonElement>('.google-account-switch-cancel')
-    let pendingSub = ''
+    let pendingAuthorization: PendingGoogleAuthorization | null = null
 
-    const activate = async (sub: string): Promise<void> => {
+    const activate = async (authorization: PendingGoogleAuthorization): Promise<void> => {
       const { activateGoogleAccount } = await import('./storage')
-      await activateGoogleAccount(sub)
+      await activateGoogleAccount(authorization)
       if (switchPanel) switchPanel.classList.add('hidden')
       await loadState()
       reRender()
       syncToast('已连接 Google，正在同步此账号的任务')
     }
 
+    const cancelPendingAuthorization = async (): Promise<void> => {
+      const pending = pendingAuthorization
+      pendingAuthorization = null
+      if (!pending) return
+      const { cancelGoogleAuthorization } = await import('./storage')
+      await cancelGoogleAuthorization(pending.grant)
+    }
+
     if (signIn) signIn.addEventListener('click', async () => {
       const signInButton = signIn
       signInButton.disabled = true
       setFeedback(panel, '正在打开 Google 登录…')
+      let authorization: PendingGoogleAuthorization | null = null
       try {
         const [{ identifyGoogleAccount, getGoogleAccount }] = await Promise.all([import('./storage')])
-        const [selectedAccount, activeAccount] = await Promise.all([
+        const [selectedAuthorization, activeAccount] = await Promise.all([
           identifyGoogleAccount(), getGoogleAccount()
         ])
-        if (activeAccount?.sub && activeAccount.sub !== selectedAccount.sub) {
-          pendingSub = selectedAccount.sub
+        authorization = selectedAuthorization
+        if (activeAccount?.sub && activeAccount.sub !== selectedAuthorization.user.sub) {
+          pendingAuthorization = selectedAuthorization
           if (switchCopy) {
-            switchCopy.textContent = `当前本机任务属于 ${activeAccount.email || '另一个 Google 账号'}。切换后会保留原账号的本机副本，显示 ${selectedAccount.email || '所选账号'} 自己的数据，并只与该账号同步。`
+            switchCopy.textContent = `当前本机任务属于 ${activeAccount.email || '另一个 Google 账号'}。切换后会保留原账号的本机副本，显示 ${selectedAuthorization.user.email || '所选账号'} 自己的数据，并只与该账号同步。`
           }
           switchPanel?.classList.remove('hidden')
           setFeedback(panel, '请确认如何切换本机账号。')
         } else {
-          await activate(selectedAccount.sub)
+          await activate(selectedAuthorization)
+          authorization = null
         }
       } catch (error) {
+        if (authorization && pendingAuthorization !== authorization) {
+          const { cancelGoogleAuthorization } = await import('./storage')
+          await cancelGoogleAuthorization(authorization.grant)
+        }
         setFeedback(panel, error instanceof Error ? error.message : 'Google 登录失败，请重试', true)
       } finally {
         signInButton.disabled = false
@@ -195,12 +211,12 @@ const bindGoogleAccountPanels = (container: HTMLElement): void => {
 
     if (switchConfirm) switchConfirm.addEventListener('click', async () => {
       const confirmButton = switchConfirm
-      if (!pendingSub) return
+      if (!pendingAuthorization) return
       confirmButton.disabled = true
       setFeedback(panel, '正在切换账号并加载本机数据…')
       try {
-        await activate(pendingSub)
-        pendingSub = ''
+        await activate(pendingAuthorization)
+        pendingAuthorization = null
       } catch (error) {
         setFeedback(panel, error instanceof Error ? error.message : '切换失败，请重试', true)
       } finally {
@@ -208,8 +224,8 @@ const bindGoogleAccountPanels = (container: HTMLElement): void => {
       }
     })
 
-    switchCancel?.addEventListener('click', () => {
-      pendingSub = ''
+    switchCancel?.addEventListener('click', async () => {
+      await cancelPendingAuthorization()
       switchPanel?.classList.add('hidden')
       setFeedback(panel, '已保留当前账号和本机任务。')
     })
@@ -219,9 +235,11 @@ const bindGoogleAccountPanels = (container: HTMLElement): void => {
       button.disabled = true
       try {
         const { disconnectGoogleAccount } = await import('./storage')
-        await disconnectGoogleAccount()
+        const revoked = await disconnectGoogleAccount()
         await refresh(panel)
-        setFeedback(panel, '已退出。任务仍保存在本机；重新登录后可继续同步。')
+        setFeedback(panel, revoked
+          ? '已退出。任务仍保存在本机；重新登录后可继续同步。'
+          : '本机已退出；当前网络未能确认远端撤销，服务端会话最长 7 天后自动到期。', !revoked)
         syncToast('已退出 Google 同步')
       } catch (error) {
         setFeedback(panel, error instanceof Error ? error.message : '退出失败，请重试', true)

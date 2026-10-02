@@ -53,8 +53,7 @@ declare const chrome: {
     }
   }
   identity: {
-    getAuthToken(details: { interactive: boolean }, callback: (result: unknown) => void): void
-    removeCachedAuthToken(details: { token: string }, callback: () => void): void
-    clearAllCachedAuthTokens(callback: () => void): void
+    launchWebAuthFlow(details: { url: string; interactive: boolean }, callback: (redirectUrl?: string) => void): void
+    getRedirectURL(path?: string): string
   }
 }

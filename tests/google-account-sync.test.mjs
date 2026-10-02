@@ -7,9 +7,11 @@ const makeAccountDb = () => {
   const records = new Map()
   const changes = new Map()
   const revisions = new Map()
+  const sessions = new Map()
   const recordKey = (sub, key) => `${sub}\u0000${key}`
   const query = (sql, args) => ({
     async first() {
+      if (sql.includes('FROM google_auth_sessions')) return sessions.get(args[0]) || null
       if (sql.includes('FROM account_sync_records')) {
         const value = records.get(recordKey(args[0], args[1]))
         return value ? {
@@ -70,6 +72,7 @@ const makeAccountDb = () => {
     records,
     changes,
     revisions,
+    sessions,
     prepare(sql) {
       let args = []
       return {
@@ -149,17 +152,68 @@ await assert.rejects(
   resolveGoogleIdentity(wrongAudienceToken, { GOOGLE_WEB_CLIENT_ID: 'taskmaster-web-client' }, fetchGoogleKeys),
   error => error instanceof GoogleAuthError && error.status === 401,
 )
+const extensionAudienceToken = await makeIdToken({
+  iss: 'https://accounts.google.com', aud: 'taskmaster-extension-client',
+  sub: 'verified-google-sub', iat: now, exp: now + 3600,
+})
+await assert.rejects(
+  resolveGoogleIdentity(extensionAudienceToken, {
+    GOOGLE_WEB_CLIENT_ID: 'taskmaster-web-client',
+    GOOGLE_EXTENSION_CLIENT_ID: 'taskmaster-extension-client',
+  }, fetchGoogleKeys),
+  error => error instanceof GoogleAuthError && error.status === 401,
+  'extension-audience tokens must not pass the mobile Web-client verifier',
+)
+const multiAudienceWithoutAzp = await makeIdToken({
+  iss: 'https://accounts.google.com', aud: ['taskmaster-web-client', 'another-client'],
+  sub: 'verified-google-sub', iat: now, exp: now + 3600,
+})
+await assert.rejects(
+  resolveGoogleIdentity(multiAudienceWithoutAzp, { GOOGLE_WEB_CLIENT_ID: 'taskmaster-web-client' }, fetchGoogleKeys),
+  error => error instanceof GoogleAuthError && error.status === 401,
+  'a multi-audience ID token must include a matching azp',
+)
+const multiAudienceWithAzp = await makeIdToken({
+  iss: 'https://accounts.google.com', aud: ['taskmaster-web-client', 'another-client'],
+  azp: 'taskmaster-web-client', sub: 'verified-google-sub', iat: now, exp: now + 3600,
+})
+assert.equal((await resolveGoogleIdentity(multiAudienceWithAzp, {
+  GOOGLE_WEB_CLIENT_ID: 'taskmaster-web-client',
+}, fetchGoogleKeys)).sub, 'verified-google-sub')
+await assert.rejects(
+  resolveGoogleIdentity(validIdToken, {}, fetchGoogleKeys),
+  error => error instanceof GoogleAuthError && error.status === 503,
+  'ID-token sign-in must fail closed when GOOGLE_WEB_CLIENT_ID is not configured',
+)
 
-globalThis.fetch = async (_url, options) => {
-  const token = options?.headers?.Authorization?.replace(/^Bearer /, '')
-  if (!token || token === 'invalid' || token === 'legacy-admin-token') return new Response('{}', { status: 401 })
-  return Response.json({ sub: token === 'account-a-token' ? 'google-sub-a' : 'google-sub-b', email: `${token}@example.test` })
-}
+const configuredMobilePageResponse = await worker.fetch(new Request('https://taskmaster.test/'), {
+  GOOGLE_WEB_CLIENT_ID: 'taskmaster-web-client',
+})
+assert.equal(configuredMobilePageResponse.status, 200)
+assert.match(await configuredMobilePageResponse.text(), /const GOOGLE_WEB_CLIENT_ID = "taskmaster-web-client"/)
+const unconfiguredMobilePageResponse = await worker.fetch(new Request('https://taskmaster.test/'), {})
+assert.match(await unconfiguredMobilePageResponse.text(), /当前手机端还没有 Google 登录配置。/)
+
+const hashToken = async token => Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))).toString('hex')
+const seedSession = async (token, sub, clientType) => db.sessions.set(await hashToken(token), {
+  user_sub: sub, client_type: clientType, expires_at: Date.now() + 7 * 24 * 60 * 60 * 1000, revoked_at: null,
+})
+const accountAToken = 'account-a-session-token-for-tests-0001'
+const accountBToken = 'account-b-session-token-for-tests-0002'
+const mobileAToken = 'mobile-a-session-token-for-tests-0003'
+await seedSession(accountAToken, 'google-sub-a', 'extension')
+await seedSession(accountBToken, 'google-sub-b', 'extension')
+await seedSession(mobileAToken, 'google-sub-a', 'mobile')
 
 try {
-  const sync = (token, body) => worker.fetch(new Request('https://taskmaster.test/api/account/sync/incremental', {
+  const sync = (token, body, clientType = 'extension') => worker.fetch(new Request('https://taskmaster.test/api/account/sync/incremental', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'X-TaskMaster-Client': clientType,
+      Origin: clientType === 'extension' ? 'chrome-extension://gjifmpjgedleemhkikajgepickfphflo' : 'https://taskmaster.test',
+    },
     body: JSON.stringify(body),
   }), { DB: db, API_TOKEN: 'legacy-admin-token' })
 
@@ -168,14 +222,14 @@ try {
     updatedAt, deleted: false,
   })
 
-  const aResponse = await sync('account-a-token', { deviceId: 'device-a', cursor: 0, changes: [sameIdChange('A task', 100)] })
+  const aResponse = await sync(accountAToken, { deviceId: 'device-a', cursor: 0, changes: [sameIdChange('A task', 100)] })
   assert.equal(aResponse.status, 200)
   const aBody = await aResponse.json()
   assert.equal(aBody.changes.length, 1)
   assert.equal(aBody.changes[0].payload.title, 'A task')
   assert.equal(aBody.changes[0].sourceDevice, 'device-a')
 
-  const bResponse = await sync('account-b-token', {
+  const bResponse = await sync(accountBToken, {
     userSub: 'google-sub-a', // must be ignored; only Google's verified token defines the account
     deviceId: 'device-b', cursor: 0, changes: [sameIdChange('B task', 200)],
   })
@@ -185,25 +239,30 @@ try {
   assert.equal(bBody.changes[0].payload.title, 'B task')
   assert.equal(bBody.cursor, 1)
 
-  const aPull = await sync('account-a-token', { deviceId: 'device-a2', cursor: 0, changes: [] })
+  const aPull = await sync(accountAToken, { deviceId: 'device-a2', cursor: 0, changes: [] })
   assert.equal((await aPull.json()).changes[0].payload.title, 'A task')
-  const bPull = await sync('account-b-token', { deviceId: 'device-b2', cursor: 0, changes: [] })
+  const bPull = await sync(accountBToken, { deviceId: 'device-b2', cursor: 0, changes: [] })
   assert.equal((await bPull.json()).changes[0].payload.title, 'B task')
   assert.equal(db.records.size, 2)
 
-  const deleteA = await sync('account-a-token', {
+  const deleteA = await sync(accountAToken, {
     deviceId: 'device-a', cursor: 1,
     changes: [{ type: 'task', id: 'same-local-id', payload: null, updatedAt: 300, deleted: true }],
   })
   const deleteABody = await deleteA.json()
   assert.equal(deleteABody.changes.at(-1).deleted, true)
-  const bStillExists = await sync('account-b-token', { deviceId: 'device-b3', cursor: 0, changes: [] })
+  const bStillExists = await sync(accountBToken, { deviceId: 'device-b3', cursor: 0, changes: [] })
   assert.equal((await bStillExists.json()).changes[0].payload.title, 'B task')
   assert.equal(db.records.size, 2)
 
   const mobileTaskResponse = await worker.fetch(new Request('https://taskmaster.test/api/account/tasks', {
     method: 'POST',
-    headers: { Authorization: 'Bearer account-a-token', 'Content-Type': 'application/json' },
+    headers: {
+      Authorization: `Bearer ${mobileAToken}`,
+      'Content-Type': 'application/json',
+      'X-TaskMaster-Client': 'mobile',
+      Origin: 'https://taskmaster.test',
+    },
     body: JSON.stringify({
       title: 'Phone task', category: 'default-life', priority: 'high', duration: 45,
       dueDate: '', noTimeLimit: true, completed: true, deviceId: 'mobile-device',
@@ -220,6 +279,11 @@ try {
   const fakeIdentity = await sync('invalid', { deviceId: 'attacker', cursor: 0, changes: [sameIdChange('forged', 999)] })
   assert.equal(fakeIdentity.status, 401)
   assert.equal(db.records.size, 3)
+
+  const rawGoogleAccessTokenOnAccountRoute = await sync('google-access-token-from-old-flow', { deviceId: 'attacker', cursor: 0, changes: [] })
+  assert.equal(rawGoogleAccessTokenOnAccountRoute.status, 401)
+  const rawGoogleIdTokenOnAccountRoute = await sync(validIdToken, { deviceId: 'attacker', cursor: 0, changes: [] })
+  assert.equal(rawGoogleIdTokenOnAccountRoute.status, 401)
 
   const legacyTokenOnAccountRoute = await sync('legacy-admin-token', { deviceId: 'legacy', cursor: 0, changes: [] })
   assert.equal(legacyTokenOnAccountRoute.status, 401)

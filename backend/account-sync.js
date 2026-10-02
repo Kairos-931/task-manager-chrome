@@ -1,4 +1,3 @@
-const GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo'
 const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs'
 const ACCOUNT_RECORD_TYPES = new Set(['task', 'category', 'settings'])
 export const MAX_ACCOUNT_SYNC_CHANGES = 500
@@ -44,7 +43,7 @@ const getGoogleKeys = async (fetchImpl) => {
   return cachedGoogleKeys
 }
 
-export const verifyGoogleIdToken = async (token, clientId, fetchImpl = fetch, now = Date.now()) => {
+export const verifyGoogleIdToken = async (token, clientId, fetchImpl = fetch, now = Date.now(), expectedNonce = null) => {
   if (!clientId) throw new GoogleAuthError('Google sign-in is not configured', 503)
   if (typeof token !== 'string' || token.length > 8192) throw new GoogleAuthError('Google authorization is invalid')
   const parts = token.split('.')
@@ -83,6 +82,8 @@ export const verifyGoogleIdToken = async (token, clientId, fetchImpl = fetch, no
     (Array.isArray(claims.aud) && claims.aud.includes(clientId))
   if (!['https://accounts.google.com', 'accounts.google.com'].includes(claims.iss) ||
       !audienceMatches || (claims.azp && claims.azp !== clientId) ||
+      (Array.isArray(claims.aud) && claims.aud.length > 1 && claims.azp !== clientId) ||
+      (expectedNonce !== null && claims.nonce !== expectedNonce) ||
       !Number.isFinite(claims.exp) || claims.exp <= nowSeconds - 30 ||
       !Number.isFinite(claims.iat) || claims.iat > nowSeconds + 60 ||
       (claims.nbf !== undefined && (!Number.isFinite(claims.nbf) || claims.nbf > nowSeconds + 30)) ||
@@ -100,29 +101,7 @@ export const resolveGoogleIdentity = async (token, env, fetchImpl = fetch) => {
   if (typeof token !== 'string' || !token || token.length > 8192 || /\s/.test(token)) {
     throw new GoogleAuthError('Google authorization is required')
   }
-  if (token.split('.').length === 3) {
-    return verifyGoogleIdToken(token, env.GOOGLE_WEB_CLIENT_ID, fetchImpl)
-  }
-
-  let response
-  try {
-    response = await fetchImpl(GOOGLE_USERINFO_URL, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-      signal: AbortSignal.timeout(8000),
-    })
-  } catch {
-    throw new GoogleAuthError('Google identity verification is unavailable', 503)
-  }
-  if (!response.ok) throw new GoogleAuthError('Google authorization is invalid')
-  const profile = await response.json().catch(() => null)
-  if (!profile || typeof profile.sub !== 'string' || !profile.sub || profile.sub.length > 255) {
-    throw new GoogleAuthError('Google authorization is invalid')
-  }
-  return {
-    sub: profile.sub,
-    email: typeof profile.email === 'string' ? profile.email.slice(0, 320) : '',
-    name: typeof profile.name === 'string' ? profile.name.slice(0, 200) : '',
-  }
+  return verifyGoogleIdToken(token, env.GOOGLE_WEB_CLIENT_ID, fetchImpl)
 }
 
 export const getGoogleIdentityFromRequest = async (request, env, fetchImpl = fetch) => {

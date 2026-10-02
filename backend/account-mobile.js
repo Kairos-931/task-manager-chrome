@@ -61,6 +61,7 @@ export const renderAccountMobilePage = (env) => {
         <button id="signOutBtn" class="secondary" type="button" hidden>退出</button>
       </div>
       <div id="googleButton"></div>
+      <button id="restartLoginBtn" class="secondary" type="button" hidden>刷新后重新登录</button>
       <p id="setupNotice" class="error" hidden>Google 登录服务尚未配置，请稍后再试。</p>
       <p id="loginHelp">登录后，这台手机只会访问当前 Google 账号的任务。</p>
     </section>
@@ -95,6 +96,7 @@ export const renderAccountMobilePage = (env) => {
       const loginHelp = document.getElementById('loginHelp');
       const status = document.getElementById('status');
       const signOutBtn = document.getElementById('signOutBtn');
+      const restartLoginBtn = document.getElementById('restartLoginBtn');
       const today = new Date();
       document.getElementById('dueDate').value = [today.getFullYear(), String(today.getMonth() + 1).padStart(2, '0'), String(today.getDate()).padStart(2, '0')].join('-');
       document.getElementById('noTimeLimit').addEventListener('change', (event) => {
@@ -103,8 +105,11 @@ export const renderAccountMobilePage = (env) => {
         dueDate.disabled = noTimeLimit;
         dueDate.required = !noTimeLimit;
       });
+      const MOBILE_SESSION_KEY = 'tm_google_mobile_session_v1';
       let googleCredential = '';
       let accountSub = '';
+      let googleState = '';
+      let googleNonce = '';
       let categories = ${JSON.stringify(DEFAULT_CATEGORIES)};
       let deviceId = localStorage.getItem('tm_mobile_device_id');
       if (!deviceId) {
@@ -116,12 +121,22 @@ export const renderAccountMobilePage = (env) => {
         loginHelp.textContent = message;
         loginHelp.classList.add('error');
       };
-      const authorizationHeaders = () => ({ Authorization: 'Bearer ' + googleCredential });
-      const expireSession = () => {
+      const authorizationHeaders = () => ({
+        Authorization: 'Bearer ' + googleCredential,
+        'X-TaskMaster-Client': 'mobile',
+      });
+      const clearMobileSession = () => {
         googleCredential = '';
         accountSub = '';
+        sessionStorage.removeItem(MOBILE_SESSION_KEY);
+      };
+      const expireSession = () => {
+        clearMobileSession();
         taskCard.hidden = true;
         signOutBtn.hidden = true;
+        const canReuseGoogleFlow = !!googleState;
+        document.getElementById('googleButton').hidden = !canReuseGoogleFlow;
+        restartLoginBtn.hidden = canReuseGoogleFlow;
         accountTitle.textContent = '需要重新登录';
         accountEmail.textContent = '';
         showError('Google 登录已失效，请重新登录后继续。');
@@ -151,35 +166,80 @@ export const renderAccountMobilePage = (env) => {
         }));
       };
 
+      const showAccount = async (user, sessionToken, expiresAt, persist = true) => {
+        googleCredential = sessionToken;
+        accountSub = user.sub;
+        if (persist) sessionStorage.setItem(MOBILE_SESSION_KEY, JSON.stringify({
+          user: { sub: user.sub, email: user.email || '', name: user.name || '' },
+          sessionToken,
+          expiresAt,
+        }));
+        document.getElementById('googleButton').hidden = true;
+        accountTitle.textContent = '已连接 Google 账号';
+        accountEmail.textContent = user.email || '账号已验证';
+        taskCard.hidden = false;
+        signOutBtn.hidden = false;
+        loginHelp.textContent = '任务会自动保存到当前账号的数据空间。';
+        loginHelp.classList.remove('error');
+        status.textContent = '';
+        await loadCategories();
+      };
+
       const onGoogleCredential = async (response) => {
         status.textContent = '正在验证 Google 账号…';
         status.classList.remove('error');
         try {
           const identity = await fetch('/api/google/identity', {
-            headers: { Authorization: 'Bearer ' + response.credential }
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ credential: response.credential, state: googleState }),
           });
           if (!identity.ok) throw new Error(identity.status === 503 ? '登录服务暂不可用，请稍后重试。' : 'Google 登录验证失败，请重试。');
           const data = await identity.json();
-          if (!data.user || typeof data.user.sub !== 'string') throw new Error('无法确认 Google 账号，请重试。');
-          googleCredential = response.credential;
-          accountSub = data.user.sub;
-          accountTitle.textContent = '已连接 Google 账号';
-          accountEmail.textContent = data.user.email || '账号已验证';
-          taskCard.hidden = false;
-          signOutBtn.hidden = false;
-          loginHelp.textContent = '任务会自动保存到当前账号的数据空间。';
-          loginHelp.classList.remove('error');
-          status.textContent = '';
-          await loadCategories();
+          if (!data.user || typeof data.user.sub !== 'string' || typeof data.sessionToken !== 'string') {
+            throw new Error('无法确认 Google 账号，请重试。');
+          }
+          googleState = '';
+          googleNonce = '';
+          await showAccount(data.user, data.sessionToken, data.expiresAt);
           document.getElementById('title').focus();
         } catch (error) {
+          googleState = '';
+          googleNonce = '';
+          document.getElementById('googleButton').hidden = true;
+          restartLoginBtn.hidden = false;
           status.textContent = error.message || '登录失败，请重试。';
           status.classList.add('error');
         }
       };
 
       let googleScriptAttempts = 0;
-      const initializeGoogle = () => {
+      let googleClientInitialized = false;
+      const prepareGoogleClient = async () => {
+        const flow = await fetch('/api/google/mobile-auth/start', { method: 'POST' });
+        const flowData = await flow.json().catch(() => ({}));
+        if (!flow.ok || typeof flowData.state !== 'string' || typeof flowData.nonce !== 'string') {
+          throw new Error(flow.status === 503 ? '登录服务暂不可用，请稍后重试。' : '无法启动 Google 登录，请刷新页面重试。');
+        }
+        googleState = flowData.state;
+        googleNonce = flowData.nonce;
+        document.getElementById('googleButton').replaceChildren();
+        window.google.accounts.id.initialize({
+          client_id: GOOGLE_WEB_CLIENT_ID,
+          callback: onGoogleCredential,
+          auto_select: false,
+          nonce: googleNonce,
+        });
+        window.google.accounts.id.renderButton(document.getElementById('googleButton'), {
+          type: 'standard', theme: 'outline', size: 'large', text: 'signin_with', shape: 'rectangular', width: 320
+        });
+        googleClientInitialized = true;
+        if (!googleCredential) {
+          document.getElementById('googleButton').hidden = false;
+          restartLoginBtn.hidden = true;
+        }
+      };
+      const initializeGoogle = async () => {
         if (!GOOGLE_WEB_CLIENT_ID) {
           document.getElementById('setupNotice').hidden = false;
           document.getElementById('googleButton').hidden = true;
@@ -188,27 +248,50 @@ export const renderAccountMobilePage = (env) => {
         }
         if (!window.google || !window.google.accounts || !window.google.accounts.id) {
           googleScriptAttempts += 1;
-          if (googleScriptAttempts < 120) setTimeout(initializeGoogle, 250);
+          if (googleScriptAttempts < 120) setTimeout(() => { void initializeGoogle(); }, 250);
           else showError('Google 登录暂时无法加载，请检查网络后刷新页面。');
           return;
         }
-        window.google.accounts.id.initialize({ client_id: GOOGLE_WEB_CLIENT_ID, callback: onGoogleCredential, auto_select: false });
-        window.google.accounts.id.renderButton(document.getElementById('googleButton'), {
-          type: 'standard', theme: 'outline', size: 'large', text: 'signin_with', shape: 'rectangular', width: 320
-        });
+        if (googleClientInitialized) return;
+        try {
+          const stored = JSON.parse(sessionStorage.getItem(MOBILE_SESSION_KEY) || 'null');
+          if (stored?.sessionToken && stored?.user?.sub && Number(stored.expiresAt) > Date.now()) {
+            await showAccount(stored.user, stored.sessionToken, stored.expiresAt, false);
+          } else {
+            sessionStorage.removeItem(MOBILE_SESSION_KEY);
+          }
+          await prepareGoogleClient();
+        } catch (error) {
+          showError(error.message || '无法启动 Google 登录，请刷新页面重试。');
+          return;
+        }
       };
 
-      signOutBtn.addEventListener('click', () => {
-        googleCredential = '';
-        accountSub = '';
+      signOutBtn.addEventListener('click', async () => {
+        let revoked = false;
+        try {
+          const response = await fetch('/api/google/session/logout', {
+            method: 'POST', headers: authorizationHeaders(),
+          });
+          revoked = response.ok || response.status === 401;
+        } catch { /* Local sign-out still works while offline; the session expires within seven days. */ }
+        clearMobileSession();
+        googleState = '';
+        googleNonce = '';
         taskCard.hidden = true;
         signOutBtn.hidden = true;
+        document.getElementById('googleButton').hidden = true;
+        restartLoginBtn.hidden = false;
         accountTitle.textContent = '尚未登录';
         accountEmail.textContent = '本机未保存账号凭证';
         status.textContent = '';
-        showError('已退出。手机任务仍保存在所属账号的云端，需要再次登录后才能添加。');
+        showError(revoked
+          ? '已退出。手机任务仍保存在所属账号的云端；刷新页面后可再次登录。'
+          : '本机已退出；当前网络未能确认远端撤销，服务端会话最长 7 天后自动到期。刷新页面可再次登录。');
         if (window.google && window.google.accounts && window.google.accounts.id) window.google.accounts.id.disableAutoSelect();
       });
+
+      restartLoginBtn.addEventListener('click', () => window.location.reload());
 
       document.getElementById('submitBtn').addEventListener('click', async () => {
         const titleInput = document.getElementById('title');

@@ -1,15 +1,26 @@
 // TaskMaster API — Cloudflare Worker
 // Handles: mobile web page, task CRUD, Telegram bot webhook
 import {
-  GoogleAuthError,
   MAX_ACCOUNT_SYNC_CHANGES,
   applyAccountSyncRecord,
   createAccountTaskRecord,
-  getGoogleIdentityFromRequest,
   listAccountCategories,
   normalizeAccountSyncRecord,
 } from './account-sync.js'
 import { renderAccountMobilePage } from './account-mobile.js'
+import {
+  authErrorResponse,
+  authorizeGoogleExtension,
+  cancelGoogleExtensionAuthCode,
+  completeGoogleOAuthCallback,
+  createMobileGoogleSession,
+  exchangeGoogleExtensionAuthCode,
+  getTaskmasterSessionFromRequest,
+  logoutTaskmasterSession,
+  readGoogleExtensionAuthPending,
+  startGoogleExtensionAuth,
+  startMobileGoogleAuth,
+} from './google-auth.js'
 
 export default {
   async fetch(request, env) {
@@ -49,11 +60,37 @@ export default {
       return handleTelegramWebhook(request, env);
     }
 
-    // New Google-authenticated endpoints derive the account from a credential
-    // verified with Google. They never use the legacy global API_TOKEN lane.
-    if (url.pathname === '/api/google/identity' && method === 'GET') {
+    // OAuth callbacks are pinned to the configured Worker and extension URIs.
+    if (url.pathname === '/api/google/extension-auth/start' && method === 'POST') {
+      return startGoogleExtensionAuth(request, env)
+    }
+    if (url.pathname === '/api/google/extension-auth/authorize' && method === 'GET') {
+      return authorizeGoogleExtension(request, env)
+    }
+    if (url.pathname === '/api/google/callback' && method === 'GET') {
+      return completeGoogleOAuthCallback(request, env)
+    }
+    if (url.pathname === '/api/google/extension-auth/pending' && method === 'POST') {
+      return readGoogleExtensionAuthPending(request, env)
+    }
+    if (url.pathname === '/api/google/extension-auth/exchange' && method === 'POST') {
+      return exchangeGoogleExtensionAuthCode(request, env)
+    }
+    if (url.pathname === '/api/google/extension-auth/cancel' && method === 'POST') {
+      return cancelGoogleExtensionAuthCode(request, env)
+    }
+    if (url.pathname === '/api/google/mobile-auth/start' && method === 'POST') {
+      return startMobileGoogleAuth(request, env)
+    }
+    if (url.pathname === '/api/google/identity' && method === 'POST') {
       return handleGoogleIdentity(request, env)
     }
+    if (url.pathname === '/api/google/session/logout' && method === 'POST') {
+      return logoutTaskmasterSession(request, env)
+    }
+
+    // Account routes accept only finite TaskMaster sessions. Google tokens and
+    // the legacy API_TOKEN never authorize this isolated account namespace.
     if (url.pathname.startsWith('/api/account/') &&
         ((url.pathname === '/api/account/sync/incremental' && method === 'POST') ||
          (url.pathname === '/api/account/tasks' && method === 'POST') ||
@@ -99,20 +136,15 @@ export default {
 };
 
 async function handleGoogleIdentity(request, env) {
-  try {
-    const user = await getGoogleIdentityFromRequest(request, env)
-    return accountJson({ user })
-  } catch (error) {
-    return googleAuthErrorResponse(error)
-  }
+  return createMobileGoogleSession(request, env)
 }
 
 async function handleGoogleAccountApi(request, env, pathname) {
   let user
   try {
-    user = await getGoogleIdentityFromRequest(request, env)
+    user = await getTaskmasterSessionFromRequest(request, env)
   } catch (error) {
-    return googleAuthErrorResponse(error)
+    return authErrorResponse(error)
   }
 
   try {
@@ -187,12 +219,6 @@ function accountJson(data, status = 200) {
   })
 }
 
-function googleAuthErrorResponse(error) {
-  if (error instanceof GoogleAuthError) return accountJson({ error: error.message }, error.status)
-  console.error('Google identity check failed:', error?.name || 'Error')
-  return accountJson({ error: 'Google identity verification is temporarily unavailable' }, 503)
-}
-
 // ── Auth ──────────────────────────────────────────────
 
 function checkAuth(request, env) {
@@ -210,7 +236,7 @@ function corsHeaders() {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-TaskMaster-Client',
   };
 }
 
