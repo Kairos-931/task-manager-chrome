@@ -2,13 +2,14 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
 const read = path => readFile(new URL(path, import.meta.url), 'utf8')
+const releaseDir = process.env.TASKMASTER_RELEASE_DIR || 'chrome-extension-sync'
 const [sourceHtml, builtHtml, sourceIcon, builtIcon, sourceToolbarIcon, builtToolbarIcon] = await Promise.all([
   read('../newtab/newtab.html'),
-  read('../chrome-extension-sync/newtab/newtab.html'),
+  read(`../${releaseDir}/newtab/newtab.html`),
   read('../icons/newtab-favicon.svg'),
-  read('../chrome-extension-sync/icons/newtab-favicon.svg'),
+  read(`../${releaseDir}/icons/newtab-favicon.svg`),
   read('../icons/icon16.svg'),
-  read('../chrome-extension-sync/icons/icon16.svg')
+  read(`../${releaseDir}/icons/icon16.svg`)
 ])
 
 const faviconLink = '<link rel="icon" type="image/svg+xml" href="../icons/newtab-favicon.svg">'

@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 
 const [packageJson, sourceCss, builtCss, releaseCss] = await Promise.all([
   readFile(new URL('../package.json', import.meta.url), 'utf8').then(JSON.parse),
   readFile(new URL('../styles/tailwind.css', import.meta.url), 'utf8'),
   readFile(new URL('../styles/main.css', import.meta.url), 'utf8'),
-  readFile(new URL('../chrome-extension-sync/styles/main.css', import.meta.url), 'utf8'),
+  readFile(resolve(process.cwd(), process.env.TASKMASTER_RELEASE_DIR || 'chrome-extension-sync', 'styles/main.css'), 'utf8'),
 ])
 
 const cssCommand = packageJson.scripts['build:css']

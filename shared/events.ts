@@ -1062,6 +1062,22 @@ export const attachEventListeners = (container: HTMLElement): void => {
   })
   syncRepeatEndDateField()
 
+  // The popup also exposes the existing account panel through the sync modal.
+  container.querySelector('#syncDataBtn')?.addEventListener('click', () => {
+    const modal = container.querySelector('#syncModal') as HTMLElement
+    modal?.classList.remove('hidden')
+  })
+  container.querySelector('#closeSyncModal')?.addEventListener('click', () => {
+    const modal = container.querySelector('#syncModal') as HTMLElement
+    modal?.classList.add('hidden')
+  })
+  container.querySelector('#syncModal')?.addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) {
+      const modal = container.querySelector('#syncModal') as HTMLElement
+      modal?.classList.add('hidden')
+    }
+  })
+
   // 分类管理（仅新标签页版本）
   const isNewTab = window.location.pathname.includes('newtab')
   
@@ -1188,23 +1204,6 @@ export const attachEventListeners = (container: HTMLElement): void => {
     })
 
     // ==================== 同步面板 ====================
-    container.querySelector('#syncDataBtn')?.addEventListener('click', () => {
-      const modal = container.querySelector('#syncModal') as HTMLElement
-      modal?.classList.remove('hidden')
-    })
-
-    container.querySelector('#closeSyncModal')?.addEventListener('click', () => {
-      const modal = container.querySelector('#syncModal') as HTMLElement
-      modal?.classList.add('hidden')
-    })
-
-    container.querySelector('#syncModal')?.addEventListener('click', (e) => {
-      if (e.target === e.currentTarget) {
-        const modal = container.querySelector('#syncModal') as HTMLElement
-        modal?.classList.add('hidden')
-      }
-    })
-
     container.querySelector('#forceUploadBtn')?.addEventListener('click', async () => {
       const btn = container.querySelector('#forceUploadBtn') as HTMLElement
       const origHTML = btn?.innerHTML
@@ -1371,8 +1370,6 @@ export const attachEventListeners = (container: HTMLElement): void => {
 
     // When sync modal opens, refresh backup UI
     container.querySelector('#syncDataBtn')?.addEventListener('click', () => {
-      const modal = container.querySelector('#syncModal') as HTMLElement
-      modal?.classList.remove('hidden')
       refreshBackupUI()
     })
 

@@ -1,6 +1,6 @@
 // Copy assets script
 import { existsSync, mkdirSync, cpSync, readdirSync } from 'fs'
-import { join, dirname } from 'path'
+import { join, dirname, resolve, relative, isAbsolute } from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -26,7 +26,19 @@ function copyDir(src, dest) {
   }
 }
 
-const syncDir = join(rootDir, 'chrome-extension-sync')
+const configuredReleaseDir = process.env.TASKMASTER_RELEASE_DIR
+const syncDir = resolve(rootDir, configuredReleaseDir || 'chrome-extension-sync')
+const releaseRelativePath = relative(rootDir, syncDir)
+if (!releaseRelativePath || releaseRelativePath.startsWith('..') || isAbsolute(releaseRelativePath)) {
+  throw new Error('Release output directory must be a child of the project directory')
+}
+if (!configuredReleaseDir && existsSync(syncDir)) {
+  throw new Error('Refusing to overwrite chrome-extension-sync by default; set TASKMASTER_RELEASE_DIR to a new candidate directory')
+}
+if (configuredReleaseDir && existsSync(syncDir)) {
+  throw new Error(`Refusing to overwrite the configured release output directory: ${releaseRelativePath}`)
+}
+ensureDir(syncDir)
 
 // Copy manifest (contains key, permissions — must be synced)
 cpSync(join(rootDir, 'manifest.json'), join(syncDir, 'manifest.json'))
@@ -46,4 +58,4 @@ cpSync(join(rootDir, 'styles/main.css'), join(syncDir, 'styles/main.css'))
 // Copy icons
 copyDir(join(rootDir, 'icons'), join(syncDir, 'icons'))
 
-console.log('Assets copied successfully!')
+console.log(`Assets copied successfully to ${releaseRelativePath}`)

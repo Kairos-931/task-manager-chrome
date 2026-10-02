@@ -20,7 +20,6 @@ declare const chrome: {
     lastError?: { message: string }
     id?: string
     getURL(path: string): string
-    getManifest(): { oauth2?: { client_id?: string; scopes?: string[] } }
     sendMessage: {
       (message: any, responseCallback: (response: any) => void): void
       (message: any): Promise<any>

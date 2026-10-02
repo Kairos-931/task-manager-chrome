@@ -318,6 +318,10 @@ const setLocalValues = async (values: Record<string, unknown>): Promise<void> =>
   })
 }
 
+const notifyGoogleAccountStateChanged = (): void => {
+  chrome.runtime.sendMessage({ action: 'googleAccountSyncUpdated' }).catch(() => {})
+}
+
 const removeLocalValues = async (keys: string | string[]): Promise<void> => {
   return new Promise((resolve, reject) => {
     chrome.storage.local.remove(keys, () => {
@@ -516,6 +520,7 @@ export const activateGoogleAccount = (authorization: PendingGoogleAuthorization)
     await revokeGoogleSessionToken(exchanged.sessionToken)
     throw error
   }
+  notifyGoogleAccountStateChanged()
   return localValues[GOOGLE_ACCOUNT_KEY] as GoogleAccountProfile
 })
 
@@ -528,6 +533,7 @@ export const disconnectGoogleAccount = (): Promise<boolean> => enqueueSync(async
     account ? setLocalValues({ [GOOGLE_ACCOUNT_KEY]: { ...account, connected: false } }) : Promise.resolve(),
     removeLocalValues(GOOGLE_SESSION_KEY),
   ])
+  notifyGoogleAccountStateChanged()
   return revoked
 })
 

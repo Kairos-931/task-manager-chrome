@@ -8,8 +8,9 @@
 - Initialized: `2026-09-04`
 - Status: active
 - Active developer requirement: docs/requirements/REQ-20260930-google-account-sync.md (Issue #62; local implementation resumed 2026-10-02)
-- Awaiting external configuration and live acceptance: Google callback URI, Worker secret, D1 migration, deployment, and real sign-in (Issue #62; not completed)
-- Security blocker: Issue #64 (status `blocked_identity_migration`; current extension identity is incompatible with the correct public key, gates #62 release)
+- Candidate: 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`; public key and extension ID match the approved Google callback.
+- Awaiting live acceptance: manually load the candidate and exercise Google sign-in, guest mode, and popup/newtab account refresh (Issue #62 remains open; no GUI/install was performed here).
+- Issue #64: product approved the candidate identity configuration; product-side issue status remains authoritative.
 - Last completed requirement: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER\docs\requirements\REQ-20260922-newtab-list-todo-favicon.md` (`2026-09-23`, implemented; awaiting user acceptance)
 - Queue: empty
 ## Operating contract
@@ -71,3 +72,11 @@
 - 账号 API 改为仅接受 TaskMaster 会话；旧 Google access token/UserInfo 认证不再授权账号路由。Google token 不持久化。
 - 增加 `0004-google-auth-sessions.sql`；自动验证覆盖 state、nonce、受众、固定回调、verifier、并发单次消费、会话期限/撤销和跨端隔离，并在 SQLite 中实际执行迁移和关键 D1 查询。
 - SemVer 修复版本更新为 3.16.1；`npm run check` 和隔离的新身份候选包 `npm run build` 均通过。未写入 D1、配置 Wrangler secret、push、部署或进行真实 OAuth/GUI 演练；Issue #62 继续开放，等待配置与线上验收。
+
+## 2026-10-02 D-20261002-04 扩展候选与账号入口
+
+- 产品确认登录可选；未登录任务继续保存在 `chrome.storage.local` 并可离线使用。popup/newtab 共用账号会话；登录/退出通知另一界面刷新，退出不删除本机任务。
+- 产品确认基于已验证密钥派生公开 key，扩展 ID 与已部署回调一致；`launchWebAuthFlow` 不使用 `manifest.oauth2/getAuthToken`。候选清单仅保存公钥和 `identity` 权限。
+- popup 增加“账号同步”入口；扩展候选构建路径为 `outputs/google-account-sync-candidate-v3.16.2-20261002`。旧 `chrome-extension-sync` 包未覆盖。
+- `npm run build` 通过；typecheck、lint 与 Google 账号定向回归通过。完整 `npm run check` 会停在既有 `tests/ui-layout.test.mjs` 静态断言（检查错误源码文件）；按产品边界未把无关 UI/拆分测试修正混入本需求。
+- 未安装扩展、未启动 GUI、未执行真实 Google 授权、未部署、未写生产数据、未 push/tag。Issue #62 保持开放，等待手动演练和产品验收。
