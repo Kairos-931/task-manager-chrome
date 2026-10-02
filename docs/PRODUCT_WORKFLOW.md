@@ -7,13 +7,13 @@
 - Shared checkout: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER`
 - Initialized: `2026-09-04`
 - Status: active
-- Active developer requirement: none; Issues #66 and #67 plus the concurrent idempotency safeguard have local commits and are awaiting deployment/production verification.
+- Active developer requirement: Issues #66 and #67 are deployed to production and awaiting user acceptance; Google sync Issue #62 remains open for its remaining acceptance and data-ownership decisions.
 - Candidate: 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`; public key and extension ID match the approved Google callback.
 - Verified live acceptance: user manually loaded the candidate and confirmed Google sign-in plus same-account mobile-add → computer display.
 - Remaining #62 acceptance and old-data ownership confirmation are pending; two-computer, deletion, and full isolation acceptance are not inferred.
 - Issue #64: product approved the candidate identity configuration; product-side issue status remains authoritative.
-- Mobile save-feedback Issue #66 was introduced in `84f0f06` at version 3.17.0 and hardened for concurrent retries in a follow-up 3.17.2 fix; Worker deployment and production verification are still pending.
-- Mobile legacy-entry Issue #67 is locally committed at version 3.17.1; Worker deployment and production verification are still pending.
+- Mobile save-feedback Issue #66 was introduced in `84f0f06` at version 3.17.0 and hardened for concurrent retries in `1853e52` at version 3.17.2; deployed and production-read-only checks passed, with real phone save acceptance pending.
+- Mobile legacy-entry Issue #67 was implemented in `d5e5555` at version 3.17.1; included in the 3.17.2 Worker deployment and production redirect/page checks passed, with product acceptance pending.
 - Last completed requirement: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER\docs\requirements\REQ-20260922-newtab-list-todo-favicon.md` (`2026-09-23`, implemented; awaiting user acceptance)
 - Queue: empty
 ## Operating contract
@@ -96,5 +96,10 @@
 - #66：`84f0f06`，版本 3.17.0；保存状态反馈、超时幂等重试与回归完成。
 - #67：版本 3.17.1；移除旧连接页面、旧 URL 安全重定向与旧 API 保留回归完成。
 - #66 并发补强：版本 3.17.2；D1 batch 内仅在任务记录不存在时写入 revision/change/record，避免并发同 UUID 请求重复增加 revision；无 migration。
-- 两项都未部署、未 push、未运行 GUI；正式 Worker 仍是部署前行为，等待单独授权和线上验收。
-- Google 同步主需求 #62 仍保持开放，既有同账号手机新增到电脑的用户验收不代表所有同步验收完成。
+- 两项随后部署记录见下文；未 push、未打 tag、未运行 GUI。Google 同步主需求 #62 仍保持开放，既有同账号手机新增到电脑的用户验收不代表所有同步验收完成。
+
+## 2026-10-02 #66/#67 Worker 部署
+
+- 用户批准部署手机优化后，从干净提交 `1853e52ed5d084437bab3039c9448ce2916744cf` 发布 Worker；Cloudflare Version ID：`5c1ef64a-9ba5-4ef4-8d4d-3a482f54b798`。部署前线上版本 `adb413a1-4bbe-4c02-8697-3c6c6bfad853`，部署后确认新版本流量 100%。
+- 生产只读检查通过：`/` 返回 200，含 Google 登录控件、已配置的 Web Client ID 与保存状态文案，不含旧版入口；`/legacy` 和 `/index.html` 均 302 到同源 `/` 且丢弃查询参数；未认证的账号分类及旧任务/分类 API 均返回 401。
+- 未发起真实 Google 登录、未创建或修改生产任务、未执行迁移、GUI、push 或 tag。#66 手机真实保存体验与 #67 产品验收仍待用户确认；Google 同步 #62 的双设备、删除、隔离和旧数据归属验收仍未完成。

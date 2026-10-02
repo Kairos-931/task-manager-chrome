@@ -1,6 +1,6 @@
 # 移除手机端管理员旧版入口与连接页面
 
-- Status: in_development
+- Status: awaiting_user_acceptance
 - Date: 2026-10-02
 - GitHub Issue: https://github.com/Kairos-931/task-manager-chrome/issues/67
 - Source: 用户要求记录第二项优化，手机端管理员旧版入口及旧版页面连接设置可以移除。
@@ -41,3 +41,9 @@
 - 完整 `npm run check` 在 `tests/ui-layout.test.mjs:32` 的既有共享 UI 源码顺序静态断言失败；该测试覆盖的 `shared/` UI 文件不在本次修改范围内。
 - 线上改动前实测 `/legacy` 与 `/index.html` 均返回带 API 密钥输入框的旧页面；本地改动尚未部署，线上页面行为仍未改变。
 - 本需求以独立 Conventional Commit 本地提交。按批准范围不部署、不 push、不运行 GUI。
+
+## 2026-10-02 Worker 部署与生产检查
+
+- 随 `1853e52ed5d084437bab3039c9448ce2916744cf` 部署到生产 Worker，Cloudflare Version ID：`5c1ef64a-9ba5-4ef4-8d4d-3a482f54b798`。
+- 生产 `/` 返回 200 且没有旧版入口；`/legacy` 与 `/index.html` 均 302 到同源根路径，测试查询参数未进入 Location。未认证的旧任务与分类 API 返回 401；本地兼容回归覆盖旧 API 路由保留。
+- 未执行真实 Google 登录、认证 API 写入或 GUI。线上路由检查通过，产品侧验收仍待确认。

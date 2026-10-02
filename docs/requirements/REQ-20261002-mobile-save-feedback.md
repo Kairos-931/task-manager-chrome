@@ -1,6 +1,6 @@
 # 手机添加任务的保存状态反馈
 
-- Status: in_development
+- Status: awaiting_user_acceptance
 - Date: 2026-10-02
 - GitHub Issue: https://github.com/Kairos-931/task-manager-chrome/issues/66
 - Source: 用户真实使用反馈“手机添加的时候没有显示保存成功失败等等状态”，要求记录。
@@ -47,3 +47,9 @@
 - 手机带 `clientTaskId` 的创建现在在 D1 原子 batch 中使用“仅记录不存在时才提交”条件；同一 batch 包含 revision、change 和 record 三项写入，丢失竞争的一方读取规范记录并返回幂等结果，不更新时间戳、不增加 revision。没有新增迁移。
 - 新并发回归用同 UUID/同内容/不同服务端时间同时创建，验证仅一条任务、一条同步变更、一个 revision，另一个请求得到 `alreadyProcessed`。
 - 此并发补强以独立 `fix` 提交纳入 3.17.2；相关账号同步回归和 ESLint 通过。未部署或写生产 D1。
+
+## 2026-10-02 Worker 部署与生产检查
+
+- 从 `1853e52ed5d084437bab3039c9448ce2916744cf` 部署到生产 Worker，Cloudflare Version ID：`5c1ef64a-9ba5-4ef4-8d4d-3a482f54b798`。未执行迁移或生产任务写入。
+- 生产 `/` 返回 200，页面包含 Google 登录组件、已配置的 Web Client ID 和保存反馈文案。代码回归与部署前检查已覆盖处理中、成功、确定失败、超时安全重试及并发幂等。
+- 未进行真实手机保存操作；等待用户在手机页刷新后验收保存过程反馈与结果。生产验证没有创建测试任务。
