@@ -32,6 +32,20 @@ export const renderAccountMobilePage = (env) => {
     #loginHelp, #status { min-height: 20px; margin: 9px 0 0; color: #64748b; font-size: 12px; }
     .error { color: #b91c1c !important; }
     #status.uncertain { color: #92400e; }
+    #saveFeedback[hidden], #saveFeedbackRetry[hidden], #saveFeedbackDismiss[hidden] { display: none; }
+    #saveFeedback { position: fixed; z-index: 20; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(360px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; padding: 20px; border: 1px solid #cbd5e1; border-radius: 16px; background: #fff; box-shadow: 0 18px 48px #0f172a38; text-align: center; }
+    #saveFeedback.saving { border-color: #93c5fd; }
+    #saveFeedback.success { border-color: #86efac; }
+    #saveFeedback.error { border-color: #fca5a5; }
+    #saveFeedback.uncertain, #saveFeedback.warning { border-color: #fcd34d; }
+    #saveFeedbackIcon { color: #2563eb; font-size: 24px; font-weight: 700; }
+    #saveFeedback.success #saveFeedbackIcon { color: #16a34a; }
+    #saveFeedback.error #saveFeedbackIcon { color: #dc2626; }
+    #saveFeedback.uncertain #saveFeedbackIcon, #saveFeedback.warning #saveFeedbackIcon { color: #b45309; }
+    #saveFeedbackMessage { margin: 8px 0 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+    .feedback-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    .feedback-retry { padding: 8px 12px; color: #fff; background: #2563eb; font-size: 13px; }
+    .feedback-actions button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
     label { display: block; margin: 0 0 6px; color: #475569; font-size: 13px; font-weight: 600; }
     input, select, textarea { width: 100%; margin-bottom: 14px; padding: 11px 12px; border: 1px solid #cbd5e1; border-radius: 9px; color: #0f172a; background: #fff; font: inherit; }
     .check-row { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; color: #475569; font-weight: 500; cursor: pointer; }
@@ -51,6 +65,7 @@ export const renderAccountMobilePage = (env) => {
       #status.uncertain { color: #fbbf24; }
       input, select, textarea { border-color: #475569; color: #e2e8f0; background: #0f172a; }
       .secondary { color: #cbd5e1; background: #334155; }
+      #saveFeedback { color: #e2e8f0; background: #1e293b; }
     }
   </style>
 </head>
@@ -83,9 +98,17 @@ export const renderAccountMobilePage = (env) => {
       <label for="description">备注</label>
       <textarea id="description" maxlength="5000" placeholder="可选"></textarea>
       <button id="submitBtn" class="primary" type="button">添加任务</button>
-      <p id="status" role="status" aria-live="polite"></p>
+      <p id="status"></p>
     </section>
   </main>
+  <aside id="saveFeedback" role="status" aria-live="polite" aria-atomic="true" hidden>
+    <div id="saveFeedbackIcon" aria-hidden="true"></div>
+    <p id="saveFeedbackMessage"></p>
+    <div class="feedback-actions">
+      <button id="saveFeedbackRetry" class="feedback-retry" type="button" hidden>重试添加</button>
+      <button id="saveFeedbackDismiss" class="secondary" type="button" hidden>关闭</button>
+    </div>
+  </aside>
   <script>
     (() => {
       const GOOGLE_WEB_CLIENT_ID = ${safeClientId};
@@ -94,6 +117,11 @@ export const renderAccountMobilePage = (env) => {
       const taskCard = document.getElementById('taskCard');
       const loginHelp = document.getElementById('loginHelp');
       const status = document.getElementById('status');
+      const saveFeedback = document.getElementById('saveFeedback');
+      const saveFeedbackIcon = document.getElementById('saveFeedbackIcon');
+      const saveFeedbackMessage = document.getElementById('saveFeedbackMessage');
+      const saveFeedbackRetry = document.getElementById('saveFeedbackRetry');
+      const saveFeedbackDismiss = document.getElementById('saveFeedbackDismiss');
       const signOutBtn = document.getElementById('signOutBtn');
       const restartLoginBtn = document.getElementById('restartLoginBtn');
       const today = new Date();
@@ -120,6 +148,7 @@ export const renderAccountMobilePage = (env) => {
       let hasUncertainTaskMutation = false;
       let lastSaveWasDefiniteFailure = false;
       let taskWasDeletedAfterSave = false;
+      let saveFeedbackTimer = 0;
       let deviceId = localStorage.getItem('tm_mobile_device_id');
       if (!deviceId) {
         deviceId = crypto.randomUUID();
@@ -141,10 +170,26 @@ export const renderAccountMobilePage = (env) => {
           document.getElementById(id).disabled = locked || (id === 'dueDate' && noTimeLimit);
         }
       };
-      const setSaveStatus = (message, kind = '') => {
+      const hideSaveFeedback = () => {
+        clearTimeout(saveFeedbackTimer);
+        saveFeedbackTimer = 0;
+        saveFeedback.hidden = true;
+      };
+      const setSaveStatus = (message, kind) => {
         status.textContent = message;
         status.classList.remove('error', 'uncertain');
-        if (kind) status.classList.add(kind);
+        if (kind === 'error' || kind === 'uncertain') status.classList.add(kind);
+        hideSaveFeedback();
+        saveFeedbackMessage.textContent = message;
+        saveFeedback.classList.remove('saving', 'success', 'error', 'uncertain', 'warning');
+        saveFeedback.classList.add(kind);
+        saveFeedbackIcon.textContent = kind === 'success' ? '✓' : (kind === 'saving' ? '…' : '!');
+        saveFeedbackRetry.hidden = !['error', 'uncertain', 'warning'].includes(kind) || !googleCredential || !accountSub;
+        saveFeedbackRetry.textContent = kind === 'uncertain' ? '安全重试保存' : (taskWasDeletedAfterSave ? '重新添加' : '重试添加');
+        saveFeedbackDismiss.hidden = kind === 'saving';
+        saveFeedbackDismiss.textContent = kind === 'success' ? '继续添加' : (!googleCredential ? '去重新登录' : '返回修改');
+        saveFeedback.hidden = false;
+        if (kind === 'success') saveFeedbackTimer = setTimeout(hideSaveFeedback, 1800);
       };
       const updateSubmitButton = () => {
         const button = document.getElementById('submitBtn');
@@ -259,6 +304,7 @@ export const renderAccountMobilePage = (env) => {
         signOutBtn.hidden = false;
         loginHelp.textContent = '任务会自动保存到当前账号的数据空间。';
         loginHelp.classList.remove('error');
+        hideSaveFeedback();
         status.textContent = '';
         status.classList.remove('error', 'uncertain');
         await loadCategories();
@@ -364,6 +410,7 @@ export const renderAccountMobilePage = (env) => {
         restartLoginBtn.hidden = false;
         accountTitle.textContent = '尚未登录';
         accountEmail.textContent = '本机未保存账号凭证';
+        hideSaveFeedback();
         status.textContent = '';
         showError(revoked
           ? '已退出。手机任务仍保存在所属账号的云端；刷新页面后可再次登录。'
@@ -373,7 +420,7 @@ export const renderAccountMobilePage = (env) => {
 
       restartLoginBtn.addEventListener('click', () => window.location.reload());
 
-      document.getElementById('submitBtn').addEventListener('click', async () => {
+      const submitTask = async () => {
         if (isSavingTask) return;
         if (!googleCredential || !accountSub) return showError('请先登录 Google 账号。');
         if (!pendingTaskMutation) {
@@ -405,7 +452,7 @@ export const renderAccountMobilePage = (env) => {
         lastSaveWasDefiniteFailure = false;
         setTaskFieldsLocked(true);
         updateSubmitButton();
-        setSaveStatus(isSafeRetry ? '正在确认上次提交是否已保存…' : '正在保存到当前账号…');
+        setSaveStatus(isSafeRetry ? '正在确认上次提交是否已保存…' : '正在保存到当前账号…', 'saving');
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), MOBILE_SAVE_TIMEOUT_MS);
         try {
@@ -426,9 +473,11 @@ export const renderAccountMobilePage = (env) => {
               lastSaveWasDefiniteFailure = true;
             }
             expireSession();
-            showError(isSafeRetry
+            const message = isSafeRetry
               ? 'Google 登录已失效。上次保存结果仍未确认；重新登录后点击“安全重试保存”即可继续确认。'
-              : 'Google 登录已失效。本次任务没有保存，内容仍保留；重新登录后可重试。');
+              : 'Google 登录已失效。本次任务没有保存，内容仍保留；重新登录后可重试。';
+            showError(message);
+            setSaveStatus(message, 'error');
             return;
           }
           if (!response.ok) {
@@ -447,7 +496,7 @@ export const renderAccountMobilePage = (env) => {
             setTaskFieldsLocked(false);
             lastSaveWasDefiniteFailure = false;
             taskWasDeletedAfterSave = true;
-            setSaveStatus('这条任务此前已保存，之后被电脑端删除。内容已保留；如仍要添加，请点击“重新添加”。');
+            setSaveStatus('这条任务此前已保存，之后被电脑端删除。内容已保留；如仍要添加，请点击“重新添加”。', 'warning');
             return;
           }
           if (body?.ok !== true || body?.task?.id !== mutation.id) {
@@ -465,7 +514,7 @@ export const renderAccountMobilePage = (env) => {
           document.getElementById('completed').checked = false;
           setSaveStatus(body.alreadyProcessed
             ? '已确认此前已保存到账号，电脑联网后会自动同步。'
-            : '已保存到账号，电脑联网后会自动同步。');
+            : '已保存到账号，电脑联网后会自动同步。', 'success');
           document.getElementById('title').focus();
         } catch {
           showUncertainTaskSave();
@@ -475,7 +524,10 @@ export const renderAccountMobilePage = (env) => {
           isConfirmingTaskMutation = false;
           updateSubmitButton();
         }
-      });
+      };
+      document.getElementById('submitBtn').addEventListener('click', submitTask);
+      saveFeedbackRetry.addEventListener('click', async () => { hideSaveFeedback(); await submitTask(); });
+      saveFeedbackDismiss.addEventListener('click', hideSaveFeedback);
 
       initializeGoogle();
     })();

@@ -5,6 +5,7 @@ import { renderAccountMobilePage } from '../backend/account-mobile.js'
 const ACCOUNT_SUB = 'mobile-save-feedback-test-user'
 const SESSION_KEY = 'tm_google_mobile_session_v1'
 const PENDING_KEY = `tm_mobile_pending_task_v1:${ACCOUNT_SUB}`
+let uuid = 0
 
 class FakeClassList {
   values = new Set()
@@ -67,6 +68,9 @@ const makeHarness = ({ storage, handleTask, fastTimeout = false }) => {
     if (!elements.has(id)) {
       const tagName = id === 'category' ? 'select' : 'div'
       elements.set(id, new FakeElement(tagName))
+      if (id === 'saveFeedback' || id === 'saveFeedbackRetry' || id === 'saveFeedbackDismiss') {
+        elements.get(id).hidden = true
+      }
     }
     return elements.get(id)
   }
@@ -97,17 +101,28 @@ const makeHarness = ({ storage, handleTask, fastTimeout = false }) => {
     }
     throw new Error(`Unexpected fetch: ${url}`)
   }
-  let uuid = 0
+  let feedbackTimerId = 0
+  const feedbackTimers = new Map()
   const pageSetTimeout = (callback, delay, ...args) => {
+    if (delay === 1800) {
+      const id = ++feedbackTimerId
+      feedbackTimers.set(id, () => callback(...args))
+      return id
+    }
     if (fastTimeout && delay === 15_000) return setTimeout(callback, 0, ...args)
     return setTimeout(callback, delay, ...args)
   }
+  const pageClearTimeout = id => {
+    if (feedbackTimers.delete(id)) return
+    clearTimeout(id)
+  }
   const html = renderAccountMobilePage({ GOOGLE_WEB_CLIENT_ID: 'test-client-id' })
+  assert.match(html, /id="saveFeedback" role="status" aria-live="polite"/)
   const script = html.match(/<script>\s*([\s\S]*?)\s*<\/script>/)?.[1]
   assert.ok(script, 'the mobile page should render its inline application script')
   runInNewContext(script, {
     AbortController,
-    clearTimeout,
+    clearTimeout: pageClearTimeout,
     crypto: { randomUUID: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, '0')}` },
     document,
     fetch,
@@ -120,7 +135,13 @@ const makeHarness = ({ storage, handleTask, fastTimeout = false }) => {
     await new Promise(resolve => setTimeout(resolve, 0))
     await new Promise(resolve => setTimeout(resolve, 0))
   }
-  return { elements, requests, sessionStorage, ready }
+  const flushFeedbackTimer = () => {
+    for (const [id, callback] of feedbackTimers) {
+      feedbackTimers.delete(id)
+      callback()
+    }
+  }
+  return { elements, requests, sessionStorage, ready, flushFeedbackTimer }
 }
 
 const uncertainStorage = makeStorage()
@@ -137,6 +158,9 @@ timedOutPage.elements.get('description').value = 'Keep this note after a timeout
 timedOutPage.elements.get('completed').checked = true
 const firstSaveAttempt = timedOutPage.elements.get('submitBtn').listeners.get('click')()
 const duplicateClickAttempt = timedOutPage.elements.get('submitBtn').listeners.get('click')()
+assert.equal(timedOutPage.elements.get('saveFeedback').hidden, false)
+assert.equal(timedOutPage.elements.get('saveFeedback').classList.contains('saving'), true)
+assert.equal(timedOutPage.elements.get('saveFeedbackRetry').hidden, true)
 await Promise.all([firstSaveAttempt, duplicateClickAttempt])
 assert.equal(timedOutPage.requests.length, 1)
 assert.match(timedOutPage.elements.get('status').textContent, /任务可能已保存/)
@@ -144,6 +168,9 @@ assert.equal(timedOutPage.elements.get('status').classList.contains('uncertain')
 assert.equal(timedOutPage.elements.get('title').value, 'Timeout-safe task')
 assert.equal(timedOutPage.elements.get('title').disabled, true)
 assert.equal(timedOutPage.elements.get('submitBtn').textContent, '安全重试保存')
+assert.equal(timedOutPage.elements.get('saveFeedback').classList.contains('uncertain'), true)
+assert.equal(timedOutPage.elements.get('saveFeedbackRetry').textContent, '安全重试保存')
+assert.equal(timedOutPage.elements.get('saveFeedbackRetry').hidden, false)
 assert.ok(uncertainStorage.getItem(PENDING_KEY))
 
 const reloadPage = makeHarness({
@@ -160,7 +187,7 @@ assert.equal(reloadPage.elements.get('description').value, 'Keep this note after
 assert.equal(reloadPage.elements.get('completed').checked, true)
 assert.equal(reloadPage.elements.get('title').disabled, true)
 assert.equal(reloadPage.elements.get('submitBtn').textContent, '安全重试保存')
-await reloadPage.elements.get('submitBtn').listeners.get('click')()
+await reloadPage.elements.get('saveFeedbackRetry').listeners.get('click')()
 assert.equal(reloadPage.requests.length, 1)
 assert.equal(reloadPage.requests[0].clientTaskId, timedOutPage.requests[0].clientTaskId)
 assert.equal(reloadPage.requests[0].title, timedOutPage.requests[0].title)
@@ -170,6 +197,15 @@ assert.equal(reloadPage.elements.get('title').value, '')
 assert.equal(reloadPage.elements.get('title').disabled, false)
 assert.equal(reloadPage.elements.get('completed').checked, false)
 assert.equal(uncertainStorage.getItem(PENDING_KEY), null)
+assert.equal(reloadPage.elements.get('saveFeedback').hidden, false)
+assert.equal(reloadPage.elements.get('saveFeedback').classList.contains('success'), true)
+assert.equal(reloadPage.elements.get('saveFeedbackDismiss').textContent, '继续添加')
+reloadPage.elements.get('title').value = 'Next task without waiting for the popup'
+await reloadPage.elements.get('submitBtn').listeners.get('click')()
+assert.equal(reloadPage.requests.length, 2, 'a visible success popup must not block the next task')
+assert.notEqual(reloadPage.requests[1].clientTaskId, reloadPage.requests[0].clientTaskId)
+reloadPage.flushFeedbackTimer()
+assert.equal(reloadPage.elements.get('saveFeedback').hidden, true, 'success feedback closes automatically')
 
 const expiredRetryStorage = makeStorage()
 const beforeExpiredRetry = makeHarness({
@@ -192,6 +228,8 @@ await expiredRetryPage.ready()
 await expiredRetryPage.elements.get('submitBtn').listeners.get('click')()
 assert.ok(expiredRetryStorage.getItem(PENDING_KEY), 'an expired session must not discard an uncertain request ID')
 assert.match(expiredRetryPage.elements.get('loginHelp').textContent, /上次保存结果仍未确认/)
+assert.equal(expiredRetryPage.elements.get('saveFeedback').hidden, false)
+assert.equal(expiredRetryPage.elements.get('saveFeedbackRetry').hidden, true, 'expired login cannot retry without a session')
 
 expiredRetryStorage.setItem(SESSION_KEY, JSON.stringify({
   user: { sub: ACCOUNT_SUB, email: 'mobile@example.test', name: 'Mobile' },
@@ -251,7 +289,12 @@ assert.equal(definiteFailurePage.elements.get('status').textContent, 'Invalid ta
 assert.equal(definiteFailurePage.elements.get('title').value, 'Retry after rejection')
 assert.equal(definiteFailurePage.elements.get('title').disabled, false)
 assert.equal(definiteFailurePage.elements.get('submitBtn').textContent, '重试添加')
-await definiteFailurePage.elements.get('submitBtn').listeners.get('click')()
+assert.equal(definiteFailurePage.elements.get('saveFeedback').classList.contains('error'), true)
+assert.equal(definiteFailurePage.elements.get('saveFeedbackRetry').hidden, false)
+definiteFailurePage.elements.get('saveFeedbackDismiss').listeners.get('click')()
+assert.equal(definiteFailurePage.elements.get('saveFeedback').hidden, true)
+assert.match(definiteFailurePage.elements.get('status').textContent, /内容仍保留/)
+await definiteFailurePage.elements.get('saveFeedbackRetry').listeners.get('click')()
 assert.notEqual(definiteFailurePage.requests[0].clientTaskId, definiteFailurePage.requests[1].clientTaskId)
 assert.equal(definiteFailurePage.elements.get('status').textContent, '已保存到账号，电脑联网后会自动同步。')
 assert.equal(definiteFailurePage.elements.get('title').value, '')
