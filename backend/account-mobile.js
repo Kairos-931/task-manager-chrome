@@ -85,9 +85,6 @@ export const renderAccountMobilePage = (env) => {
       <button id="submitBtn" class="primary" type="button">添加任务</button>
       <p id="status" role="status" aria-live="polite"></p>
     </section>
-    <footer style="padding:2px 4px;color:#94a3b8;font-size:11px;">
-      管理员旧版入口：<a href="/legacy" style="color:#64748b;text-decoration:underline;">旧版连接页面</a>
-    </footer>
   </main>
   <script>
     (() => {

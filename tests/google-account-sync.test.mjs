@@ -323,15 +323,42 @@ try {
   const legacyTokenOnAccountRoute = await sync('legacy-admin-token', { deviceId: 'legacy', cursor: 0, changes: [] })
   assert.equal(legacyTokenOnAccountRoute.status, 401)
 
+  const legacyTaskWrites = []
+  const legacyApiDb = {
+    prepare(sql) {
+      let args = []
+      return {
+        bind(...values) { args = values; return this },
+        async run() { legacyTaskWrites.push({ sql, args }); return { meta: { changes: 1 } } },
+      }
+    },
+  }
+  const legacyApiResponse = await worker.fetch(new Request('https://taskmaster.test/api/tasks', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer legacy-admin-token', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: 'Legacy API task' }),
+  }), { DB: legacyApiDb, API_TOKEN: 'legacy-admin-token' })
+  assert.equal(legacyApiResponse.status, 201)
+  assert.match(legacyTaskWrites[0].sql, /INSERT INTO pending_tasks/)
+
   const mobilePage = await worker.fetch(new Request('https://taskmaster.test/'), {})
   assert.equal(mobilePage.status, 200)
   const mobileHtml = await mobilePage.text()
   assert.match(mobileHtml, /尚未配置|尚未配置|未配置/)
   assert.doesNotMatch(mobileHtml, /API_TOKEN|id="apiToken"|your-worker\.workers\.dev/)
+  assert.doesNotMatch(mobileHtml, /管理员旧版入口|旧版连接页面|href="\/legacy"/)
   assert.match(mobileHtml, /id="noTimeLimit"/)
   assert.match(mobileHtml, /id="completed"/)
-  const legacyPage = await worker.fetch(new Request('https://taskmaster.test/legacy'), {})
-  assert.match(await legacyPage.text(), /id="apiToken"/)
+  const oldLegacyPageUrl = await worker.fetch(new Request(
+    'https://taskmaster.test/legacy?apiUrl=https%3A%2F%2Fold.example&apiToken=do-not-forward',
+  ), {})
+  assert.equal(oldLegacyPageUrl.status, 302)
+  assert.equal(oldLegacyPageUrl.headers.get('location'), 'https://taskmaster.test/')
+  assert.equal(oldLegacyPageUrl.headers.get('cache-control'), 'no-store')
+  assert.doesNotMatch(oldLegacyPageUrl.headers.get('location'), /apiUrl|apiToken|do-not-forward/)
+  const oldIndexPageUrl = await worker.fetch(new Request('https://taskmaster.test/index.html?token=do-not-forward'), {})
+  assert.equal(oldIndexPageUrl.status, 302)
+  assert.equal(oldIndexPageUrl.headers.get('location'), 'https://taskmaster.test/')
 
   console.log('Google account authentication and isolation tests passed')
 } finally {

@@ -7,14 +7,15 @@
 - Shared checkout: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER`
 - Initialized: `2026-09-04`
 - Status: active
-- Active developer requirement: docs/requirements/REQ-20261002-mobile-save-feedback.md (Issue #66; approved, local implementation in progress)
+- Active developer requirement: none; Issues #66 and #67 have local commits and are awaiting deployment/production verification.
 - Candidate: 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`; public key and extension ID match the approved Google callback.
 - Verified live acceptance: user manually loaded the candidate and confirmed Google sign-in plus same-account mobile-add → computer display.
 - Remaining #62 acceptance and old-data ownership confirmation are pending; two-computer, deletion, and full isolation acceptance are not inferred.
 - Issue #64: product approved the candidate identity configuration; product-side issue status remains authoritative.
-- Mobile legacy-entry removal: Issue #67 is approved and queued after Issue #66 receives its local commit.
+- Mobile save-feedback Issue #66 is locally committed as `84f0f06` at version 3.17.0; Worker deployment and production verification are still pending.
+- Mobile legacy-entry Issue #67 is locally committed at version 3.17.1; Worker deployment and production verification are still pending.
 - Last completed requirement: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER\docs\requirements\REQ-20260922-newtab-list-todo-favicon.md` (`2026-09-23`, implemented; awaiting user acceptance)
-- Queue: Issue #67 — `docs/requirements/REQ-20261002-remove-mobile-legacy-entry.md`
+- Queue: empty
 ## Operating contract
 
 1. Product discussion, specifications, acceptance criteria, and demos live in the requirements task.
@@ -88,3 +89,11 @@
 - 用户手动加载短路径候选 3.16.2，Google 登录成功，并明确确认“已经同步 手机添加电脑已经同步显示”。这是同账号手机新增任务在电脑出现的验收证据。
 - 仅记录该扩展登录与手机到电脑新增路径；不推断双电脑、删除墓碑、全部账号隔离或历史未认领数据已验收。旧扩展仍保留，Issue #62 等剩余验收和旧数据归属确认后再决定完成。
 - 用户另要求记录手机添加保存状态反馈问题；产品已登记 `docs/requirements/REQ-20261002-mobile-save-feedback.md`，当前仅记录、未批准开发，不改手机端代码或部署。
+
+
+## 2026-10-02 手机端 #66/#67 本地实现完成
+
+- #66：`84f0f06`，版本 3.17.0；保存状态反馈、超时幂等重试与回归完成。
+- #67：版本 3.17.1；移除旧连接页面、旧 URL 安全重定向与旧 API 保留回归完成。
+- 两项都未部署、未 push、未运行 GUI；正式 Worker 仍是部署前行为，等待单独授权和线上验收。
+- Google 同步主需求 #62 仍保持开放，既有同账号手机新增到电脑的用户验收不代表所有同步验收完成。

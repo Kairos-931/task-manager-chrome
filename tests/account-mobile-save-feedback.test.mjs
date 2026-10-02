@@ -134,6 +134,7 @@ const timedOutPage = makeHarness({
 await timedOutPage.ready()
 timedOutPage.elements.get('title').value = 'Timeout-safe task'
 timedOutPage.elements.get('description').value = 'Keep this note after a timeout'
+timedOutPage.elements.get('completed').checked = true
 const firstSaveAttempt = timedOutPage.elements.get('submitBtn').listeners.get('click')()
 const duplicateClickAttempt = timedOutPage.elements.get('submitBtn').listeners.get('click')()
 await Promise.all([firstSaveAttempt, duplicateClickAttempt])
@@ -156,15 +157,18 @@ const reloadPage = makeHarness({
 await reloadPage.ready()
 assert.equal(reloadPage.elements.get('title').value, 'Timeout-safe task')
 assert.equal(reloadPage.elements.get('description').value, 'Keep this note after a timeout')
+assert.equal(reloadPage.elements.get('completed').checked, true)
 assert.equal(reloadPage.elements.get('title').disabled, true)
 assert.equal(reloadPage.elements.get('submitBtn').textContent, '安全重试保存')
 await reloadPage.elements.get('submitBtn').listeners.get('click')()
 assert.equal(reloadPage.requests.length, 1)
 assert.equal(reloadPage.requests[0].clientTaskId, timedOutPage.requests[0].clientTaskId)
 assert.equal(reloadPage.requests[0].title, timedOutPage.requests[0].title)
+assert.equal(reloadPage.requests[0].completed, true)
 assert.equal(reloadPage.elements.get('status').textContent, '已确认此前已保存到账号，电脑联网后会自动同步。')
 assert.equal(reloadPage.elements.get('title').value, '')
 assert.equal(reloadPage.elements.get('title').disabled, false)
+assert.equal(reloadPage.elements.get('completed').checked, false)
 assert.equal(uncertainStorage.getItem(PENDING_KEY), null)
 
 const expiredRetryStorage = makeStorage()
