@@ -123,8 +123,8 @@
 ### D-20261002-01 核验进展与上线状态（开发报告）
 
 - 独立安全 Issue：https://github.com/Kairos-931/task-manager-chrome/issues/64；已关联 #62 作为上线阻塞。MCP 写入被403拒绝，开发通过已登录 gh CLI 完成创建。
-- 本机 Chrome Default/Profile 扫描未找到 TaskMaster 安装目录；实际 extension ID 尚无证据，不据此判断用户没有安装或数据不存在。
-- canonical key 为 PKCS#8 RSA 私钥；在内存提取 SPKI 公钥后，公钥候选 ID 与原序列化私钥字节候选 ID 不同。两者都是推导值，不能替代实际安装 ID。
+- 初次本机 Chrome Default/Profile 扫描未找到 TaskMaster 安装目录；之后用户提供了实际 extension ID，不能据初次扫描判断用户没有安装或数据不存在。
+- canonical key 为 PKCS#8 RSA 私钥。产品侧只读核验确认：用户提供的实际 ID 与现有私钥 DER 字节推导值一致；正确 SPKI 公钥推导出的 ID 不同，身份不兼容已确认。
 - 仓库商店脚本只生成 ZIP，未发现仓库内使用该字段做 CRX 签名；未发现 PEM/CRX 文件，不足以证明仓库外没有用途。
 - OAuth client_id 仍是占位符；真实 Google 登录、扩展身份兼容、生产配置与部署仍未验收。
 - 开发报告 npm run check 已通过；新增发布检查要求两个扩展 manifest 使用合法 SPKI 公钥，并拒绝私钥。当前 check-release 预期失败，这是发布阻塞被正确识别，不算 build/可发布验收通过。
@@ -143,7 +143,7 @@
 ### 2026-10-02 验收映射与执行槽状态
 
 - 当前状态：`awaiting_configuration`。本地实现与自动化检查完成，开发执行槽已释放；#62 仍开放，未完成产品验收或生产上线。
-- #64 状态：`blocked_identity_evidence`，是 #62 可发布的安全门槛。实际扩展 ID 未能从本机配置证明；OAuth ID 仍是占位符。
+- #64 状态：`blocked_identity_migration`，是 #62 可发布的安全门槛。实际扩展 ID 已由用户提供并核验与旧密钥一致；正确公钥会改变 ID，待产品明确迁移边界及配置方案。OAuth ID 仍是占位符。
 
 | 验收项 | 本地证据 | 尚未完成的验收 |
 |---|---|---|
@@ -156,6 +156,12 @@
 | 7. 手机端和 Telegram 隔离 | 自动化覆盖模拟身份、拒绝伪造身份及旧令牌访问新账号路由 | 真实手机 Google 登录及线上 Telegram 兼容验收未做 |
 | 8. 同步状态及失败反馈 | 状态处理和失败路径已实现；类型检查、Lint、测试通过 | 真实 OAuth 失败/过期、界面交互和视觉验收未做 |
 
-- 真正可用前需维护者提供/配置：实际扩展 ID 或 Chrome Web Store 公钥证据及身份处置决定；与该 ID 绑定的 Chrome Extension OAuth Client ID 和 Web Client ID；Cloudflare/Wrangler 授权与可演练的非生产 D1。秘密值通过受控本地环境配置，不通过聊天传递。
+- 真正可用前需产品明确身份迁移边界：实际扩展 ID 已确认，公钥身份变化意味着新扩展 ID；随后需维护者配置与新 ID 绑定的 Chrome Extension OAuth Client ID 和 Web Client ID，并提供 Cloudflare/Wrangler 授权与可演练的非生产 D1。秘密值通过受控本地环境配置，不通过聊天传递。
 - 如要认领历史数据，还需明确实际所有者确认、服务端验证的目标 Google `sub`、备份与独立生产数据操作授权；不影响新账号空数据安全同步的本地代码交付。
 - 不得将自动化模拟结果当作真实登录、非生产 D1 或生产数据验收；补齐外部条件后再恢复开发执行槽并继续验收。
+
+### 2026-10-02 实际扩展 ID 证据与兼容结论
+
+用户提供当前实际使用扩展 ID：bnodekgdlgbjfddgeglnjgmfiebhjbnp。产品侧以本地 Node crypto 只读验证：与现有私钥 DER 字节推导 ID 完全一致；正确 SPKI 公钥推导 ID 为 gjifmpjgedleemhkikajgepickfphflo，不一致。未输出或保存密钥内容。
+
+结论：不能通过简单公钥替换保持当前扩展身份。禁止以同 ID 兼容修复名义发布；新 ID 方案属于显式身份迁移。最小建议是保留旧扩展及数据，先配置和部署账号同步并准备正确公钥的新扩展，以既有云端数据在确认归属后绑定账号，验证新扩展登录恢复后再停用旧入口；不新增用户导出导入功能。旧设备未上传的本机数据必须核对，不以云端存在就认定全部已保存。实际执行身份迁移/部署仍未授权，先准备方案。

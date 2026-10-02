@@ -2,7 +2,7 @@
 
 > 状态：代码和本地演练已准备；正式 Worker、Google OAuth 客户端和 D1 迁移尚未配置或部署。正式 API 地址仍为 `https://taskmaster-api.yx9391.workers.dev`。
 
-> 安全阻塞（[#64](https://github.com/Kairos-931/task-manager-chrome/issues/64)）：根目录扩展清单中的 `key` 目前是私钥格式，且与公开仓库历史一致。发布检查现会拒绝私钥或无效公钥进入源码/构建清单。虽然可以从该私钥推导公开密钥，但推导后算出的候选扩展 ID 不同；本机可检查的 Chrome 配置中没有找到已安装的 TaskMaster，当前 OAuth ID 也仍是占位符。因此目前不能证明公钥替换兼容实际用户扩展 ID，也不能发布可登录扩展。已公开的历史密钥仍须按泄露处理，单改工作树文件不代表问题消失。
+> 安全阻塞（[#64](https://github.com/Kairos-931/task-manager-chrome/issues/64)）：根目录扩展清单中的 `key` 是已出现在公开仓库历史中的私钥；发布检查会拒绝私钥或无效公钥进入源码/构建清单。用户提供的当前扩展 ID `bnodekgdlgbjfddgeglnjgmfiebhjbnp` 与现有私钥 DER 字节推导值一致，而正确 SPKI 公钥推导的新 ID 为 `gjifmpjgedleemhkikajgepickfphflo`，因此正确修复会改变扩展身份。OAuth ID 仍是占位符；迁移边界与配置方案待产品确认，当前不能发布可登录扩展。已公开的历史密钥仍须按泄露处理，单改工作树文件不代表问题消失。
 
 ## OAuth 配置
 

@@ -9,7 +9,7 @@
 - Status: active
 - Active developer requirement: none (execution slot released 2026-10-02)
 - Awaiting configuration: docs/requirements/REQ-20260930-google-account-sync.md (Issue #62; status `awaiting_configuration`, not completed)
-- Security blocker: Issue #64 (status `blocked_identity_evidence`; gates #62 release)
+- Security blocker: Issue #64 (status `blocked_identity_migration`; current extension identity is incompatible with the correct public key, gates #62 release)
 - Last completed requirement: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER\docs\requirements\REQ-20260922-newtab-list-todo-favicon.md` (`2026-09-23`, implemented; awaiting user acceptance)
 - Queue: empty
 ## Operating contract
@@ -62,5 +62,5 @@
 
 - 本地实现提交：7132a47；发布密钥保护提交：cd37d4a。`npm run check` 已通过，release checker 按预期阻止含私钥的当前清单；完整发布构建及生产验收未完成。
 - Issue #62 状态为 `awaiting_configuration`；本地开发执行槽释放，等待真实扩展身份、Google OAuth 客户端和 Cloudflare/Wrangler 非生产验证条件。
-- Issue #64 状态为 `blocked_identity_evidence`，保持开放；公开密钥暴露处置和身份兼容证据到位前，#62 不得宣告生产可用。
+- Issue #64 状态为 `blocked_identity_migration`，保持开放；用户已提供实际扩展 ID，核验确认正确公钥会改变 ID。等待产品确认迁移边界及配置方案；#62 不得宣告生产可用。
 - 不存在运行中的开发实现任务；配置与身份材料准备好后，再恢复 #62 开发和验收。队列保持为空。
