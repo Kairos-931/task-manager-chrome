@@ -7,13 +7,14 @@
 - Shared checkout: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER`
 - Initialized: `2026-09-04`
 - Status: active
-- Active developer requirement: Issues #66 and #67 are deployed to production and awaiting user acceptance; Google sync Issue #62 remains open for its remaining acceptance and data-ownership decisions.
+- Active developer requirement: none; Issues #66 and #68 are deployed in version 3.17.4 and awaiting real phone acceptance. Issue #67 remains deployed awaiting product acceptance; Google sync Issue #62 remains open for its remaining acceptance and data-ownership decisions.
 - Candidate: 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`; public key and extension ID match the approved Google callback.
 - Verified live acceptance: user manually loaded the candidate and confirmed Google sign-in plus same-account mobile-add → computer display.
 - Remaining #62 acceptance and old-data ownership confirmation are pending; two-computer, deletion, and full isolation acceptance are not inferred.
 - Issue #64: product approved the candidate identity configuration; product-side issue status remains authoritative.
-- Mobile save-feedback Issue #66 was introduced in `84f0f06` at version 3.17.0 and hardened for concurrent retries in `1853e52` at version 3.17.2; deployed and production-read-only checks passed, with real phone save acceptance pending.
+- Mobile save-feedback Issue #66 was introduced in `84f0f06` at version 3.17.0, hardened in `1853e52` at 3.17.2, and given centered feedback in `b093cbe` at 3.17.3; the latest Worker is deployed and real phone visual acceptance is pending.
 - Mobile legacy-entry Issue #67 was implemented in `d5e5555` at version 3.17.1; included in the 3.17.2 Worker deployment and production redirect/page checks passed, with product acceptance pending.
+- Mobile session-restore Issue #68 was implemented in `51a0399` at version 3.17.4; deployed and production-read-only checks passed, with real browser reopen acceptance pending.
 - Last completed requirement: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER\docs\requirements\REQ-20260922-newtab-list-todo-favicon.md` (`2026-09-23`, implemented; awaiting user acceptance)
 - Queue: empty
 ## Operating contract
@@ -103,3 +104,11 @@
 - 用户批准部署手机优化后，从干净提交 `1853e52ed5d084437bab3039c9448ce2916744cf` 发布 Worker；Cloudflare Version ID：`5c1ef64a-9ba5-4ef4-8d4d-3a482f54b798`。部署前线上版本 `adb413a1-4bbe-4c02-8697-3c6c6bfad853`，部署后确认新版本流量 100%。
 - 生产只读检查通过：`/` 返回 200，含 Google 登录控件、已配置的 Web Client ID 与保存状态文案，不含旧版入口；`/legacy` 和 `/index.html` 均 302 到同源 `/` 且丢弃查询参数；未认证的账号分类及旧任务/分类 API 均返回 401。
 - 未发起真实 Google 登录、未创建或修改生产任务、未执行迁移、GUI、push 或 tag。#66 手机真实保存体验与 #67 产品验收仍待用户确认；Google 同步 #62 的双设备、删除、隔离和旧数据归属验收仍未完成。
+
+## 2026-10-02 #66/#68 手机体验发布
+
+- 从干净提交 `51a03998084dd375b455c70986eaaf15b7907556` 发布版本 3.17.4；#66 弹层为独立提交 `b093cbe`，#68 会话恢复为独立提交 `51a0399`。Cloudflare Version ID：`b327393b-e2f0-4ced-bdda-ec4a3ae30664`，生产流量 100%；发布前回退点 `5c1ef64a-9ba5-4ef4-8d4d-3a482f54b798`。
+- 定向手机交互与 Google 授权桥回归、类型检查、lint、Worker dry-run 通过；完整 `npm run check` 的相关测试通过，停在既有 `tests/ui-layout.test.mjs:32` 无关共享 UI 静态断言。
+- 生产只读检查通过：`/` 返回 200 且包含居中保存提示、自动关闭和持久会话恢复代码；Google Web Client ID 已配置；旧入口仍 302 到同源 `/` 并丢弃查询参数；未认证账号与旧任务 API 返回 401。未执行生产任务写入、真实 Google 登录、GUI、迁移、扩展更新、push 或 tag。
+- 开发执行槽已释放。用户下一步：在同一常规手机浏览器刷新页面，验收实际保存反馈；若此前标签页已关闭导致旧 `sessionStorage` 消失，登录一次后再关闭重开页面，确认七天内自动恢复。产品下一步：收集真实手机验收并维护 Issues #66/#68 状态；Issue #62 的剩余验收继续独立跟进。
+- 开发→产品反馈事件 `TM-20261002-mobile-66-68-deploy`，收件产品任务 `01a0f1af-be64-7860-8c0d-660fdb71e2c9`；2026-10-02 15:39 UTC 已发送，`send_message_to_thread` 返回同一 `threadId` 且 `isError=false`。

@@ -1,6 +1,6 @@
 # 手机页面自动恢复登录状态
 
-- Status: implementation_complete_awaiting_deployment
+- Status: awaiting_user_phone_acceptance
 - Date: 2026-10-02
 - User approval: 用户反馈每次打开需重新认证，产品建议修复7天会话自动恢复，用户回复ok。
 - GitHub Issue: https://github.com/Kairos-931/task-manager-chrome/issues/68
@@ -30,3 +30,9 @@
 - 定向回归覆盖新标签恢复、无需 Google 脚本、首次登录持久化、旧会话迁移、过期、撤销、账号错配、临时网络错误、服务端 503、非过期 401、退出与受限存储降级；Google 授权桥测试验证服务端账号 ID。相关测试、`npm run typecheck`、`npm run lint` 与 `git diff --check` 通过。
 - 完整 `npm run check` 的相关测试全部通过，随后停在既有 `tests/ui-layout.test.mjs:32` 共享 UI 源码顺序静态断言；该 `shared/` 文件不在本需求修改范围内。
 - 本地实现尚未部署；未进行 GUI、真实手机浏览器重开或生产账号/任务写入。隐私模式及应用内浏览器可能在关闭后清除站点存储，真实设备限制待用户验收。
+
+## 2026-10-02 生产部署与待验收
+
+- 实现提交 `51a03998084dd375b455c70986eaaf15b7907556` 已部署到原 Worker 地址，版本 3.17.4；Cloudflare Version ID：`b327393b-e2f0-4ced-bdda-ec4a3ae30664`，线上流量 100%。无数据库迁移或生产任务写入。
+- 生产 `/` 返回 200，包含持久会话读取、服务端账号 ID 核对与“重试连接”路径；未认证账号 API 仍返回 401。真实手机关闭/重开及七天内恢复需要用户后验收，本地 DOM 与接口模拟不替代该验证。
+- 若旧标签页已关闭，其旧 `sessionStorage` 登录记录已消失，用户需登录一次让新版持久保存；之后用同一常规浏览器重开。隐私模式或每次隔离存储的应用内浏览器可能仍要求登录；这属于浏览器存储限制，不能报告为全部设备已恢复。

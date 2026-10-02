@@ -1,6 +1,6 @@
 # 手机添加任务的保存状态反馈
 
-- Status: implementation_complete_awaiting_deployment
+- Status: awaiting_user_visual_acceptance
 - Date: 2026-10-02
 - GitHub Issue: https://github.com/Kairos-931/task-manager-chrome/issues/66
 - Source: 用户真实使用反馈“手机添加的时候没有显示保存成功失败等等状态”，要求记录。
@@ -66,3 +66,9 @@
 - 版本 3.17.3：保存反馈改为页面中央的非模态提示卡。保存中立即出现；成功 1.8 秒后自动收起，也可直接继续添加；失败和结果未知保留提示，并提供重试或返回修改。原有账号隔离与安全重试编号保持。
 - 定向 DOM/交互回归覆盖重复点击、超时、结果未知安全重试、明确失败、成功自动关闭和提示显示时继续添加；`npm run typecheck`、`npm run lint` 与 `git diff --check` 通过。
 - 本地实现尚未部署；未进行 GUI 视觉验收或生产任务写入。
+
+## 2026-10-02 二轮生产部署
+
+- 居中弹层实现提交 `b093cbe` 已随版本 3.17.4 从干净提交 `51a0399` 发布；Cloudflare Version ID：`b327393b-e2f0-4ced-bdda-ec4a3ae30664`。回退点为前一 Worker 版本 `5c1ef64a-9ba5-4ef4-8d4d-3a482f54b798`。
+- 线上 `/` 返回 200 且包含新弹层结构及成功自动关闭逻辑；旧入口重定向和未认证 API 保护仍正常。未通过 GUI 检查真实手机视觉，也未创建生产测试任务。
+- 下一步由用户在手机页刷新后保存实际任务，确认保存中、成功自动收起、失败保留与重试是否足够显眼；产品据此决定 #66 验收。开发实现与常规发布已完成。
