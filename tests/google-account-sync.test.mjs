@@ -255,7 +255,13 @@ try {
   assert.equal((await bStillExists.json()).changes[0].payload.title, 'B task')
   assert.equal(db.records.size, 2)
 
-  const mobileTaskResponse = await worker.fetch(new Request('https://taskmaster.test/api/account/tasks', {
+  const clientTaskId = '11111111-1111-4111-8111-111111111111'
+  const mobileTaskBody = {
+    clientTaskId,
+    title: 'Phone task', category: 'default-life', priority: 'high', duration: 45,
+    dueDate: '', noTimeLimit: true, completed: true, deviceId: 'mobile-device',
+  }
+  const createMobileTask = body => worker.fetch(new Request('https://taskmaster.test/api/account/tasks', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${mobileAToken}`,
@@ -263,17 +269,46 @@ try {
       'X-TaskMaster-Client': 'mobile',
       Origin: 'https://taskmaster.test',
     },
-    body: JSON.stringify({
-      title: 'Phone task', category: 'default-life', priority: 'high', duration: 45,
-      dueDate: '', noTimeLimit: true, completed: true, deviceId: 'mobile-device',
-    }),
+    body: JSON.stringify(body),
   }), { DB: db })
+  const mobileTaskResponse = await createMobileTask(mobileTaskBody)
   assert.equal(mobileTaskResponse.status, 201)
   const mobileTask = (await mobileTaskResponse.json()).task
+  assert.equal(mobileTask.id, clientTaskId)
   assert.equal(mobileTask.noTimeLimit, true)
   assert.equal(mobileTask.completed, true)
   assert.equal(mobileTask.completedAt, mobileTask.updatedAt)
   assert.ok([...db.records.values()].some(record => record.sub === 'google-sub-a' && record.id === mobileTask.id))
+  assert.equal(db.records.size, 3)
+  const revisionAfterMobileCreate = db.revisions.get('google-sub-a')
+
+  const mobileTaskRetry = await createMobileTask(mobileTaskBody)
+  assert.equal(mobileTaskRetry.status, 200)
+  const mobileTaskRetryBody = await mobileTaskRetry.json()
+  assert.equal(mobileTaskRetryBody.ok, true)
+  assert.equal(mobileTaskRetryBody.alreadyProcessed, true)
+  assert.equal(mobileTaskRetryBody.task.id, mobileTask.id)
+  assert.equal(db.records.size, 3)
+  assert.equal(db.revisions.get('google-sub-a'), revisionAfterMobileCreate)
+
+  const conflictingMobileRetry = await createMobileTask({ ...mobileTaskBody, title: 'Different task content' })
+  assert.equal(conflictingMobileRetry.status, 409)
+  assert.equal(db.records.size, 3)
+  assert.equal(db.revisions.get('google-sub-a'), revisionAfterMobileCreate)
+
+  const deleteMobileTask = await sync(accountAToken, {
+    deviceId: 'device-a-delete-mobile-task', cursor: revisionAfterMobileCreate,
+    changes: [{ type: 'task', id: mobileTask.id, payload: null, updatedAt: Date.now() + 60_000, deleted: true }],
+  })
+  assert.equal(deleteMobileTask.status, 200)
+  const mobileTaskRecordKey = 'google-sub-a\u0000task:' + mobileTask.id
+  assert.equal(db.records.get(mobileTaskRecordKey).deleted, 1)
+  const retryDeletedMobileTask = await createMobileTask(mobileTaskBody)
+  assert.equal(retryDeletedMobileTask.status, 200)
+  const deletedMobileTaskBody = await retryDeletedMobileTask.json()
+  assert.equal(deletedMobileTaskBody.previouslyDeleted, true)
+  assert.equal(deletedMobileTaskBody.taskId, mobileTask.id)
+  assert.equal(db.records.get(mobileTaskRecordKey).deleted, 1)
   assert.equal(db.records.size, 3)
 
   const fakeIdentity = await sync('invalid', { deviceId: 'attacker', cursor: 0, changes: [sameIdChange('forged', 999)] })

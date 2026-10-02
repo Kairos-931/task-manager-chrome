@@ -157,7 +157,10 @@ async function handleGoogleAccountApi(request, env, pathname) {
       try { body = await request.json() } catch { return accountJson({ error: 'invalid JSON body' }, 400) }
       const result = await createAccountTaskRecord(env.DB, user.sub, body)
       if (result.error) return accountJson({ error: result.error }, result.status)
-      return accountJson({ ok: true, task: result.task }, 201)
+      if (result.previouslyDeleted) {
+        return accountJson({ ok: true, previouslyDeleted: true, taskId: result.taskId }, 200)
+      }
+      return accountJson({ ok: true, task: result.task, alreadyProcessed: result.alreadyProcessed === true }, result.alreadyProcessed ? 200 : 201)
     }
     if (pathname === '/api/account/categories') {
       return accountJson({ categories: await listAccountCategories(env.DB, user.sub) })

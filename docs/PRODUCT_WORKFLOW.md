@@ -7,14 +7,14 @@
 - Shared checkout: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER`
 - Initialized: `2026-09-04`
 - Status: active
-- Active developer requirement: docs/requirements/REQ-20260930-google-account-sync.md (Issue #62; local implementation resumed 2026-10-02)
+- Active developer requirement: docs/requirements/REQ-20261002-mobile-save-feedback.md (Issue #66; approved, local implementation in progress)
 - Candidate: 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`; public key and extension ID match the approved Google callback.
 - Verified live acceptance: user manually loaded the candidate and confirmed Google sign-in plus same-account mobile-add → computer display.
 - Remaining #62 acceptance and old-data ownership confirmation are pending; two-computer, deletion, and full isolation acceptance are not inferred.
 - Issue #64: product approved the candidate identity configuration; product-side issue status remains authoritative.
-- Mobile save-feedback improvement: `docs/requirements/REQ-20261002-mobile-save-feedback.md` is recorded, not approved for implementation; it is not in the developer queue.
+- Mobile legacy-entry removal: Issue #67 is approved and queued after Issue #66 receives its local commit.
 - Last completed requirement: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER\docs\requirements\REQ-20260922-newtab-list-todo-favicon.md` (`2026-09-23`, implemented; awaiting user acceptance)
-- Queue: empty
+- Queue: Issue #67 — `docs/requirements/REQ-20261002-remove-mobile-legacy-entry.md`
 ## Operating contract
 
 1. Product discussion, specifications, acceptance criteria, and demos live in the requirements task.

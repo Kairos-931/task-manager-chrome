@@ -200,9 +200,24 @@ export const listAccountCategories = async (db, userSub) => {
   }).filter(category => category && typeof category.id === 'string' && typeof category.name === 'string')
 }
 
+const isSameTaskCreation = (rawPayload, requestedTask) => {
+  let savedTask = rawPayload
+  if (typeof savedTask === 'string') {
+    try { savedTask = JSON.parse(savedTask) } catch { return false }
+  }
+  if (!savedTask || typeof savedTask !== 'object' || Array.isArray(savedTask)) return false
+  return ['id', 'title', 'description', 'priority', 'category', 'dueDate', 'duration', 'completed', 'noTimeLimit']
+    .every(field => savedTask[field] === requestedTask[field])
+}
+
 export const createAccountTaskRecord = async (db, userSub, body, now = Date.now()) => {
   const title = typeof body?.title === 'string' ? body.title.trim() : ''
   if (!title || title.length > 500) return { error: 'A task title of 1 to 500 characters is required', status: 400 }
+  const clientTaskId = body?.clientTaskId
+  if (clientTaskId !== undefined &&
+      (typeof clientTaskId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientTaskId))) {
+    return { error: 'Invalid client task ID', status: 400 }
+  }
   const priority = ['high', 'medium', 'low'].includes(body.priority) ? body.priority : 'medium'
   const duration = Number(body.duration)
   if (!Number.isInteger(duration) || duration < 0 || duration > 1440) {
@@ -218,7 +233,7 @@ export const createAccountTaskRecord = async (db, userSub, body, now = Date.now(
     }
   }
   const task = {
-    id: crypto.randomUUID(), title,
+    id: clientTaskId || crypto.randomUUID(), title,
     description: typeof body.description === 'string' ? body.description.slice(0, 5000) : '',
     priority,
     category: typeof body.category === 'string' ? body.category.slice(0, 255) : '',
@@ -233,9 +248,39 @@ export const createAccountTaskRecord = async (db, userSub, body, now = Date.now(
   const sourceDevice = typeof body.deviceId === 'string' && body.deviceId.length <= 128
     ? `mobile:${body.deviceId}`
     : `mobile:${crypto.randomUUID()}`
+  if (clientTaskId) {
+    const existing = await db.prepare(
+      `SELECT record_type, record_id, payload, deleted
+       FROM account_sync_records WHERE user_sub = ? AND record_key = ?`
+    ).bind(userSub, `task:${task.id}`).first()
+    if (existing) {
+      if (Number(existing.deleted) === 1) return { previouslyDeleted: true, taskId: task.id }
+      if (Number(existing.deleted) === 0 && isSameTaskCreation(existing.payload, task)) {
+        let savedTask = existing.payload
+        if (typeof savedTask === 'string') savedTask = JSON.parse(savedTask)
+        return { task: savedTask, alreadyProcessed: true }
+      }
+      return { error: 'Task request ID conflicts with an existing task', status: 409 }
+    }
+  }
   const outcome = await applyAccountSyncRecord(db, userSub, normalizeAccountSyncRecord({
     type: 'task', id: task.id, payload: task, updatedAt: task.updatedAt,
   }, sourceDevice))
-  if (!outcome.accepted) return { error: 'Could not safely add the task', status: 409 }
+  if (!outcome.accepted) {
+    if (clientTaskId) {
+      const existing = await db.prepare(
+        `SELECT record_type, record_id, payload, deleted
+         FROM account_sync_records WHERE user_sub = ? AND record_key = ?`
+      ).bind(userSub, `task:${task.id}`).first()
+      if (existing && Number(existing.deleted) === 1) return { previouslyDeleted: true, taskId: task.id }
+      if (existing && Number(existing.deleted) === 0 && isSameTaskCreation(existing.payload, task)) {
+        let savedTask = existing.payload
+        if (typeof savedTask === 'string') savedTask = JSON.parse(savedTask)
+        return { task: savedTask, alreadyProcessed: true }
+      }
+      if (existing) return { error: 'Task request ID conflicts with an existing task', status: 409 }
+    }
+    return { error: 'Could not safely add the task', status: 409 }
+  }
   return { task }
 }
