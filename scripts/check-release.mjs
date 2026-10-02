@@ -1,4 +1,5 @@
 import { readFileSync } from 'fs'
+import { createPrivateKey, createPublicKey } from 'node:crypto'
 import { join } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -12,6 +13,36 @@ const packageSource = readFileSync(join(rootDir, 'package.json'), 'utf8')
 const tailwindSource = readFileSync(join(rootDir, 'styles/tailwind.css'), 'utf8')
 const builtCss = readFileSync(join(rootDir, 'styles/main.css'), 'utf8')
 const releaseCss = readFileSync(join(rootDir, 'chrome-extension-sync/styles/main.css'), 'utf8')
+
+const assertPublicExtensionKey = (encodedKey, manifestPath) => {
+  if (typeof encodedKey !== 'string' || !encodedKey.trim()) {
+    throw new Error(`${manifestPath} must contain a Chrome extension public key`)
+  }
+
+  const der = Buffer.from(encodedKey, 'base64')
+  const privateKeyTypes = ['pkcs8', 'pkcs1', 'sec1']
+  const containsPrivateKey = privateKeyTypes.some((type) => {
+    try {
+      createPrivateKey({ key: der, format: 'der', type })
+      return true
+    } catch {
+      return false
+    }
+  })
+
+  if (containsPrivateKey) {
+    throw new Error(`${manifestPath} contains private key material; release manifests may contain only a public key`)
+  }
+
+  try {
+    createPublicKey({ key: der, format: 'der', type: 'spki' })
+  } catch {
+    throw new Error(`${manifestPath} must contain a base64-encoded DER SPKI public key`)
+  }
+}
+
+assertPublicExtensionKey(sourceManifest.key, 'manifest.json')
+assertPublicExtensionKey(releaseManifest.key, 'chrome-extension-sync/manifest.json')
 
 if (packageJson.version !== sourceManifest.version || sourceManifest.version !== releaseManifest.version) {
   throw new Error(
