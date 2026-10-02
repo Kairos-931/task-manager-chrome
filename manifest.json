@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "任务管理 - TaskMaster",
-  "version": "3.17.1",
+  "version": "3.17.2",
   "description": "功能完整的任务管理工具，支持列表/日/周/月视图，帮助你高效管理日常任务",
   "short_name": "任务管理",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxEMm6IwTceljSzdsFvKR4YaizFFTVOLzPN/3nFh2jQTDfIObGnI5Yk+Xo5BX+QJIGmwzwuNPnY/R5psRcZqtxQbMq6LnoPtWJPqsYR2QOnrpQMJVeuVSzqMvOsbZx677I0u1jxRUL0dMUx61w2z76Lnpp2IgepB3/nnxzh/suI5CrsYO/G7j47vj0nCy6QgHcAOWsEpn0pABIM67wTkDkIf+hFsIEtl1uEClaVaKNdClay+mPw2GjWVC/dlyl94wIBVWvg/D4ejDEwYaoI5i8+z1em1blf6RZUhfFpdHnTDaqL1k+vYtW4X7XZIqEMRopOu49HUPJiSGSo2yhQu3swIDAQAB",

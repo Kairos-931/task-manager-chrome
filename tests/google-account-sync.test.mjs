@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { applyAccountSyncRecord, GoogleAuthError, normalizeAccountSyncRecord, resolveGoogleIdentity } from '../backend/account-sync.js'
+import { applyAccountSyncRecord, createAccountTaskRecord, GoogleAuthError, normalizeAccountSyncRecord, resolveGoogleIdentity } from '../backend/account-sync.js'
 import worker from '../backend/index.js'
 
 const makeAccountDb = () => {
@@ -29,25 +29,34 @@ const makeAccountDb = () => {
       if (sql.includes('INSERT INTO account_sync_state')) {
         if (!revisions.has(args[0])) revisions.set(args[0], 0)
       } else if (sql.includes('UPDATE account_sync_state SET revision = revision + 1')) {
-        const [, sub, key, updatedAt, , sourceDevice] = args
-        const current = records.get(recordKey(sub, key))
-        const accepted = !current || current.updatedAt < updatedAt ||
-          (current.updatedAt === updatedAt && current.sourceDevice < sourceDevice)
+        const createOnly = !sql.includes('existing.updated_at')
+        const [sub, guardSub, key, updatedAt, , sourceDevice] = args
+        const current = records.get(recordKey(guardSub, key))
+        const accepted = createOnly
+          ? !current
+          : !current || current.updatedAt < updatedAt ||
+            (current.updatedAt === updatedAt && current.sourceDevice < sourceDevice)
         if (accepted) revisions.set(sub, (revisions.get(sub) || 0) + 1)
         return { meta: { changes: accepted ? 1 : 0 } }
       } else if (sql.includes('INSERT INTO account_sync_records')) {
         const [sub, key, type, id, payload, deleted, updatedAt, sourceDevice, stateSub, guardSub] = args
+        const createOnly = !sql.includes('existing.updated_at')
         const current = records.get(recordKey(guardSub, args[10]))
-        const accepted = !current || current.updatedAt < args[11] ||
-          (current.updatedAt === args[11] && current.sourceDevice < args[13])
+        const accepted = createOnly
+          ? !current
+          : !current || current.updatedAt < args[11] ||
+            (current.updatedAt === args[11] && current.sourceDevice < args[13])
         if (!accepted || sub !== stateSub) return { meta: { changes: 0 } }
         const revision = revisions.get(sub)
         records.set(recordKey(sub, key), { sub, key, type, id, payload, deleted, updatedAt, sourceDevice, revision })
       } else if (sql.includes('INSERT INTO account_sync_changes')) {
         const [sub, key, type, id, payload, deleted, updatedAt, sourceDevice, stateSub, guardSub] = args
+        const createOnly = !sql.includes('existing.updated_at')
         const current = records.get(recordKey(guardSub, args[10]))
-        const accepted = !current || current.updatedAt < args[11] ||
-          (current.updatedAt === args[11] && current.sourceDevice < args[13])
+        const accepted = createOnly
+          ? !current
+          : !current || current.updatedAt < args[11] ||
+            (current.updatedAt === args[11] && current.sourceDevice < args[13])
         if (!accepted || sub !== stateSub) return { meta: { changes: 0 } }
         const revision = revisions.get(sub)
         const accountChanges = changes.get(sub) || []
@@ -118,6 +127,25 @@ assert.deepEqual(concurrentChanges.map(change => change.revision), Array.from({ 
 assert.equal(concurrentDb.revisions.get('concurrent-sub'), concurrentRevision)
 assert.equal(JSON.parse(concurrentDb.records.get('concurrent-sub\u0000task:same').payload).title, 'winner')
 assert.equal(concurrentDb.records.size, 2)
+
+const concurrentMobileDb = makeAccountDb()
+const concurrentMobileBody = {
+  clientTaskId: '22222222-2222-4222-8222-222222222222',
+  title: 'Concurrent phone task', description: 'Same request body',
+  priority: 'medium', category: 'default-life', dueDate: '',
+  noTimeLimit: true, duration: 30, completed: false, deviceId: 'mobile-device',
+}
+const concurrentMobileResults = await Promise.all([
+  createAccountTaskRecord(concurrentMobileDb, 'concurrent-mobile-sub', concurrentMobileBody, 1_000),
+  createAccountTaskRecord(concurrentMobileDb, 'concurrent-mobile-sub', concurrentMobileBody, 2_000),
+])
+const concurrentMobileRecordKey = 'concurrent-mobile-sub\u0000task:' + concurrentMobileBody.clientTaskId
+assert.equal(concurrentMobileDb.records.size, 1)
+assert.equal(concurrentMobileDb.revisions.get('concurrent-mobile-sub'), 1)
+assert.equal(concurrentMobileDb.changes.get('concurrent-mobile-sub').length, 1)
+assert.equal(concurrentMobileDb.records.get(concurrentMobileRecordKey).revision, 1)
+assert.equal(concurrentMobileResults.filter(result => result.alreadyProcessed).length, 1)
+assert.ok(concurrentMobileResults.every(result => result.task.id === concurrentMobileBody.clientTaskId))
 
 const keyPair = await crypto.subtle.generateKey({
   name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048,

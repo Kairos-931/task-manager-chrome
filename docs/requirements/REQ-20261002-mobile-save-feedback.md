@@ -40,3 +40,10 @@
 - 定向手机保存状态/安全重试测试与 Google 账号同步回归通过，相关文件 ESLint、`npm run typecheck`、`npm run lint` 通过。
 - 完整 `npm run check` 在 `tests/ui-layout.test.mjs:32` 的既有源码顺序静态断言失败；该断言检查的共享 UI 文件未在本次修改范围内。
 - 本需求以独立 Conventional Commit 本地提交；按批准范围不部署、不 push、不运行 GUI，因此线上用户尚未看到本次改动。
+
+## 并发幂等补强（2026-10-02）
+
+- 补充审查发现同时到达的同 UUID 重试可能都通过外部预读；即使任务主键不会重复，旧写入路径仍可能增加第二次同步修订。
+- 手机带 `clientTaskId` 的创建现在在 D1 原子 batch 中使用“仅记录不存在时才提交”条件；同一 batch 包含 revision、change 和 record 三项写入，丢失竞争的一方读取规范记录并返回幂等结果，不更新时间戳、不增加 revision。没有新增迁移。
+- 新并发回归用同 UUID/同内容/不同服务端时间同时创建，验证仅一条任务、一条同步变更、一个 revision，另一个请求得到 `alreadyProcessed`。
+- 此并发补强以独立 `fix` 提交纳入 3.17.2；相关账号同步回归和 ESLint 通过。未部署或写生产 D1。

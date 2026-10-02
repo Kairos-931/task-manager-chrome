@@ -130,14 +130,21 @@ export const normalizeAccountSyncRecord = (raw, sourceDevice) => {
   }
 }
 
-export const applyAccountSyncRecord = async (db, userSub, record) => {
-  const newerRecordGuard = `NOT EXISTS (
-    SELECT 1 FROM account_sync_records AS existing
-    WHERE existing.user_sub = ? AND existing.record_key = ?
-      AND (existing.updated_at > ? OR
-        (existing.updated_at = ? AND existing.source_device >= ?))
-  )`
-  const guardArgs = [userSub, record.key, record.updatedAt, record.updatedAt, record.sourceDevice]
+export const applyAccountSyncRecord = async (db, userSub, record, { onlyIfMissing = false } = {}) => {
+  const recordGuard = onlyIfMissing
+    ? `NOT EXISTS (
+        SELECT 1 FROM account_sync_records AS existing
+        WHERE existing.user_sub = ? AND existing.record_key = ?
+      )`
+    : `NOT EXISTS (
+        SELECT 1 FROM account_sync_records AS existing
+        WHERE existing.user_sub = ? AND existing.record_key = ?
+          AND (existing.updated_at > ? OR
+            (existing.updated_at = ? AND existing.source_device >= ?))
+      )`
+  const guardArgs = onlyIfMissing
+    ? [userSub, record.key]
+    : [userSub, record.key, record.updatedAt, record.updatedAt, record.sourceDevice]
   const results = await db.batch([
     db.prepare(
       `INSERT INTO account_sync_state (user_sub, revision) VALUES (?, 0)
@@ -145,14 +152,14 @@ export const applyAccountSyncRecord = async (db, userSub, record) => {
     ).bind(userSub),
     db.prepare(
       `UPDATE account_sync_state SET revision = revision + 1
-       WHERE user_sub = ? AND ${newerRecordGuard}`
+       WHERE user_sub = ? AND ${recordGuard}`
     ).bind(userSub, ...guardArgs),
     db.prepare(
       `INSERT INTO account_sync_changes
         (user_sub, revision, record_key, record_type, record_id, payload, deleted, updated_at, source_device)
        SELECT ?, account_sync_state.revision, ?, ?, ?, ?, ?, ?, ?
        FROM account_sync_state
-       WHERE account_sync_state.user_sub = ? AND ${newerRecordGuard}`
+       WHERE account_sync_state.user_sub = ? AND ${recordGuard}`
     ).bind(userSub, record.key, record.type, record.id, record.payload, record.deleted,
       record.updatedAt, record.sourceDevice, userSub, ...guardArgs),
     db.prepare(
@@ -160,7 +167,7 @@ export const applyAccountSyncRecord = async (db, userSub, record) => {
         (user_sub, record_key, record_type, record_id, payload, deleted, updated_at, source_device, revision)
        SELECT ?, ?, ?, ?, ?, ?, ?, ?, account_sync_state.revision
        FROM account_sync_state
-       WHERE account_sync_state.user_sub = ? AND ${newerRecordGuard}
+       WHERE account_sync_state.user_sub = ? AND ${recordGuard}
        ON CONFLICT(user_sub, record_key) DO UPDATE SET
         record_type = excluded.record_type, record_id = excluded.record_id,
         payload = excluded.payload, deleted = excluded.deleted, updated_at = excluded.updated_at,
@@ -265,21 +272,15 @@ export const createAccountTaskRecord = async (db, userSub, body, now = Date.now(
   }
   const outcome = await applyAccountSyncRecord(db, userSub, normalizeAccountSyncRecord({
     type: 'task', id: task.id, payload: task, updatedAt: task.updatedAt,
-  }, sourceDevice))
+  }, sourceDevice), { onlyIfMissing: !!clientTaskId })
   if (!outcome.accepted) {
-    if (clientTaskId) {
-      const existing = await db.prepare(
-        `SELECT record_type, record_id, payload, deleted
-         FROM account_sync_records WHERE user_sub = ? AND record_key = ?`
-      ).bind(userSub, `task:${task.id}`).first()
-      if (existing && Number(existing.deleted) === 1) return { previouslyDeleted: true, taskId: task.id }
-      if (existing && Number(existing.deleted) === 0 && isSameTaskCreation(existing.payload, task)) {
-        let savedTask = existing.payload
-        if (typeof savedTask === 'string') savedTask = JSON.parse(savedTask)
-        return { task: savedTask, alreadyProcessed: true }
-      }
-      if (existing) return { error: 'Task request ID conflicts with an existing task', status: 409 }
+    if (clientTaskId && outcome.canonical?.deleted) {
+      return { previouslyDeleted: true, taskId: task.id }
     }
+    if (clientTaskId && outcome.canonical && isSameTaskCreation(outcome.canonical.payload, task)) {
+      return { task: outcome.canonical.payload, alreadyProcessed: true }
+    }
+    if (clientTaskId && outcome.canonical) return { error: 'Task request ID conflicts with an existing task', status: 409 }
     return { error: 'Could not safely add the task', status: 409 }
   }
   return { task }
