@@ -424,7 +424,9 @@ try {
       Origin: 'https://taskmaster.test',
     },
   })
-  assert.equal((await worker.fetch(mobileAccountRequest(), env)).status, 200)
+  const mobileAccountResponse = await worker.fetch(mobileAccountRequest(), env)
+  assert.equal(mobileAccountResponse.status, 200)
+  assert.equal((await mobileAccountResponse.json()).userSub, 'mobile-google-sub', 'the mobile page can confirm the restored session owner')
   await assert.rejects(getTaskmasterSessionFromRequest(mobileAccountRequest(), env, mobileSession.expiresAt), /expired/)
   assert.equal((await worker.fetch(new Request('https://taskmaster.test/api/google/mobile-auth/start', {
     method: 'POST', headers: { Origin: 'https://attacker.test' },

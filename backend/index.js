@@ -170,7 +170,7 @@ async function handleGoogleAccountApi(request, env, pathname) {
       return accountJson({ ok: true, task: result.task, alreadyProcessed: result.alreadyProcessed === true }, result.alreadyProcessed ? 200 : 201)
     }
     if (pathname === '/api/account/categories') {
-      return accountJson({ categories: await listAccountCategories(env.DB, user.sub) })
+      return accountJson({ userSub: user.sub, categories: await listAccountCategories(env.DB, user.sub) })
     }
     return accountJson({ error: 'Not Found' }, 404)
   } catch (error) {

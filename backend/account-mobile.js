@@ -141,7 +141,8 @@ export const renderAccountMobilePage = (env) => {
       let accountSub = '';
       let googleState = '';
       let googleNonce = '';
-      let categories = ${JSON.stringify(DEFAULT_CATEGORIES)};
+      const defaultCategories = ${JSON.stringify(DEFAULT_CATEGORIES)};
+      let categories = defaultCategories;
       let pendingTaskMutation = null;
       let isSavingTask = false;
       let isConfirmingTaskMutation = false;
@@ -149,20 +150,73 @@ export const renderAccountMobilePage = (env) => {
       let lastSaveWasDefiniteFailure = false;
       let taskWasDeletedAfterSave = false;
       let saveFeedbackTimer = 0;
-      let deviceId = localStorage.getItem('tm_mobile_device_id');
+      let formAccountSub = '';
+      let hasPersistentMobileSession = false;
+      const persistentStorage = (() => { try { return localStorage; } catch { return null; } })();
+      const tabStorage = (() => { try { return sessionStorage; } catch { return null; } })();
+      const readStorage = (storage, key) => { try { return storage?.getItem(key) || null; } catch { return null; } };
+      const writeStorage = (storage, key, value) => { try { storage?.setItem(key, value); return !!storage; } catch { return false; } };
+      const removeStorage = (storage, key) => { try { storage?.removeItem(key); } catch { /* Storage may be unavailable in restricted browsers. */ } };
+      let deviceId = readStorage(persistentStorage, 'tm_mobile_device_id');
       if (!deviceId) {
         deviceId = crypto.randomUUID();
-        localStorage.setItem('tm_mobile_device_id', deviceId);
+        writeStorage(persistentStorage, 'tm_mobile_device_id', deviceId);
       }
 
       const showError = (message) => {
         loginHelp.textContent = message;
         loginHelp.classList.add('error');
       };
-      const authorizationHeaders = () => ({
-        Authorization: 'Bearer ' + googleCredential,
+      const authorizationHeaders = (sessionToken = googleCredential) => ({
+        Authorization: 'Bearer ' + sessionToken,
         'X-TaskMaster-Client': 'mobile',
       });
+      const parseMobileSession = (raw) => {
+        if (!raw) return null;
+        try {
+          const stored = JSON.parse(raw);
+          if (typeof stored?.sessionToken !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(stored.sessionToken) ||
+              typeof stored?.user?.sub !== 'string' || !stored.user.sub ||
+              !Number.isFinite(Number(stored.expiresAt)) || Number(stored.expiresAt) <= Date.now()) return null;
+          return stored;
+        } catch { return null; }
+      };
+      const saveMobileSession = (user, sessionToken, expiresAt) => {
+        const serialized = JSON.stringify({
+          user: { sub: user.sub, email: user.email || '', name: user.name || '' },
+          sessionToken,
+          expiresAt,
+        });
+        hasPersistentMobileSession = writeStorage(persistentStorage, MOBILE_SESSION_KEY, serialized);
+        if (hasPersistentMobileSession) removeStorage(tabStorage, MOBILE_SESSION_KEY);
+        else {
+          removeStorage(persistentStorage, MOBILE_SESSION_KEY);
+          writeStorage(tabStorage, MOBILE_SESSION_KEY, serialized);
+        }
+      };
+      const readMobileSession = () => {
+        const persistentRaw = readStorage(persistentStorage, MOBILE_SESSION_KEY);
+        const persistent = parseMobileSession(persistentRaw);
+        if (persistent) {
+          hasPersistentMobileSession = true;
+          removeStorage(tabStorage, MOBILE_SESSION_KEY);
+          return persistent;
+        }
+        if (persistentRaw) {
+          removeStorage(persistentStorage, MOBILE_SESSION_KEY);
+          removeStorage(tabStorage, MOBILE_SESSION_KEY);
+          return null;
+        }
+        const tabRaw = readStorage(tabStorage, MOBILE_SESSION_KEY);
+        const tabSession = parseMobileSession(tabRaw);
+        if (!tabSession) {
+          if (tabRaw) removeStorage(tabStorage, MOBILE_SESSION_KEY);
+          return null;
+        }
+        hasPersistentMobileSession = writeStorage(persistentStorage, MOBILE_SESSION_KEY, tabRaw);
+        if (hasPersistentMobileSession) removeStorage(tabStorage, MOBILE_SESSION_KEY);
+        return tabSession;
+      };
       const pendingTaskStorageKey = (sub) => MOBILE_PENDING_TASK_PREFIX + sub;
       const setTaskFieldsLocked = (locked) => {
         const noTimeLimit = document.getElementById('noTimeLimit').checked;
@@ -194,9 +248,31 @@ export const renderAccountMobilePage = (env) => {
       const updateSubmitButton = () => {
         const button = document.getElementById('submitBtn');
         button.disabled = isSavingTask;
+        signOutBtn.disabled = isSavingTask;
         button.textContent = isSavingTask
           ? (isConfirmingTaskMutation ? '确认中…' : '添加中…')
           : (pendingTaskMutation ? '安全重试保存' : (taskWasDeletedAfterSave ? '重新添加' : (lastSaveWasDefiniteFailure ? '重试添加' : '添加任务')));
+      };
+      const resetTaskForm = () => {
+        pendingTaskMutation = null;
+        hasUncertainTaskMutation = false;
+        taskWasDeletedAfterSave = false;
+        lastSaveWasDefiniteFailure = false;
+        categories = defaultCategories;
+        document.getElementById('title').value = '';
+        document.getElementById('description').value = '';
+        document.getElementById('priority').value = 'medium';
+        document.getElementById('noTimeLimit').checked = false;
+        document.getElementById('dueDate').value = [today.getFullYear(), String(today.getMonth() + 1).padStart(2, '0'), String(today.getDate()).padStart(2, '0')].join('-');
+        document.getElementById('dueDate').required = true;
+        document.getElementById('duration').value = '60';
+        document.getElementById('completed').checked = false;
+        status.textContent = '';
+        status.classList.remove('error', 'uncertain');
+        hideSaveFeedback();
+        setTaskFieldsLocked(false);
+        renderCategories(defaultCategories);
+        updateSubmitButton();
       };
       const showUncertainTaskSave = () => {
         hasUncertainTaskMutation = true;
@@ -238,7 +314,10 @@ export const renderAccountMobilePage = (env) => {
             typeof stored.payload.priority !== 'string' || typeof stored.payload.category !== 'string' ||
             typeof stored.payload.dueDate !== 'string' || typeof stored.payload.noTimeLimit !== 'boolean' ||
             !Number.isInteger(stored.payload.duration) || typeof stored.payload.completed !== 'boolean' ||
-            typeof stored.payload.deviceId !== 'string') return;
+            typeof stored.payload.deviceId !== 'string') {
+          updateSubmitButton();
+          return;
+        }
         pendingTaskMutation = stored;
         hasUncertainTaskMutation = true;
         lastSaveWasDefiniteFailure = false;
@@ -251,7 +330,9 @@ export const renderAccountMobilePage = (env) => {
       const clearMobileSession = () => {
         googleCredential = '';
         accountSub = '';
-        sessionStorage.removeItem(MOBILE_SESSION_KEY);
+        hasPersistentMobileSession = false;
+        removeStorage(persistentStorage, MOBILE_SESSION_KEY);
+        removeStorage(tabStorage, MOBILE_SESSION_KEY);
       };
       const expireSession = () => {
         clearMobileSession();
@@ -265,22 +346,9 @@ export const renderAccountMobilePage = (env) => {
         showError('Google 登录已失效，请重新登录后继续。');
       };
 
-      const loadCategories = async () => {
+      const renderCategories = (available) => {
         const select = document.getElementById('category');
-        try {
-          const response = await fetch('/api/account/categories', { headers: authorizationHeaders() });
-          if (response.status === 401) throw new Error('Google 登录已失效，请重新登录。');
-          if (!response.ok) throw new Error('分类暂时无法加载；仍可使用默认分类添加任务。');
-          const data = await response.json();
-          if (Array.isArray(data.categories) && data.categories.length) categories = data.categories;
-        } catch (error) {
-          if (error.message.includes('登录已失效')) {
-            expireSession();
-            showError(error.message);
-            return;
-          }
-          status.textContent = error.message;
-        }
+        if (Array.isArray(available) && available.length) categories = available;
         select.replaceChildren(...categories.map(category => {
           const option = document.createElement('option');
           option.value = category.id;
@@ -288,27 +356,50 @@ export const renderAccountMobilePage = (env) => {
           return option;
         }));
       };
+      const loadCategories = async () => {
+        try {
+          const response = await fetch('/api/account/categories', { headers: authorizationHeaders() });
+          if (response.status === 401) throw new Error('Google 登录已失效，请重新登录。');
+          if (!response.ok) throw new Error('分类暂时无法加载；仍可使用默认分类添加任务。');
+          const data = await response.json();
+          if (data.userSub && data.userSub !== accountSub) throw new Error('账号验证异常，请重新登录。');
+          renderCategories(data.categories);
+        } catch (error) {
+          if (error.message.includes('登录已失效') || error.message.includes('账号验证异常')) {
+            expireSession();
+            showError(error.message);
+            return;
+          }
+          status.textContent = error.message;
+          renderCategories();
+        }
+      };
 
-      const showAccount = async (user, sessionToken, expiresAt, persist = true) => {
+      const showAccount = async (user, sessionToken, expiresAt, persist = true, verifiedCategories = null) => {
+        if (formAccountSub && formAccountSub !== user.sub) resetTaskForm();
+        if (persist) saveMobileSession(user, sessionToken, expiresAt);
         googleCredential = sessionToken;
         accountSub = user.sub;
-        if (persist) sessionStorage.setItem(MOBILE_SESSION_KEY, JSON.stringify({
-          user: { sub: user.sub, email: user.email || '', name: user.name || '' },
-          sessionToken,
-          expiresAt,
-        }));
+        formAccountSub = user.sub;
         document.getElementById('googleButton').hidden = true;
         accountTitle.textContent = '已连接 Google 账号';
         accountEmail.textContent = user.email || '账号已验证';
-        taskCard.hidden = false;
-        signOutBtn.hidden = false;
-        loginHelp.textContent = '任务会自动保存到当前账号的数据空间。';
+        taskCard.hidden = true;
+        signOutBtn.hidden = true;
+        loginHelp.textContent = hasPersistentMobileSession
+          ? '任务会自动保存到当前账号的数据空间。'
+          : '任务会保存到当前账号；当前浏览器未能持久保存登录，请使用同一常规浏览器。';
         loginHelp.classList.remove('error');
         hideSaveFeedback();
         status.textContent = '';
         status.classList.remove('error', 'uncertain');
-        await loadCategories();
+        if (verifiedCategories !== null) renderCategories(verifiedCategories);
+        else await loadCategories();
+        if (!googleCredential || accountSub !== user.sub) return false;
+        taskCard.hidden = false;
+        signOutBtn.hidden = false;
         restorePendingTaskMutation();
+        return true;
       };
 
       const onGoogleCredential = async (response) => {
@@ -327,8 +418,7 @@ export const renderAccountMobilePage = (env) => {
           }
           googleState = '';
           googleNonce = '';
-          await showAccount(data.user, data.sessionToken, data.expiresAt);
-          document.getElementById('title').focus();
+          if (await showAccount(data.user, data.sessionToken, data.expiresAt)) document.getElementById('title').focus();
         } catch (error) {
           googleState = '';
           googleNonce = '';
@@ -375,21 +465,68 @@ export const renderAccountMobilePage = (env) => {
         if (!window.google || !window.google.accounts || !window.google.accounts.id) {
           googleScriptAttempts += 1;
           if (googleScriptAttempts < 120) setTimeout(() => { void initializeGoogle(); }, 250);
-          else showError('Google 登录暂时无法加载，请检查网络后刷新页面。');
+          else {
+            showError('Google 登录暂时无法加载，请检查网络后刷新页面。');
+            restartLoginBtn.textContent = '刷新后重新登录';
+            restartLoginBtn.hidden = false;
+          }
           return;
         }
-        if (googleClientInitialized) return;
+        if (googleClientInitialized || googleCredential) return;
         try {
-          const stored = JSON.parse(sessionStorage.getItem(MOBILE_SESSION_KEY) || 'null');
-          if (stored?.sessionToken && stored?.user?.sub && Number(stored.expiresAt) > Date.now()) {
-            await showAccount(stored.user, stored.sessionToken, stored.expiresAt, false);
-          } else {
-            sessionStorage.removeItem(MOBILE_SESSION_KEY);
-          }
           await prepareGoogleClient();
         } catch (error) {
           showError(error.message || '无法启动 Google 登录，请刷新页面重试。');
-          return;
+          restartLoginBtn.textContent = '刷新后重新登录';
+          restartLoginBtn.hidden = false;
+        }
+      };
+      const startMobilePage = async () => {
+        const stored = readMobileSession();
+        if (!stored) return initializeGoogle();
+        accountTitle.textContent = '正在恢复登录…';
+        accountEmail.textContent = '正在确认已保存的账号';
+        loginHelp.textContent = '正在确认上次登录…';
+        loginHelp.classList.remove('error');
+        document.getElementById('googleButton').hidden = true;
+        restartLoginBtn.hidden = true;
+        try {
+          const response = await fetch('/api/account/categories', { headers: authorizationHeaders(stored.sessionToken) });
+          if (response.status === 401) {
+            const body = await response.json().catch(() => ({}));
+            if (body.error === 'TaskMaster session has expired' || body.error === 'TaskMaster session is required') {
+              clearMobileSession();
+              accountTitle.textContent = '需要重新登录';
+              accountEmail.textContent = '';
+              showError('之前的登录已失效，请重新登录。');
+              await initializeGoogle();
+              return;
+            }
+            throw new Error('登录状态暂时无法确认');
+          }
+          if (!response.ok) throw new Error('登录状态暂时无法确认');
+          const data = await response.json();
+          if (!Array.isArray(data.categories) || typeof data.userSub !== 'string') {
+            throw new Error('登录状态暂时无法确认');
+          }
+          if (data.userSub !== stored.user.sub) {
+            clearMobileSession();
+            accountTitle.textContent = '需要重新登录';
+            accountEmail.textContent = '';
+            showError('账号信息不一致，请重新登录。');
+            await initializeGoogle();
+            return;
+          }
+          await showAccount(stored.user, stored.sessionToken, stored.expiresAt, false, data.categories);
+        } catch {
+          taskCard.hidden = true;
+          signOutBtn.hidden = true;
+          document.getElementById('googleButton').hidden = true;
+          accountTitle.textContent = '暂时无法确认登录';
+          accountEmail.textContent = '登录记录已保留';
+          restartLoginBtn.textContent = '重试连接';
+          restartLoginBtn.hidden = false;
+          showError('网络暂时无法确认登录。登录记录已保留，请点击“重试连接”。');
         }
       };
 
@@ -402,6 +539,8 @@ export const renderAccountMobilePage = (env) => {
           revoked = response.ok || response.status === 401;
         } catch { /* Local sign-out still works while offline; the session expires within seven days. */ }
         clearMobileSession();
+        resetTaskForm();
+        formAccountSub = '';
         googleState = '';
         googleNonce = '';
         taskCard.hidden = true;
@@ -529,7 +668,7 @@ export const renderAccountMobilePage = (env) => {
       saveFeedbackRetry.addEventListener('click', async () => { hideSaveFeedback(); await submitTask(); });
       saveFeedbackDismiss.addEventListener('click', hideSaveFeedback);
 
-      initializeGoogle();
+      void startMobilePage();
     })();
   </script>
 </body>
