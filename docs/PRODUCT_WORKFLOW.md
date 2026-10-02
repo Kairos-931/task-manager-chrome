@@ -9,8 +9,10 @@
 - Status: active
 - Active developer requirement: docs/requirements/REQ-20260930-google-account-sync.md (Issue #62; local implementation resumed 2026-10-02)
 - Candidate: 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`; public key and extension ID match the approved Google callback.
-- Awaiting live acceptance: manually load the candidate and exercise Google sign-in, guest mode, and popup/newtab account refresh (Issue #62 remains open; no GUI/install was performed here).
+- Verified live acceptance: user manually loaded the candidate and confirmed Google sign-in plus same-account mobile-add → computer display.
+- Remaining #62 acceptance and old-data ownership confirmation are pending; two-computer, deletion, and full isolation acceptance are not inferred.
 - Issue #64: product approved the candidate identity configuration; product-side issue status remains authoritative.
+- Mobile save-feedback improvement: `docs/requirements/REQ-20261002-mobile-save-feedback.md` is recorded, not approved for implementation; it is not in the developer queue.
 - Last completed requirement: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER\docs\requirements\REQ-20260922-newtab-list-todo-favicon.md` (`2026-09-23`, implemented; awaiting user acceptance)
 - Queue: empty
 ## Operating contract
@@ -80,3 +82,9 @@
 - popup 增加“账号同步”入口；扩展候选构建路径为 `outputs/google-account-sync-candidate-v3.16.2-20261002`。旧 `chrome-extension-sync` 包未覆盖。
 - `npm run build` 通过；typecheck、lint 与 Google 账号定向回归通过。完整 `npm run check` 会停在既有 `tests/ui-layout.test.mjs` 静态断言（检查错误源码文件）；按产品边界未把无关 UI/拆分测试修正混入本需求。
 - 未安装扩展、未启动 GUI、未执行真实 Google 授权、未部署、未写生产数据、未 push/tag。Issue #62 保持开放，等待手动演练和产品验收。
+
+## 2026-10-02 Google 同步真实验收回报
+
+- 用户手动加载短路径候选 3.16.2，Google 登录成功，并明确确认“已经同步 手机添加电脑已经同步显示”。这是同账号手机新增任务在电脑出现的验收证据。
+- 仅记录该扩展登录与手机到电脑新增路径；不推断双电脑、删除墓碑、全部账号隔离或历史未认领数据已验收。旧扩展仍保留，Issue #62 等剩余验收和旧数据归属确认后再决定完成。
+- 用户另要求记录手机添加保存状态反馈问题；产品已登记 `docs/requirements/REQ-20261002-mobile-save-feedback.md`，当前仅记录、未批准开发，不改手机端代码或部署。
