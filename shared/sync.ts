@@ -38,12 +38,13 @@ export const markCloudSynced = () => {
   }, 3000)
 }
 
-export function showToast(container: HTMLElement, message: string, type: 'success' | 'error' = 'success') {
+export function showToast(container: HTMLElement, message: string, type: 'success' | 'error' | 'info' = 'success') {
   const existing = container.querySelector('.toast-message')
   existing?.remove()
 
   const toast = document.createElement('div')
-  toast.className = `toast-message fixed bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm z-50 ${type === 'success' ? 'bg-green-500' : 'bg-red-500'}`
+  const color = type === 'success' ? 'bg-green-500' : type === 'info' ? 'bg-blue-600' : 'bg-red-500'
+  toast.className = `toast-message fixed bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm z-50 ${color}`
   toast.textContent = message
   document.body.appendChild(toast)
 

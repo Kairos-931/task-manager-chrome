@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import ts from 'typescript'
+import { fileURLToPath } from 'node:url'
+import { build } from 'esbuild'
 import worker from '../backend/index.js'
 
 const createDb = (legacyData = null) => {
@@ -275,12 +276,15 @@ const syncedCategoryData = await syncedCategoryResponse.json()
 assert.ok(syncedCategoryData.categories.some(category => category.id === 'project-category'))
 assert.equal(syncedCategoryData.defaultCategory, 'project-category')
 
-const storageSource = await readFile(new URL('../shared/storage.ts', import.meta.url), 'utf8')
-const storageJavaScript = ts.transpileModule(storageSource, {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }
-}).outputText
+const storageBundle = await build({
+  entryPoints: [fileURLToPath(new URL('../shared/storage.ts', import.meta.url))],
+  bundle: true,
+  format: 'esm',
+  platform: 'node',
+  write: false,
+})
 const { getNextLocalSettingsUpdatedAt, normalizeStorageData } = await import(
-  `data:text/javascript;base64,${Buffer.from(storageJavaScript).toString('base64')}`
+  `data:text/javascript,${encodeURIComponent(storageBundle.outputFiles[0].text)}`
 )
 assert.equal(getNextLocalSettingsUpdatedAt(500, 400), 501, 'local settings version must advance beyond the current version')
 assert.equal(getNextLocalSettingsUpdatedAt(500, 600), 600, 'local settings version should use the current clock when it is newer')

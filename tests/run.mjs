@@ -1,4 +1,6 @@
 await import('./incremental-sync.test.mjs')
+await import('./import-merge.test.mjs')
+await import('./import-preview-storage.test.mjs')
 await import('./account-mobile-save-feedback.test.mjs')
 await import('./google-account-sync.test.mjs')
 await import('./google-account-ui.test.mjs')

@@ -1526,6 +1526,60 @@ export const renderSyncModal = (): string => {
         </div>
       </div>
     </div>
+    <div id="importPreviewModal" class="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] hidden" aria-hidden="true">
+      <section role="dialog" aria-modal="true" aria-labelledby="importPreviewTitle" class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-[92%] max-w-xl max-h-[90vh] overflow-hidden flex flex-col">
+        <header class="px-5 py-4 border-b dark:border-gray-700">
+          <div class="flex items-center justify-between gap-3">
+            <h2 id="importPreviewTitle" class="text-lg font-semibold text-gray-900 dark:text-white">合并导入预览</h2>
+            <button id="closeImportPreview" type="button" class="px-2 py-1 rounded text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700" aria-label="关闭导入预览">关闭</button>
+          </div>
+          <p id="importPreviewAccount" class="mt-1 text-xs text-gray-500 dark:text-gray-400"></p>
+        </header>
+        <div class="px-5 py-4 overflow-y-auto space-y-4">
+          <div id="importPreviewWarning" class="hidden rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"></div>
+          <div class="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="任务合并统计">
+            <div class="rounded-lg bg-gray-50 p-2 dark:bg-gray-700"><div class="text-xs text-gray-500 dark:text-gray-300">新增</div><strong id="importTaskAdded" class="text-lg"></strong></div>
+            <div class="rounded-lg bg-gray-50 p-2 dark:bg-gray-700"><div class="text-xs text-gray-500 dark:text-gray-300">更新</div><strong id="importTaskUpdated" class="text-lg"></strong></div>
+            <div class="rounded-lg bg-gray-50 p-2 dark:bg-gray-700"><div class="text-xs text-gray-500 dark:text-gray-300">跳过</div><strong id="importTaskSkipped" class="text-lg"></strong></div>
+            <div class="rounded-lg bg-gray-50 p-2 dark:bg-gray-700"><div class="text-xs text-gray-500 dark:text-gray-300">保留本机</div><strong id="importTaskRetained" class="text-lg"></strong></div>
+          </div>
+          <p id="importCategorySummary" class="text-xs text-gray-600 dark:text-gray-300"></p>
+          <section>
+            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-100">待新增任务 <span id="importPendingTaskCount" class="font-normal text-gray-500"></span></h3>
+            <ul id="importPendingTaskList" class="mt-1 max-h-40 overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700 text-sm"></ul>
+            <p id="importNoPendingTasks" class="hidden mt-2 text-xs text-gray-500">没有待新增任务</p>
+          </section>
+          <section id="importTaskConflictSection" class="hidden">
+            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-100">同 ID 内容冲突 <span class="font-normal text-gray-500">默认保留当前</span></h3>
+            <div id="importTaskConflictList" class="mt-1 space-y-2"></div>
+          </section>
+          <section id="importCategoryConflictSection" class="hidden">
+            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-100">分类内容冲突 <span class="font-normal text-gray-500">默认保留当前</span></h3>
+            <div id="importCategoryConflictList" class="mt-1 space-y-2"></div>
+          </section>
+          <section id="importDeletedSection" class="hidden">
+            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-100">已删除记录</h3>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">默认跳过。勾选某项后才会从备份恢复。</p>
+            <div id="importDeletedTaskList" class="mt-1 space-y-1"></div>
+            <div id="importDeletedCategoryList" class="mt-1 space-y-1"></div>
+          </section>
+          <section id="importBlockedSection" class="hidden">
+            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-100">因关系无法导入</h3>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">相关父任务或分类已删除且未选择恢复，因此跳过这些任务。</p>
+            <ul id="importBlockedTaskList" class="mt-1 space-y-1 text-xs text-gray-600 dark:text-gray-300"></ul>
+          </section>
+          <label id="importHistoryAckWrap" class="hidden flex items-start gap-2 rounded-lg border border-amber-300 p-3 text-sm text-gray-800 dark:border-amber-700 dark:text-gray-200">
+            <input id="importHistoryAck" type="checkbox" class="mt-1">
+            <span>我已检查上方待新增任务，仍继续合并</span>
+          </label>
+          <p id="importPreviewError" class="hidden text-sm text-red-600 dark:text-red-400"></p>
+        </div>
+        <footer class="px-5 py-3 border-t dark:border-gray-700 flex justify-end gap-2">
+          <button id="cancelImportPreview" type="button" class="px-4 py-2 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">取消</button>
+          <button id="confirmImportMerge" type="button" class="px-4 py-2 rounded-lg bg-blue-600 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">合并导入</button>
+        </footer>
+      </section>
+    </div>
     <input type="file" id="syncImportInput" accept=".json" style="opacity:0;position:absolute;pointer-events:none;">
   `
 }

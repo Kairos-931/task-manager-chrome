@@ -1,8 +1,15 @@
-import type { Priority, Task, ViewMode } from './types'
+import type { Category, Priority, Task, ViewMode } from './types'
 import { getState, setState, setLocalSettings, resetEditingTask, formatDate, persistState, persistTaskMutation, moveTaskToDate, loadState, shiftMonth } from './task'
 import { toggleTask as toggleTaskAction, toggleTaskOnDate, deleteTask as deleteTaskAction, addTask, updateTask, addCategory, updateCategory, deleteCategory as deleteCategoryAction, focusTaskToday, replanTask, moveTaskToPool, splitTask, createParentWithChildrenPersisted } from './task'
 import { renderApp, renderSplitChildRow } from './render'
-import { downloadExportFile, importDataFromFile } from './storage'
+import {
+  confirmImportMerge,
+  downloadExportFile,
+  prepareImportPreview,
+  recalculateImportPlan,
+} from './storage'
+import type { ImportPreview } from './storage'
+import type { ImportChoices, ImportPlan } from './import-merge'
 import { showToast } from './sync'
 import { isValidLocalDate } from './replan-policy.js'
 import { bindTaskQuickDates, bindSplitQuickDates, createSubmissionGuard, createResettableSubmissionGuard } from './quick-dates'
@@ -18,6 +25,235 @@ let taskMenuDismissHandler: ((event: PointerEvent) => void) | null = null
 let listScrollHandler: (() => void) | null = null
 let activeDraftStore: TaskDraftStore | null = null
 let recoveredDraft: TaskDraft | undefined
+let activeImportPreview: ImportPreview | null = null
+let activeImportChoices: ImportChoices = {}
+let activeRestoreTaskIds = new Set<string>()
+let activeRestoreCategoryIds = new Set<string>()
+let importSubmitting = false
+
+const setImportHidden = (container: HTMLElement, selector: string, hidden: boolean): void => {
+  container.querySelector<HTMLElement>(selector)?.classList.toggle('hidden', hidden)
+}
+
+const setImportText = (container: HTMLElement, selector: string, text: string): void => {
+  const element = container.querySelector<HTMLElement>(selector)
+  if (element) element.textContent = text
+}
+
+const setImportControlsLocked = (container: HTMLElement, locked: boolean): void => {
+  container.querySelectorAll<HTMLInputElement>('#importPreviewModal input').forEach(input => { input.disabled = locked })
+  container.querySelectorAll<HTMLButtonElement>('#importPreviewModal button').forEach(button => {
+    if (button.id !== 'confirmImportMerge') button.disabled = locked
+  })
+}
+
+const appendImportChoice = (
+  parent: HTMLElement,
+  type: 'task' | 'category',
+  id: string,
+  index: number,
+  value: 'current' | 'file',
+  text: string,
+  checked: boolean,
+): void => {
+  const label = document.createElement('label')
+  label.className = 'inline-flex items-start gap-2 text-xs text-gray-700 dark:text-gray-200'
+  const input = document.createElement('input')
+  input.type = 'radio'
+  input.name = `${type}-import-conflict-${index}`
+  input.value = value
+  input.checked = checked
+  input.dataset.importType = type
+  input.dataset.importId = id
+  input.dataset.importChoice = value
+  input.className = 'mt-0.5'
+  const content = document.createElement('span')
+  content.textContent = text
+  label.append(input, content)
+  parent.append(label)
+}
+
+const appendConflictDetails = <T extends { id: string }>(
+  list: HTMLElement,
+  conflicts: Array<{ id: string; current: T; file: T; choice: 'current' | 'file' }>,
+  type: 'task' | 'category',
+): void => {
+  list.replaceChildren()
+  conflicts.forEach((conflict, index) => {
+    const card = document.createElement('article')
+    card.className = 'rounded-lg border border-gray-200 p-3 dark:border-gray-700'
+    const title = document.createElement('div')
+    title.className = 'text-sm font-medium text-gray-800 dark:text-gray-100'
+    title.textContent = type === 'task'
+      ? (conflict.file as unknown as { title: string }).title
+      : (conflict.file as unknown as { name: string }).name
+    card.append(title)
+
+    const choices = document.createElement('div')
+    choices.className = 'mt-2 flex flex-wrap gap-x-4 gap-y-2'
+    const currentLabel = type === 'task'
+      ? `保留当前：${(conflict.current as unknown as { title: string }).title}`
+      : `保留当前：${(conflict.current as unknown as { name: string }).name}`
+    const fileLabel = type === 'task'
+      ? `采用文件：${(conflict.file as unknown as { title: string }).title}`
+      : `采用文件：${(conflict.file as unknown as { name: string }).name}`
+    appendImportChoice(choices, type, conflict.id, index, 'current', currentLabel, conflict.choice === 'current')
+    appendImportChoice(choices, type, conflict.id, index, 'file', fileLabel, conflict.choice === 'file')
+    card.append(choices)
+
+    const details = document.createElement('details')
+    details.className = 'mt-2 text-xs text-gray-500 dark:text-gray-400'
+    const summary = document.createElement('summary')
+    summary.className = 'cursor-pointer'
+    summary.textContent = '查看两边内容'
+    details.append(summary)
+    const comparison = document.createElement('div')
+    comparison.className = 'mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2'
+    const currentText = document.createElement('p')
+    const fileText = document.createElement('p')
+    currentText.className = 'whitespace-pre-wrap break-words rounded bg-gray-50 p-2 dark:bg-gray-700'
+    fileText.className = 'whitespace-pre-wrap break-words rounded bg-gray-50 p-2 dark:bg-gray-700'
+    currentText.textContent = type === 'task'
+      ? formatImportTask(conflict.current as unknown as Task)
+      : formatImportCategory(conflict.current as unknown as Category)
+    fileText.textContent = type === 'task'
+      ? formatImportTask(conflict.file as unknown as Task)
+      : formatImportCategory(conflict.file as unknown as Category)
+    comparison.append(currentText, fileText)
+    details.append(comparison)
+    card.append(details)
+    list.append(card)
+  })
+}
+
+const formatImportTask = (task: Task): string => [
+  task.title,
+  task.description ? `说明：${task.description}` : '',
+  task.dueDate ? `日期：${task.dueDate}` : '未排期',
+  `时长：${task.duration} 分钟`,
+  task.parentId ? `父任务 ID：${task.parentId}` : '',
+].filter(Boolean).join('\n')
+
+const formatImportCategory = (category: Category): string => `分类：${category.name}\n颜色：${category.color}`
+
+const renderImportPlanSummary = (
+  container: HTMLElement,
+  preview: ImportPreview,
+  plan: ImportPlan,
+): void => {
+  setImportText(container, '#importTaskAdded', String(plan.tasks.added))
+  setImportText(container, '#importTaskUpdated', String(plan.tasks.updated))
+  setImportText(container, '#importTaskSkipped', String(plan.tasks.skipped))
+  setImportText(container, '#importTaskRetained', String(plan.tasks.retained))
+  setImportText(
+    container,
+    '#importCategorySummary',
+    `分类：新增 ${plan.categories.added} · 更新 ${plan.categories.updated} · 跳过 ${plan.categories.skipped} · 保留本机 ${plan.categories.retained}`,
+  )
+
+  const pendingList = container.querySelector<HTMLUListElement>('#importPendingTaskList')
+  pendingList?.replaceChildren()
+  const categoriesById = new Map((plan.data?.categories || preview.currentData.categories).map(category => [category.id, category.name]))
+  for (const task of plan.tasks.addedRecords) {
+    const item = document.createElement('li')
+    item.className = 'px-3 py-2'
+    const category = categoriesById.get(task.category)
+    item.textContent = [task.title, task.dueDate || '未排期', category || '未分类'].join(' · ')
+    pendingList?.append(item)
+  }
+  setImportText(container, '#importPendingTaskCount', `（${plan.tasks.addedRecords.length}）`)
+  setImportHidden(container, '#importNoPendingTasks', plan.tasks.addedRecords.length > 0)
+  setImportHidden(container, '#importTaskConflictSection', plan.tasks.conflicts.length === 0)
+  setImportHidden(container, '#importCategoryConflictSection', plan.categories.conflicts.length === 0)
+  setImportHidden(container, '#importDeletedSection', plan.tasks.deleted.length + plan.categories.deleted.length === 0)
+  setImportHidden(container, '#importBlockedSection', plan.tasks.blocked.length === 0)
+
+  const deletedTasks = container.querySelector<HTMLElement>('#importDeletedTaskList')
+  deletedTasks?.replaceChildren()
+  for (const item of plan.tasks.deleted) {
+    const label = document.createElement('label')
+    label.className = 'flex items-start gap-2 text-xs text-gray-700 dark:text-gray-200'
+    const input = document.createElement('input')
+    input.type = 'checkbox'
+    input.checked = activeRestoreTaskIds.has(item.record.id)
+    input.dataset.restoreType = 'task'
+    input.dataset.restoreId = item.record.id
+    input.className = 'mt-0.5'
+    const text = document.createElement('span')
+    text.textContent = `恢复已删除任务：${item.record.title}`
+    label.append(input, text)
+    deletedTasks?.append(label)
+  }
+  const deletedCategories = container.querySelector<HTMLElement>('#importDeletedCategoryList')
+  deletedCategories?.replaceChildren()
+  for (const item of plan.categories.deleted) {
+    const label = document.createElement('label')
+    label.className = 'flex items-start gap-2 text-xs text-gray-700 dark:text-gray-200'
+    const input = document.createElement('input')
+    input.type = 'checkbox'
+    input.checked = activeRestoreCategoryIds.has(item.record.id)
+    input.dataset.restoreType = 'category'
+    input.dataset.restoreId = item.record.id
+    input.className = 'mt-0.5'
+    const text = document.createElement('span')
+    text.textContent = `恢复已删除分类：${item.record.name}`
+    label.append(input, text)
+    deletedCategories?.append(label)
+  }
+  const blockedList = container.querySelector<HTMLUListElement>('#importBlockedTaskList')
+  blockedList?.replaceChildren()
+  for (const task of plan.tasks.blocked) {
+    const item = document.createElement('li')
+    item.textContent = task.title
+    blockedList?.append(item)
+  }
+
+  const error = container.querySelector<HTMLElement>('#importPreviewError')
+  if (error) {
+    error.textContent = plan.error || ''
+    error.classList.toggle('hidden', plan.valid)
+  }
+  const confirm = container.querySelector<HTMLButtonElement>('#confirmImportMerge')
+  const acknowledgementChecked = container.querySelector<HTMLInputElement>('#importHistoryAck')?.checked === true
+  if (confirm) confirm.disabled = importSubmitting || !plan.valid || (preview.requiresAcknowledgement && !acknowledgementChecked)
+  setImportControlsLocked(container, importSubmitting)
+}
+
+const showImportPreview = (container: HTMLElement, preview: ImportPreview): void => {
+  activeImportPreview = preview
+  activeImportChoices = {}
+  activeRestoreTaskIds = new Set()
+  activeRestoreCategoryIds = new Set()
+  const modal = container.querySelector<HTMLElement>('#importPreviewModal')
+  modal?.classList.remove('hidden')
+  modal?.setAttribute('aria-hidden', 'false')
+  setImportText(container, '#importPreviewAccount', preview.accountLabel)
+  const warning = container.querySelector<HTMLElement>('#importPreviewWarning')
+  if (warning) {
+    warning.textContent = preview.warning || ''
+    warning.classList.toggle('hidden', !preview.warning)
+  }
+  setImportControlsLocked(container, importSubmitting)
+  const acknowledgement = container.querySelector<HTMLInputElement>('#importHistoryAck')
+  if (acknowledgement) acknowledgement.checked = false
+  setImportHidden(container, '#importHistoryAckWrap', !preview.requiresAcknowledgement)
+  const taskConflictList = container.querySelector<HTMLElement>('#importTaskConflictList')
+  if (taskConflictList) appendConflictDetails(taskConflictList, preview.plan.tasks.conflicts, 'task')
+  const categoryConflictList = container.querySelector<HTMLElement>('#importCategoryConflictList')
+  if (categoryConflictList) appendConflictDetails(categoryConflictList, preview.plan.categories.conflicts, 'category')
+  setImportHidden(container, '#importPreviewError', true)
+  renderImportPlanSummary(container, preview, preview.plan)
+}
+
+const closeImportPreview = (container: HTMLElement): void => {
+  const modal = container.querySelector<HTMLElement>('#importPreviewModal')
+  modal?.classList.add('hidden')
+  modal?.setAttribute('aria-hidden', 'true')
+  activeImportPreview = null
+  activeImportChoices = {}
+  activeRestoreTaskIds = new Set()
+  activeRestoreCategoryIds = new Set()
+}
 
 export const initializeTaskDraft = async (container: HTMLElement): Promise<void> => {
   const context = await draftContext()
@@ -1348,6 +1584,90 @@ export const attachEventListeners = (container: HTMLElement): void => {
     }
   })
 
+  const importPreviewModal = container.querySelector<HTMLElement>('#importPreviewModal')
+  const cancelImportPreview = () => {
+    if (importSubmitting) return
+    closeImportPreview(container)
+  }
+  container.querySelector('#closeImportPreview')?.addEventListener('click', cancelImportPreview)
+  container.querySelector('#cancelImportPreview')?.addEventListener('click', cancelImportPreview)
+  importPreviewModal?.addEventListener('click', event => {
+    if (!importSubmitting && event.target === event.currentTarget) cancelImportPreview()
+  })
+  importPreviewModal?.addEventListener('change', event => {
+    if (!activeImportPreview || importSubmitting) return
+    const input = event.target as HTMLInputElement
+    if (input.dataset.importType && input.dataset.importId && input.dataset.importChoice) {
+      activeImportChoices[`${input.dataset.importType}:${input.dataset.importId}`] = input.dataset.importChoice as 'current' | 'file'
+    } else if (input.dataset.restoreType && input.dataset.restoreId) {
+      const target = input.dataset.restoreType === 'task' ? activeRestoreTaskIds : activeRestoreCategoryIds
+      if (input.checked) target.add(input.dataset.restoreId)
+      else target.delete(input.dataset.restoreId)
+    }
+    const plan = recalculateImportPlan(activeImportPreview, activeImportChoices, activeRestoreTaskIds, activeRestoreCategoryIds)
+    activeImportPreview.plan = plan
+    renderImportPlanSummary(container, activeImportPreview, plan)
+  })
+  container.querySelector('#importHistoryAck')?.addEventListener('change', () => {
+    if (activeImportPreview) renderImportPlanSummary(container, activeImportPreview, activeImportPreview.plan)
+  })
+  container.querySelector('#confirmImportMerge')?.addEventListener('click', async () => {
+    if (!activeImportPreview || importSubmitting) return
+    const ack = container.querySelector<HTMLInputElement>('#importHistoryAck')?.checked === true
+    const button = container.querySelector<HTMLButtonElement>('#confirmImportMerge')
+    importSubmitting = true
+    setImportControlsLocked(container, true)
+    if (button) button.textContent = '正在合并…'
+    renderImportPlanSummary(container, activeImportPreview, activeImportPreview.plan)
+    try {
+      const result = await confirmImportMerge(
+        activeImportPreview,
+        activeImportChoices,
+        activeRestoreTaskIds,
+        activeRestoreCategoryIds,
+        ack,
+      )
+      if (result.stale && result.preview) {
+        showImportPreview(container, result.preview)
+        const error = container.querySelector<HTMLElement>('#importPreviewError')
+        if (error) {
+          error.textContent = result.error || '预览已更新，请再次检查'
+          error.classList.remove('hidden')
+        }
+        return
+      }
+      if (!result.success || !result.data) {
+        const error = container.querySelector<HTMLElement>('#importPreviewError')
+        if (error) {
+          error.textContent = result.error || '导入未完成，请重试'
+          error.classList.remove('hidden')
+        }
+        return
+      }
+      const counts = result.plan?.tasks
+      setState(result.data)
+      closeImportPreview(container)
+      reRender()
+      const message = result.cloudSynced === false
+        ? `本机已合并：新增 ${counts?.added || 0}、更新 ${counts?.updated || 0}、跳过 ${counts?.skipped || 0}；Google 云同步待重试`
+        : `导入完成：新增 ${counts?.added || 0}、更新 ${counts?.updated || 0}、跳过 ${counts?.skipped || 0}`
+      showToast(container, message, result.cloudSynced === false ? 'info' : 'success')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '导入失败，请重试'
+      const errorNode = container.querySelector<HTMLElement>('#importPreviewError')
+      if (errorNode) {
+        errorNode.textContent = message
+        errorNode.classList.remove('hidden')
+      }
+    } finally {
+      importSubmitting = false
+      setImportControlsLocked(container, false)
+      const currentButton = container.querySelector<HTMLButtonElement>('#confirmImportMerge')
+      if (currentButton) currentButton.textContent = '合并导入'
+      if (activeImportPreview) renderImportPlanSummary(container, activeImportPreview, activeImportPreview.plan)
+    }
+  })
+
   // 分类管理（仅新标签页版本）
   const isNewTab = window.location.pathname.includes('newtab')
   
@@ -1454,25 +1774,6 @@ export const attachEventListeners = (container: HTMLElement): void => {
       }
     })
 
-    // 导入数据
-    const importInput = container.querySelector('#importFileInput') as HTMLInputElement
-    importInput?.addEventListener('change', async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0]
-      if (file) {
-        const result = await importDataFromFile(file)
-        if (result.success) {
-          // 重新加载状态并渲染
-          await loadState()
-          reRender()
-          showToast(container, '数据导入成功！', 'success')
-        } else {
-          showToast(container, result.error || '导入失败', 'error')
-        }
-        // 清空 input 以便重复选择同一文件
-        importInput.value = ''
-      }
-    })
-
     // ==================== 同步面板 ====================
     container.querySelector('#forceUploadBtn')?.addEventListener('click', async () => {
       const btn = container.querySelector('#forceUploadBtn') as HTMLElement
@@ -1561,15 +1862,15 @@ export const attachEventListeners = (container: HTMLElement): void => {
     syncImportInput?.addEventListener('change', async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0]
       if (file) {
-        const result = await importDataFromFile(file)
-        if (result.success) {
-          await loadState()
-          reRender()
-          showToast(container, '数据导入成功', 'success')
-        } else {
-          showToast(container, result.error || '导入失败', 'error')
+        try {
+          const result = await prepareImportPreview(file)
+          if (result.success && result.preview) showImportPreview(container, result.preview)
+          else showToast(container, result.error || '无法预览此备份', 'error')
+        } catch (error) {
+          showToast(container, error instanceof Error ? error.message : '无法读取此备份', 'error')
+        } finally {
+          syncImportInput.value = ''
         }
-        syncImportInput.value = ''
       }
     })
     // ==================== 备份功能（在同步面板内）====================

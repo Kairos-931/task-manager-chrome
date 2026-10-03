@@ -133,17 +133,15 @@ interface ApplyStorageOptions {
 
 const applyStorageData = (data: StorageData, _options?: ApplyStorageOptions): void => {
   const activeEditingTask = state.editingTask
-  // Keep the original category id for existing task references while removing
-  // duplicate names left by older versions of the sync implementation.
+  // Categories are records keyed by stable ID; equal names can represent
+  // separate user-created categories and must remain distinct.
   const catMap = new Map<string, Category>()
   const cats = data.categories || defaultCategories
   for (const c of cats) {
     const normalized = { ...c, updatedAt: c.updatedAt || Date.now() }
-    if (catMap.has(normalized.name)) {
-      const existing = catMap.get(normalized.name)!
-      catMap.set(normalized.name, { ...existing, color: normalized.color, updatedAt: normalized.updatedAt })
-    } else {
-      catMap.set(normalized.name, normalized)
+    const existing = catMap.get(normalized.id)
+    if (!existing || (normalized.updatedAt || 0) >= (existing.updatedAt || 0)) {
+      catMap.set(normalized.id, normalized)
     }
   }
   state = {

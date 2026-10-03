@@ -1,4 +1,14 @@
 import type { StorageData, Category, Task, RemoteApplyOptions } from './types'
+import {
+  planImportMerge,
+  validateImportObject,
+} from './import-merge'
+import type {
+  ImportChoices,
+  ImportDeletionHistory,
+  ImportPlan,
+  ImportValidation,
+} from './import-merge'
 
 export const STORAGE_KEY = 'tm_data'
 
@@ -61,7 +71,15 @@ const loadFromLocal = (): Promise<StorageData | null> => {
   })
 }
 
-const saveToLocal = (data: StorageData): Promise<void> => {
+let localWriteQueue: Promise<void> = Promise.resolve()
+
+const enqueueLocalWrite = <T>(operation: () => Promise<T>): Promise<T> => {
+  const next = localWriteQueue.then(operation, operation)
+  localWriteQueue = next.then(() => undefined, () => undefined)
+  return next
+}
+
+const writeToLocal = (data: StorageData): Promise<void> => {
   return new Promise((resolve, reject) => {
     chrome.storage.local.set({ [LOCAL_BACKUP_KEY]: JSON.stringify(data) }, () => {
       if (chrome.runtime.lastError) reject(chrome.runtime.lastError)
@@ -70,17 +88,22 @@ const saveToLocal = (data: StorageData): Promise<void> => {
   })
 }
 
-// 按 name 去重
+const saveToLocal = (data: StorageData): Promise<void> =>
+  enqueueLocalWrite(() => writeToLocal(data))
+
+const updateLocalData = (update: (current: StorageData | null) => StorageData): Promise<StorageData> =>
+  enqueueLocalWrite(async () => {
+    const next = update(await loadFromLocal())
+    await writeToLocal(next)
+    return next
+  })
+
+// 分类按稳定 ID 去重；同名不同 ID 是两个不同分类。
 const dedupeCategories = (cats: Category[]): Category[] => {
   const map = new Map<string, Category>()
   for (const c of cats) {
-    if (map.has(c.name)) {
-      // 保留已有 id（任务引用的），后写入的覆盖颜色
-      const existing = map.get(c.name)!
-      map.set(c.name, { ...existing, color: c.color })
-    } else {
-      map.set(c.name, { ...c })
-    }
+    const existing = map.get(c.id)
+    if (!existing || (c.updatedAt || 0) >= (existing.updatedAt || 0)) map.set(c.id, { ...c })
   }
   return [...map.values()]
 }
@@ -208,28 +231,35 @@ export const syncFromCloud = async (): Promise<{ data: StorageData | null; updat
 }
 
 export const normalizeStorageData = (data: StorageData): StorageData => {
-  const categoryIdMap = new Map<string, string>()
-  const categoriesByName = new Map<string, Category>()
+  const categoriesById = new Map<string, Category>()
   const sourceCategories = Array.isArray(data.categories) ? data.categories : createDefaultCategories()
 
   for (const category of sourceCategories) {
     if (!category?.id || !category.name) continue
     if (category.id === LEGACY_STARRED_CATEGORY_ID) continue
-    const definition = defaultCategoryByName.get(category.name)
-    const normalized = definition
-      ? { ...category, id: definition.id, name: definition.name }
-      : { ...category }
-    if (normalized.id !== category.id) categoryIdMap.set(category.id, normalized.id)
-
-    const existing = categoriesByName.get(normalized.name)
+    const normalized = { ...category }
+    const existing = categoriesById.get(normalized.id)
     if (!existing || (normalized.updatedAt || 0) >= (existing.updatedAt || 0)) {
-      categoriesByName.set(normalized.name, normalized)
+      categoriesById.set(normalized.id, normalized)
     }
   }
 
-  const categories = dedupeCategories([...categoriesByName.values()])
-  const categoryNameToId = new Map(categories.map(category => [category.name, category.id]))
-  const resolveCategoryId = (id: string): string => categoryIdMap.get(id) || categoryNameToId.get(id) || id
+  const categories = dedupeCategories([...categoriesById.values()])
+  const categoryNameToIds = new Map<string, string[]>()
+  for (const category of categories) {
+    const ids = categoryNameToIds.get(category.name) || []
+    ids.push(category.id)
+    categoryNameToIds.set(category.name, ids)
+  }
+  const resolveCategoryId = (id: string): string => {
+    if (categories.some(category => category.id === id)) return id
+    const legacyNameMatch = categoryNameToIds.get(id)
+    if (legacyNameMatch?.length === 1) return legacyNameMatch[0]
+    const stableLegacyMatch = defaultCategoryByName.get(id)
+    return stableLegacyMatch && categories.some(category => category.id === stableLegacyMatch.id)
+      ? stableLegacyMatch.id
+      : id
+  }
   const requestedDefault = resolveCategoryId(data.defaultCategory || '')
   const defaultCategory = requestedDefault !== LEGACY_STARRED_CATEGORY_ID &&
     categories.some(category => category.id === requestedDefault)
@@ -768,13 +798,11 @@ const syncIncrementallyNow = async (
     if (!sameSyncAccount(currentAccount, account)) {
       return { success: false, error: 'Google 账号已切换，本次同步已取消，请稍后重试' }
     }
-    const latestLocal = await loadFromLocal()
-    const finalData = latestLocal
+    const finalData = await updateLocalData(latestLocal => latestLocal
       ? applyRemoteChanges(normalizeStorageData(latestLocal), receivedChanges)
-      : mergedData
+      : mergedData)
     const finalRecords = buildCurrentRecords(mergedData, { records: {} })
     await Promise.all([
-      saveToLocal(finalData),
       setLocalValues({
         [cursorKey]: cursor,
         [shadowKey]: { records: finalRecords },
@@ -1066,18 +1094,201 @@ export const getStorageUsage = async (): Promise<{ used: number; total: number; 
 
 export interface ExportData {
   version: string
+  formatVersion: number
+  productVersion: string
   exportTime: string
+  deletionHistory: { complete: boolean; tasks: string[]; categories: string[] }
   data: StorageData
 }
 
-export const exportData = async (): Promise<string> => {
-  const data = await loadData()
-  const exportObj: ExportData = {
-    version: '3.10.0',
-    exportTime: new Date().toISOString(),
-    data
+interface CollectedDeletionHistory {
+  history: ImportDeletionHistory
+  knownTasks: Set<string>
+  knownCategories: Set<string>
+}
+
+const collectDeletionHistory = async (
+  data: StorageData,
+  account: GoogleAccountProfile | null,
+): Promise<CollectedDeletionHistory> => {
+  const accountSub = account?.sub || null
+  const shadow = await getSyncShadow(accountSub)
+  const activeTaskIds = new Set(data.tasks.map(task => task.id))
+  const activeCategoryIds = new Set(data.categories.map(category => category.id))
+  const localDeletedTasks = new Set<string>()
+  const localDeletedCategories = new Set<string>()
+  for (const record of Object.values(shadow.records)) {
+    if (record.deleted) continue
+    if (record.type === 'task' && !activeTaskIds.has(record.id)) localDeletedTasks.add(record.id)
+    if (record.type === 'category' && !activeCategoryIds.has(record.id)) localDeletedCategories.add(record.id)
   }
-  return JSON.stringify(exportObj, null, 2)
+
+  if (!account?.connected) {
+    return {
+      history: {
+        reliable: false,
+        tasks: localDeletedTasks,
+        categories: localDeletedCategories,
+        source: localDeletedTasks.size || localDeletedCategories.size ? 'local' : 'none',
+      },
+      knownTasks: new Set(),
+      knownCategories: new Set(),
+    }
+  }
+
+  const sessionToken = await getLocalValue<string>(GOOGLE_SESSION_KEY, '')
+  if (!sessionToken) {
+    return {
+      history: { reliable: false, tasks: localDeletedTasks, categories: localDeletedCategories, source: 'local' },
+      knownTasks: new Set(),
+      knownCategories: new Set(),
+    }
+  }
+
+  const deviceId = `import-read-${typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : generateId()}`
+  const remoteStates = new Map<string, boolean>()
+  let cursor = 0
+  let pages = 0
+  let complete = false
+  const deadline = Date.now() + 12000
+  try {
+    while (pages < 20) {
+      const timeout = Math.min(5000, deadline - Date.now())
+      if (timeout <= 0) break
+      const response = await fetch(`${TASKMASTER_API_URL}/api/account/sync/incremental`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+          'X-TaskMaster-Client': 'extension',
+        },
+        body: JSON.stringify({ deviceId, cursor, changes: [] }),
+        cache: 'no-store',
+        redirect: 'error',
+        signal: AbortSignal.timeout(timeout),
+      })
+      if (!response.ok) break
+      const result = await response.json() as { changes?: unknown; cursor?: unknown; hasMore?: unknown }
+      if (!Array.isArray(result.changes) || !Number.isSafeInteger(result.cursor) || typeof result.hasMore !== 'boolean') break
+      for (const change of result.changes as Array<Partial<SyncRecord>>) {
+        if ((change.type !== 'task' && change.type !== 'category') || typeof change.id !== 'string' || typeof change.deleted !== 'boolean') continue
+        remoteStates.set(recordKey(change.type, change.id), change.deleted)
+      }
+      pages++
+      if (!result.hasMore) {
+        complete = true
+        break
+      }
+      if (Number(result.cursor) <= cursor) break
+      cursor = Number(result.cursor)
+    }
+  } catch {
+    // Read-only history is best-effort; local import remains available with a warning.
+  }
+
+  if (!complete) {
+    return {
+      history: { reliable: false, tasks: localDeletedTasks, categories: localDeletedCategories, source: 'local' },
+      knownTasks: new Set(),
+      knownCategories: new Set(),
+    }
+  }
+
+  const remoteDeletedTasks = new Set<string>()
+  const remoteDeletedCategories = new Set<string>()
+  const knownTasks = new Set<string>()
+  const knownCategories = new Set<string>()
+  for (const [key, deleted] of remoteStates) {
+    const separator = key.indexOf(':')
+    const type = key.slice(0, separator)
+    const id = key.slice(separator + 1)
+    if (type === 'task') {
+      knownTasks.add(id)
+      if (deleted) remoteDeletedTasks.add(id)
+    } else if (type === 'category') {
+      knownCategories.add(id)
+      if (deleted) remoteDeletedCategories.add(id)
+    }
+  }
+  for (const id of localDeletedTasks) if (!knownTasks.has(id)) remoteDeletedTasks.add(id)
+  for (const id of localDeletedCategories) if (!knownCategories.has(id)) remoteDeletedCategories.add(id)
+  return {
+    history: { reliable: true, tasks: remoteDeletedTasks, categories: remoteDeletedCategories, source: 'google' },
+    knownTasks,
+    knownCategories,
+  }
+}
+
+const includeBackupDeletionHistory = (
+  collected: CollectedDeletionHistory,
+  backup: ImportValidation['deletionHistory'],
+): ImportDeletionHistory => {
+  const tasks = new Set(collected.history.tasks)
+  const categories = new Set(collected.history.categories)
+  if (backup) {
+    for (const id of backup.tasks) if (!collected.knownTasks.has(id)) tasks.add(id)
+    for (const id of backup.categories) if (!collected.knownCategories.has(id)) categories.add(id)
+  }
+  return {
+    reliable: collected.history.reliable || backup?.complete === true,
+    tasks,
+    categories,
+    source: collected.history.source !== 'none' ? collected.history.source : backup?.complete ? 'backup' : 'none',
+  }
+}
+
+const deletionHistoryFingerprint = (history: ImportDeletionHistory): string => JSON.stringify({
+  reliable: history.reliable,
+  source: history.source,
+  tasks: [...history.tasks].sort(),
+  categories: [...history.categories].sort(),
+})
+
+export const exportData = async (): Promise<string> => {
+  return enqueueSync(async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const account = await getGoogleAccountValue()
+      const data = normalizeStorageData(await loadData())
+      const collected = await collectDeletionHistory(data, account)
+      const [latestAccount, latestData] = await Promise.all([getGoogleAccountValue(), loadData()])
+      if (!sameSyncAccount(account, latestAccount) || dataFingerprint(data) !== dataFingerprint(normalizeStorageData(latestData))) {
+        if (attempt === 0) continue
+        throw new Error('任务或账号正在变化，请稍后重新导出')
+      }
+
+      const taskFields = new Set([
+        'id', 'title', 'description', 'priority', 'category', 'dueDate', 'hardDeadline', 'focusDate', 'duration',
+        'repeatType', 'repeatDays', 'repeatInterval', 'repeatEndDate', 'completed', 'completedDates', 'repeatStartDate',
+        'completedAt', 'createdAt', 'updatedAt', 'noTimeLimit', 'isParent', 'parentId',
+      ])
+      const exportObj: ExportData = {
+        version: '4.0.0',
+        formatVersion: 2,
+        productVersion: '4.0.0',
+        exportTime: new Date().toISOString(),
+        deletionHistory: {
+          complete: collected.history.reliable,
+          tasks: [...collected.history.tasks].sort(),
+          categories: [...collected.history.categories].sort(),
+        },
+        data: {
+          tasks: data.tasks.map(task => Object.fromEntries(Object.entries(task).filter(([key]) => taskFields.has(key))) as unknown as Task),
+          categories: data.categories.map(category => ({
+            id: category.id, name: category.name, color: category.color, updatedAt: category.updatedAt,
+          })),
+          defaultCategory: data.defaultCategory,
+          hideCompleted: data.hideCompleted,
+          hideOverdue: data.hideOverdue,
+          showNoTimeLimitOnly: data.showNoTimeLimitOnly,
+          darkMode: data.darkMode,
+          weeklyGoalMinutes: data.weeklyGoalMinutes,
+          weeklyGoalAnchor: data.weeklyGoalAnchor,
+        },
+      }
+      return JSON.stringify(exportObj, null, 2)
+    }
+    throw new Error('任务数据正在变化，请稍后重新导出')
+  })
 }
 
 export const downloadExportFile = async (): Promise<void> => {
@@ -1092,45 +1303,228 @@ export const downloadExportFile = async (): Promise<void> => {
   URL.revokeObjectURL(url)
 }
 
-export const validateImportData = (obj: unknown): { valid: boolean; error?: string; data?: StorageData } => {
-  if (!obj || typeof obj !== 'object') {
-    return { valid: false, error: '数据格式无效' }
-  }
-  const exportObj = obj as Partial<ExportData>
-  if (!exportObj.data || typeof exportObj.data !== 'object') {
-    return { valid: false, error: '缺少 data 字段' }
-  }
-  const data = exportObj.data
-  if (!Array.isArray(data.tasks)) {
-    return { valid: false, error: 'tasks 必须是数组' }
-  }
-  if (!Array.isArray(data.categories)) {
-    return { valid: false, error: 'categories 必须是数组' }
-  }
-  return { valid: true, data: data as StorageData }
+export const validateImportData = (obj: unknown): ImportValidation => validateImportObject(obj)
+
+export interface ImportPreview {
+  fileData: StorageData
+  currentData: StorageData
+  history: ImportDeletionHistory
+  accountSub: string | null
+  accountConnected: boolean
+  accountLabel: string
+  currentFingerprint: string
+  historyFingerprint: string
+  formatVersion?: number
+  backupDeletionHistory?: ImportValidation['deletionHistory']
+  duplicateTasks: number
+  duplicateCategories: number
+  requiresAcknowledgement: boolean
+  warning?: string
+  plan: ImportPlan
 }
 
-export const importDataFromFile = async (file: File): Promise<{ success: boolean; error?: string }> => {
-  return new Promise((resolve) => {
-    const reader = new FileReader()
-    reader.onload = async (e) => {
-      try {
-        const text = e.target?.result as string
-        const parsed = JSON.parse(text)
-        const validation = validateImportData(parsed)
-        if (!validation.valid || !validation.data) {
-          resolve({ success: false, error: validation.error })
-          return
-        }
-        await saveData(validation.data)
-        resolve({ success: true })
-      } catch {
-        resolve({ success: false, error: '文件解析失败，请选择正确的 JSON 文件' })
+export interface ImportPreviewResult {
+  success: boolean
+  error?: string
+  preview?: ImportPreview
+}
+
+export interface ImportCommitResult {
+  success: boolean
+  error?: string
+  stale?: boolean
+  preview?: ImportPreview
+  data?: StorageData
+  plan?: ImportPlan
+  cloudSynced?: boolean
+  cloudError?: string
+}
+
+const dataFingerprint = (data: StorageData): string => {
+  const normalized = normalizeStorageData(data)
+  const { tasks, categories, ...settings } = normalized
+  delete settings.syncSettingsUpdatedAt
+  const taskContent = tasks.map(task => {
+    const content: Partial<Task> = { ...task }
+    delete content.updatedAt
+    return content
+  }).sort((left, right) => (left.id || '').localeCompare(right.id || ''))
+  const categoryContent = categories.map(category => {
+    const content = { ...category }
+    delete content.updatedAt
+    return content
+  }).sort((left, right) => left.id.localeCompare(right.id))
+  return JSON.stringify({ ...settings, tasks: taskContent, categories: categoryContent })
+}
+
+const createImportPreview = async (
+  fileData: StorageData,
+  validation: ImportValidation,
+  duplicateTasks: number,
+  duplicateCategories: number,
+): Promise<ImportPreviewResult> => {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const accountBefore = await getGoogleAccountValue()
+    const currentData = normalizeStorageData(await loadData())
+    const collected = await collectDeletionHistory(currentData, accountBefore)
+    const [accountAfter, latestData] = await Promise.all([getGoogleAccountValue(), loadData()])
+    if (!sameSyncAccount(accountBefore, accountAfter)) {
+      return { success: false, error: 'Google 账号已切换，请重新选择备份文件预览' }
+    }
+    const latest = normalizeStorageData(latestData)
+    if (dataFingerprint(currentData) !== dataFingerprint(latest)) {
+      if (attempt === 0) continue
+      return { success: false, error: '任务数据正在变化，请稍后重新选择备份文件' }
+    }
+
+    const history = includeBackupDeletionHistory(collected, validation.deletionHistory)
+    const plan = planImportMerge(
+      currentData,
+      fileData,
+      history,
+      {},
+      new Set(),
+      new Set(),
+      duplicateTasks,
+      duplicateCategories,
+    )
+    if (!plan.valid) return { success: false, error: plan.error || '备份内容无法安全合并' }
+    const oldFormat = validation.formatVersion !== 2
+    const requiresAcknowledgement = oldFormat || !history.reliable
+    const warning = oldFormat
+      ? '这是旧格式备份，不包含可靠的删除历史。请检查下面的待新增任务，再确认继续。'
+      : !history.reliable
+        ? '当前没有完整的删除历史，部分旧任务无法判断是否曾删除。请检查下面的待新增任务，再确认继续。'
+        : undefined
+    const profile = accountAfter
+    return {
+      success: true,
+      preview: {
+        fileData,
+        currentData,
+        history,
+        accountSub: profile?.sub || null,
+        accountConnected: profile?.connected === true,
+        accountLabel: profile?.connected
+          ? `Google 账号：${profile.email || '已登录'}`
+          : profile?.sub ? '访客模式（Google 账号未连接）' : '访客模式（仅本机）',
+        currentFingerprint: dataFingerprint(currentData),
+        historyFingerprint: deletionHistoryFingerprint(history),
+        formatVersion: validation.formatVersion,
+        backupDeletionHistory: validation.deletionHistory,
+        duplicateTasks,
+        duplicateCategories,
+        requiresAcknowledgement,
+        warning,
+        plan,
+      },
+    }
+  }
+  return { success: false, error: '无法读取稳定的任务数据，请重试' }
+}
+
+export const prepareImportPreview = async (file: File): Promise<ImportPreviewResult> => {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(await file.text())
+  } catch {
+    return { success: false, error: '文件解析失败，请选择正确的 JSON 文件' }
+  }
+  const validation = validateImportData(parsed)
+  if (!validation.valid || !validation.data) return { success: false, error: validation.error || '备份结构无效' }
+  return createImportPreview(
+    validation.data,
+    validation,
+    validation.duplicateTasks || 0,
+    validation.duplicateCategories || 0,
+  )
+}
+
+export const recalculateImportPlan = (
+  preview: ImportPreview,
+  choices: ImportChoices,
+  restoreTaskIds: Set<string>,
+  restoreCategoryIds: Set<string>,
+): ImportPlan => planImportMerge(
+  preview.currentData,
+  preview.fileData,
+  preview.history,
+  choices,
+  restoreTaskIds,
+  restoreCategoryIds,
+  preview.duplicateTasks,
+  preview.duplicateCategories,
+)
+
+export const confirmImportMerge = async (
+  preview: ImportPreview,
+  choices: ImportChoices,
+  restoreTaskIds: Set<string>,
+  restoreCategoryIds: Set<string>,
+  acknowledgeUncertainHistory: boolean,
+): Promise<ImportCommitResult> => {
+  if (preview.requiresAcknowledgement && !acknowledgeUncertainHistory) {
+    return { success: false, error: '请先检查待新增清单并确认继续' }
+  }
+  const validation: ImportValidation = {
+    valid: true,
+    data: preview.fileData,
+    formatVersion: preview.formatVersion,
+    duplicateTasks: preview.duplicateTasks,
+    duplicateCategories: preview.duplicateCategories,
+    deletionHistory: preview.backupDeletionHistory,
+  }
+  const fresh = await createImportPreview(preview.fileData, validation, preview.duplicateTasks, preview.duplicateCategories)
+  if (!fresh.success || !fresh.preview) return { success: false, error: fresh.error || '无法刷新导入预览' }
+  if (fresh.preview.accountSub !== preview.accountSub || fresh.preview.accountConnected !== preview.accountConnected) {
+    return { success: false, error: 'Google 账号已切换，本次导入已取消' }
+  }
+  if (fresh.preview.currentFingerprint !== preview.currentFingerprint ||
+      fresh.preview.historyFingerprint !== preview.historyFingerprint) {
+    return { success: false, stale: true, preview: fresh.preview, error: '任务或删除记录已变化，已更新预览；请再次确认' }
+  }
+
+  const plan = recalculateImportPlan(fresh.preview, choices, restoreTaskIds, restoreCategoryIds)
+  if (!plan.valid || !plan.data) return { success: false, error: plan.error || '当前选择会破坏任务关系，已阻止写入' }
+  const expectedAccount: GoogleAccountProfile | null = preview.accountSub
+    ? { sub: preview.accountSub, email: '', connected: preview.accountConnected }
+    : null
+
+  let committed: { status: 'account' } | { status: 'stale' } | { status: 'saved'; data: StorageData; account: GoogleAccountProfile | null }
+  try {
+    committed = await enqueueSync(async () => enqueueLocalWrite(async () => {
+      const currentAccount = await getGoogleAccountValue()
+      if (!sameSyncAccount(currentAccount, expectedAccount)) return { status: 'account' as const }
+      const currentLocal = await loadFromLocal()
+      const currentData = normalizeStorageData(currentLocal || getDefaultData())
+      if (dataFingerprint(currentData) !== preview.currentFingerprint) {
+        return { status: 'stale' as const }
       }
-    }
-    reader.onerror = () => {
-      resolve({ success: false, error: '文件读取失败' })
-    }
-    reader.readAsText(file)
-  })
+      const localData = normalizeStorageData(plan.data!)
+      localData.tasks = fixRecurringTasks(localData.tasks)
+      await writeToLocal(localData)
+      return { status: 'saved' as const, data: localData, account: currentAccount }
+    }))
+  } catch (error) {
+    return { success: false, error: `本机保存失败：${String(error)}` }
+  }
+
+  if (committed.status === 'account') return { success: false, error: 'Google 账号已切换，本次导入已取消' }
+  if (committed.status === 'stale') {
+    const updated = await createImportPreview(preview.fileData, validation, preview.duplicateTasks, preview.duplicateCategories)
+    return updated.preview
+      ? { success: false, stale: true, preview: updated.preview, error: '任务数据刚刚变化，已更新预览；请再次确认' }
+      : { success: false, error: updated.error || '任务数据变化，无法刷新预览' }
+  }
+
+  let resultData = committed.data
+  let cloudSynced: boolean | undefined
+  let cloudError: string | undefined
+  if (committed.account?.connected) {
+    const syncResult = await enqueueSync(() => syncIncrementallyNow(committed.data, committed.account))
+    cloudSynced = syncResult.success
+    if (syncResult.success && syncResult.data) resultData = syncResult.data
+    else cloudError = syncResult.error || '云端同步待重试'
+  }
+  return { success: true, data: resultData, plan, cloudSynced, cloudError }
 }
