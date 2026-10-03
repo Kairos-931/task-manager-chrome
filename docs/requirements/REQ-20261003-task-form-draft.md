@@ -1,6 +1,6 @@
 # 任务表单中断后恢复草稿（UX-02）
 
-- Status: in_development
+- Status: implemented_awaiting_product_user_acceptance
 - Confirmed date: 2026-10-03
 - GitHub Issue: https://github.com/Kairos-931/task-manager-chrome/issues/70
 - Source: 用户已确认逐项解决交互评审问题，第二项为草稿恢复；首次派发配置为gpt-6-sol/low，后续用户明确恢复Luna/max，当前执行以gpt-6-luna/max为准。
@@ -91,3 +91,5 @@ Chrome Popup 与新标签页的任务新增表单（普通与可拆分模式）�
 2026-10-03 开发补齐已关闭新标签页恢复：无当前tab-ID草稿时，仅查同账号/访客上下文与newtab入口下已关闭tab的草稿，按更新时间迁移最近一份；仍打开的tab-ID跳过且键不修改，旧来源迁移后移除以免清理后再次恢复。使用Tabs API只查询tab ID，不读取URL/title，不增加manifest权限。新增回归覆盖旧tab销毁、新tab-ID恢复、活跃tab隔离、账号隔离、较早草稿保留及清理后不复活。
 
 此次修补验证：`npm run typecheck`、`npm run lint`、`tests/task-draft.test.mjs`通过；最终build/check-release见候选目录 `outputs/TaskMaster-3.18.0-ux02-final3-20261003`。完整测试仍停在既有`ui-layout.test.mjs` DOM顺序静态断言；排除该断言与既有`optional-split-child-dates.test.mjs`后其他`tests/run.mjs`用例通过。当前安装目录再次只读核对为3.17.5，候选版本3.18.0，公钥与权限保持一致；未进行GUI/真人验收。等待产品复核后用户加载验收。
+
+补丁提交 `6e9dd02`（`fix: recover drafts from closed new tabs`），与功能提交 `ef13e56` 同在 `codex/task-form-draft-70`。补丁未改变版本号、权限、公钥或候选源码；build生成候选内popup/newtab构建均包含本次逻辑。
