@@ -1090,6 +1090,7 @@ export const renderModal = (): string => {
             <input type="number" name="repeatInterval" value="${task.repeatInterval}" min="1" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
           </div>
           `}
+          <p id="taskSaveError" class="text-sm text-red-500" role="alert" aria-live="polite"></p>
           <div class="flex gap-3 pt-4">
             ${isEditing ? `<button type="button" id="deleteTaskBtn" class="px-4 py-2 border border-red-500 text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition">删除</button>` : ''}
             <div class="flex-1"></div>

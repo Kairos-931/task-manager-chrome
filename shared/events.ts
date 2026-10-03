@@ -1,5 +1,5 @@
 import type { Priority, Task, ViewMode } from './types'
-import { getState, setState, setLocalSettings, resetEditingTask, formatDate, persistState, moveTaskToDate, loadState, shiftMonth } from './task'
+import { getState, setState, setLocalSettings, resetEditingTask, formatDate, persistState, persistTaskMutation, moveTaskToDate, loadState, shiftMonth } from './task'
 import { toggleTask as toggleTaskAction, toggleTaskOnDate, deleteTask as deleteTaskAction, addTask, updateTask, addCategory, updateCategory, deleteCategory as deleteCategoryAction, focusTaskToday, replanTask, moveTaskToPool, splitTask, createParentWithChildrenPersisted } from './task'
 import { renderApp, renderSplitChildRow } from './render'
 import { downloadExportFile, importDataFromFile } from './storage'
@@ -464,7 +464,43 @@ export const attachEventListeners = (container: HTMLElement): void => {
   // 任务表单提交
   const taskForm = container.querySelector('#taskForm') as HTMLFormElement
   let taskMode: 'normal' | 'parent' = 'normal'
+  let taskSaveInProgress = false
+  let pendingTaskId: string | null = null
+  type TaskFormControl = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement
+  let taskSaveDisabledStates: Array<{ control: TaskFormControl; disabled: boolean }> = []
+  let taskSubmitOriginalLabel = ''
   const parentSubmitGuard = createResettableSubmissionGuard()
+  const setTaskSaveError = (message: string) => {
+    const error = container.querySelector('#taskSaveError') as HTMLElement | null
+    error?.replaceChildren(document.createTextNode(message))
+  }
+  const beginTaskSave = (): boolean => {
+    if (taskSaveInProgress) return false
+    taskSaveInProgress = true
+    const controls = [...(taskForm?.querySelectorAll<TaskFormControl>('input, textarea, select, button') || [])]
+    const closeButton = container.querySelector<HTMLButtonElement>('#closeModal')
+    if (closeButton) controls.push(closeButton)
+    taskSaveDisabledStates = controls.map(control => ({ control, disabled: control.disabled }))
+    controls.forEach(control => { control.disabled = true })
+    const submit = taskForm?.querySelector<HTMLButtonElement>('#taskSubmitBtn')
+    if (submit) {
+      taskSubmitOriginalLabel = submit.textContent || ''
+      submit.textContent = '保存中…'
+    }
+    setTaskSaveError('')
+    const parentError = container.querySelector('#parentTaskError') as HTMLElement | null
+    parentError?.replaceChildren()
+    return true
+  }
+  const endTaskSave = () => {
+    taskSaveInProgress = false
+    const submit = taskForm?.querySelector<HTMLButtonElement>('#taskSubmitBtn')
+    if (submit) {
+      submit.textContent = taskSubmitOriginalLabel || submit.textContent || ''
+    }
+    taskSaveDisabledStates.forEach(({ control, disabled }) => { control.disabled = disabled })
+    taskSaveDisabledStates = []
+  }
   const setTaskMode = (mode: 'normal' | 'parent') => {
     taskMode = mode
     if (taskForm) applyTaskEntryMode(taskForm, mode)
@@ -500,6 +536,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
   })
   taskForm?.addEventListener('submit', async (e) => {
     e.preventDefault()
+    if (taskSaveInProgress) return
     const form = e.target as HTMLFormElement
     const formData = new FormData(form)
     const { editingTask } = getState()
@@ -527,41 +564,54 @@ export const attachEventListeners = (container: HTMLElement): void => {
         return
       }
       if (!parentSubmitGuard.trySubmit()) return
-      const submit = form.querySelector<HTMLButtonElement>('#taskSubmitBtn')
-      if (submit) submit.disabled = true
-      const created = await createParentWithChildrenPersisted({ ...commonData, hardDeadline: (formData.get('parentHardDeadline') as string) || undefined, completed: false, noTimeLimit: true, repeatType: 'none', repeatDays: [], repeatInterval: 1 }, children)
-      if (!created) {
-        ;(container.querySelector('#parentTaskError') as HTMLElement | null)?.replaceChildren(document.createTextNode('本地保存失败，请重试'))
-        if (submit) submit.disabled = false
-        parentSubmitGuard.reset()
-        return
+      if (!beginTaskSave()) return
+      try {
+        const created = await createParentWithChildrenPersisted({ ...commonData, hardDeadline: (formData.get('parentHardDeadline') as string) || undefined, completed: false, noTimeLimit: true, repeatType: 'none', repeatDays: [], repeatInterval: 1 }, children)
+        if (!created) {
+          ;(container.querySelector('#parentTaskError') as HTMLElement | null)?.replaceChildren(document.createTextNode('本地保存失败，请重试'))
+          parentSubmitGuard.reset()
+          return
+        }
+        pendingTaskId = null
+        resetEditingTask()
+        reRender()
+        showToast(container, `已创建大任务和 ${children.length} 个子任务`, 'success')
+      } finally {
+        endTaskSave()
       }
-      resetEditingTask()
-      reRender()
-      showToast(container, `已创建大任务和 ${children.length} 个子任务`, 'success')
       return
     }
 
     if (editingTask?.isParent) {
       const parentCompleted = (form.querySelector('#taskCompleted') as HTMLInputElement)?.checked || false
-      updateTask(editingTask.id, {
-        ...commonData,
-        completed: parentCompleted,
-        completedAt: parentCompleted ? (editingTask.completedAt ?? Date.now()) : undefined
-      })
-      // 勾选父任务完成时，同步把所有未完成的非循环子任务标记完成
-      if (parentCompleted && !editingTask.completed) {
-        const now = Date.now()
-        for (const child of getState().tasks) {
-          if (child.parentId !== editingTask.id || child.completed || child.repeatType !== 'none') continue
-          child.completed = true
-          child.completedAt = now
-          child.updatedAt = now
+      if (!beginTaskSave()) return
+      try {
+        const saved = await persistTaskMutation(() => {
+          updateTask(editingTask.id, {
+            ...commonData,
+            completed: parentCompleted,
+            completedAt: parentCompleted ? (editingTask.completedAt ?? Date.now()) : undefined
+          })
+          // 勾选父任务完成时，同步把所有未完成的非循环子任务标记完成
+          if (parentCompleted && !editingTask.completed) {
+            const now = Date.now()
+            for (const child of getState().tasks) {
+              if (child.parentId !== editingTask.id || child.completed || child.repeatType !== 'none') continue
+              child.completed = true
+              child.completedAt = now
+              child.updatedAt = now
+            }
+          }
+        })
+        if (!saved) {
+          setTaskSaveError('本地保存失败，内容已保留，请重试')
+          return
         }
+        resetEditingTask()
+        reRender()
+      } finally {
+        endTaskSave()
       }
-      await persistState()
-      resetEditingTask()
-      reRender()
       return
     }
 
@@ -598,21 +648,35 @@ export const attachEventListeners = (container: HTMLElement): void => {
       repeatEndDate: repeatType === 'none' ? undefined : repeatEndDate,
       noTimeLimit,
     }
-    
-    if (editingTask) {
-      updateTask(editingTask.id, taskData)
-    } else {
-      addTask(taskData)
+
+    if (!beginTaskSave()) return
+    try {
+      const saved = await persistTaskMutation(() => {
+        if (editingTask) {
+          updateTask(editingTask.id, taskData)
+        } else {
+          const pendingTask = pendingTaskId && getState().tasks.find(task => task.id === pendingTaskId)
+          if (pendingTask && pendingTaskId) updateTask(pendingTaskId, taskData)
+          else pendingTaskId = addTask(taskData, pendingTaskId || undefined)
+        }
+      })
+      if (!saved) {
+        setTaskSaveError('本地保存失败，内容已保留，请重试')
+        return
+      }
+      pendingTaskId = null
+      resetEditingTask()
+      reRender()
+    } finally {
+      endTaskSave()
     }
-    await persistState()
-    resetEditingTask()
-    reRender()
   })
 
   // 模态框关闭
   let taskFormDirty = false
   taskForm?.addEventListener('input', () => {
     taskFormDirty = true
+    setTaskSaveError('')
   })
 
   container.querySelectorAll('.task-focus-toggle').forEach(btn => {
@@ -966,6 +1030,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
   container.querySelector('#taskModal')?.addEventListener('keydown', (e) => {
     if ((e as KeyboardEvent).key === 'Escape') {
       e.preventDefault()
+      if (taskSaveInProgress) return
       closeTaskModal()
     }
   })

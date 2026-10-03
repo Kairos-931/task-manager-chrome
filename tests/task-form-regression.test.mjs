@@ -73,8 +73,8 @@ assert.equal(form.checkValidity(), true, 'valid parent task fields allow submiss
 
 assert.match(eventsSource, /if \(taskForm && !getState\(\)\.editingTask\) setTaskMode\('normal'\)/)
 assert.match(eventsSource, /taskForm\?\.addEventListener\('submit'/)
-assert.match(eventsSource, /addTask\(taskData\)/)
-assert.match(eventsSource, /await persistState\(\)/)
+assert.match(eventsSource, /addTask\(taskData, pendingTaskId \|\| undefined\)/)
+assert.match(eventsSource, /await persistTaskMutation/)
 
 // Render the real form and guard against reintroducing required inputs inside a hidden section.
 globalThis.document = { createElement: () => ({ textContent: '', get innerHTML() { return this.textContent } }) }

@@ -221,11 +221,12 @@ export const getFilteredTasks = (options: { ignoreFilters?: boolean; ignoreCompl
   })
 }
 
-export const addTask = (task: Omit<Task, 'id' | 'createdAt' | 'completedAt' | 'updatedAt' | 'completedDates' | 'repeatStartDate'>): void => {
+export const addTask = (task: Omit<Task, 'id' | 'createdAt' | 'completedAt' | 'updatedAt' | 'completedDates' | 'repeatStartDate'>, id?: string): string => {
+  if (id && state.tasks.some(existing => existing.id === id)) return id
   const now = Date.now()
   const newTask: Task = {
     ...task,
-    id: generateId(),
+    id: id || generateId(),
     createdAt: now,
     updatedAt: now,
     completed: task.completed || false,
@@ -235,6 +236,7 @@ export const addTask = (task: Omit<Task, 'id' | 'createdAt' | 'completedAt' | 'u
     newTask.repeatStartDate = newTask.dueDate
   }
   state.tasks.push(newTask)
+  return newTask.id
 }
 
 export const updateTask = (id: string, updates: Partial<Task>): void => {
@@ -242,6 +244,64 @@ export const updateTask = (id: string, updates: Partial<Task>): void => {
   if (idx !== -1) {
     state.tasks[idx] = { ...state.tasks[idx], ...updates, updatedAt: Date.now() }
   }
+}
+
+const cloneTask = (task: Task): Task => ({
+  ...task,
+  repeatDays: [...task.repeatDays],
+  completedDates: [...task.completedDates]
+})
+
+const sameTask = (left: Task | undefined, right: Task | undefined): boolean => {
+  if (!left || !right) return left === right
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+/**
+ * Persist one task-focused mutation. On a local write failure, only restore
+ * records changed by this mutation, and only when nobody changed those
+ * records again while the write was pending.
+ */
+export const persistTaskMutation = async (
+  mutate: () => boolean | void,
+  persist: () => Promise<boolean> = persistState
+): Promise<boolean> => {
+  const before = new Map(state.tasks.map((task, index) => [task.id, { task: cloneTask(task), index }]))
+  if (mutate() === false) return false
+  const after = new Map(state.tasks.map((task, index) => [task.id, { task: cloneTask(task), index }]))
+  const changedIds = new Set([...before.keys(), ...after.keys()])
+  for (const id of changedIds) {
+    if (sameTask(before.get(id)?.task, after.get(id)?.task)) changedIds.delete(id)
+  }
+
+  let saved = false
+  try {
+    saved = await persist()
+  } catch {
+    saved = false
+  }
+  if (saved) return true
+
+  if (changedIds.size === 0) return false
+  const tasks = [...state.tasks]
+  let restored = false
+  for (const id of changedIds) {
+    const expected = after.get(id)?.task
+    const currentIndex = tasks.findIndex(task => task.id === id)
+    const current = currentIndex === -1 ? undefined : tasks[currentIndex]
+    if (!sameTask(current, expected)) continue
+
+    const original = before.get(id)
+    if (original) {
+      if (currentIndex === -1) tasks.splice(Math.min(original.index, tasks.length), 0, cloneTask(original.task))
+      else tasks[currentIndex] = cloneTask(original.task)
+    } else if (currentIndex !== -1) {
+      tasks.splice(currentIndex, 1)
+    }
+    restored = true
+  }
+  if (restored) state = { ...state, tasks }
+  return false
 }
 
 export const deleteTask = (id: string): void => {
@@ -556,11 +616,7 @@ export const createParentWithChildrenPersisted = async (
   children: SplitChildInput[],
   persist: () => Promise<boolean> = persistState
 ): Promise<boolean> => {
-  const previousTasks = [...state.tasks]
-  if (!createParentWithChildren(parent, children)) return false
-  if (await persist()) return true
-  state.tasks = previousTasks
-  return false
+  return persistTaskMutation(() => createParentWithChildren(parent, children), persist)
 }
 
 export const deleteCategory = (id: string): void => {

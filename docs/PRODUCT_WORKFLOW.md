@@ -7,7 +7,7 @@
 - Shared checkout: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER`
 - Initialized: `2026-09-04`
 - Status: active
-- Active developer requirement: none; Issues #66 and #68 are deployed in version 3.17.4 and awaiting real phone acceptance. Issue #67 remains deployed awaiting product acceptance; Google sync Issue #62 remains open for its remaining acceptance and data-ownership decisions.
+- Active developer requirement: Issue #69 UX-01 implementation is complete in candidate 3.17.5 and awaits user acceptance. Issues #66 and #68 are deployed in version 3.17.4 and awaiting real phone acceptance. Issue #67 remains deployed awaiting product acceptance; Google sync Issue #62 remains open for its remaining acceptance and data-ownership decisions.
 - Candidate: 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`; public key and extension ID match the approved Google callback.
 - Verified live acceptance: user manually loaded the candidate and confirmed Google sign-in plus same-account mobile-add → computer display.
 - Remaining #62 acceptance and old-data ownership confirmation are pending; two-computer, deletion, and full isolation acceptance are not inferred.
@@ -112,3 +112,10 @@
 - 生产只读检查通过：`/` 返回 200 且包含居中保存提示、自动关闭和持久会话恢复代码；Google Web Client ID 已配置；旧入口仍 302 到同源 `/` 并丢弃查询参数；未认证账号与旧任务 API 返回 401。未执行生产任务写入、真实 Google 登录、GUI、迁移、扩展更新、push 或 tag。
 - 开发执行槽已释放。用户下一步：在同一常规手机浏览器刷新页面，验收实际保存反馈；若此前标签页已关闭导致旧 `sessionStorage` 消失，登录一次后再关闭重开页面，确认七天内自动恢复。产品下一步：收集真实手机验收并维护 Issues #66/#68 状态；Issue #62 的剩余验收继续独立跟进。
 - 开发→产品反馈事件 `TM-20261002-mobile-66-68-deploy`，收件产品任务 `01a0f1af-be64-7860-8c0d-660fdb71e2c9`；2026-10-02 15:39 UTC 已发送，`send_message_to_thread` 返回同一 `threadId` 且 `isError=false`。
+
+## 2026-10-03 Issue #69 UX-01 候选完成
+
+- 用户按本轮指令将执行配置改为 gpt-6-sol / low。实现提交位于分支 `codex/task-save-failure-69`，候选版本 3.17.5，待用户加载后验收。
+- 候选目录：`outputs/TaskMaster-3.17.5-final-20261003`。扩展 manifest 公钥与现有已加载目录 `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` 一致；旧加载目录没有被覆盖。
+- typecheck、lint、build 和 UX-01 故障注入回归通过。完整测试仍被既有 `ui-layout` 静态断言阻断；`optional-split-child-dates` 另有跨区块静态正则误报，详情记录在 `docs/requirements/REQ-20261003-task-save-failure.md`。
+- 未执行 GUI/视觉验收、push 或 Worker 部署。Google 同步 Issue #62 仍单独开放，已有手机到电脑新增路径的确认不代表其余账号隔离、删除与数据归属验收完成。
