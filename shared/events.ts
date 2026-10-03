@@ -734,6 +734,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
 
   // 任务表单提交
   const taskForm = container.querySelector('#taskForm') as HTMLFormElement
+  const taskDraftStore = activeDraftStore
   let taskMode: 'normal' | 'parent' = 'normal'
   let taskSaveInProgress = false
   let taskFormDirty = false
@@ -760,26 +761,25 @@ export const attachEventListeners = (container: HTMLElement): void => {
       dueDate: row.querySelector<HTMLInputElement>('.split-child-date')?.value || ''
     }))
     const editingTask = getState().editingTask
-    return { version: 1, context: activeDraftStore?.context || '', updated: Date.now(), mode: taskMode,
+    return { version: 1, context: taskDraftStore?.context || '', updated: Date.now(), mode: taskMode,
       taskId: editingTask?.id, taskUpdatedAt: restored?.taskUpdatedAt ?? editingTask?.updatedAt,
       pendingTaskId: pendingTaskId || undefined, fields, children,
       moreOptionsOpen: taskForm.querySelector<HTMLDetailsElement>('#taskMoreOptions')?.open }
   }
   let baselineDraft: TaskDraft
   const saveDraft = (): Promise<void> => {
-    if (!activeDraftStore) return Promise.resolve()
+    if (!taskDraftStore) return Promise.resolve()
     const draft = captureDraft()
     if (JSON.stringify([draft.mode, draft.fields, draft.children]) === JSON.stringify([baselineDraft.mode, baselineDraft.fields, baselineDraft.children])) {
       void clearDraft()
       return Promise.resolve()
     }
-    const store = activeDraftStore
-    const generation = store.snapshot()
-    return store.save(draft, generation).catch(() => setTaskSaveError('本机暂无法保留草稿，请完成任务后直接保存'))
+    const generation = taskDraftStore.snapshot()
+    return taskDraftStore.save(draft, generation).catch(() => setTaskSaveError('本机暂无法保留草稿，请完成任务后直接保存'))
   }
   const clearDraft = async (): Promise<boolean> => {
-    if (!activeDraftStore) return true
-    try { await activeDraftStore.clear(); return true }
+    if (!taskDraftStore) return true
+    try { await taskDraftStore.clear(); return true }
     catch { setTaskSaveError('草稿清理失败，请稍后重试'); return false }
   }
   const restoreFields = (draft: TaskDraft) => {
@@ -926,7 +926,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
     e.preventDefault()
     if (taskSaveInProgress) return
     try {
-      if (activeDraftStore && await draftContext() !== activeDraftStore.context) {
+      if (taskDraftStore && await draftContext() !== taskDraftStore.context) {
         setTaskSaveError('账号已切换，请返回原账号后继续此草稿')
         return
       }
@@ -968,7 +968,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
       try {
         pendingTaskId ||= crypto.randomUUID()
         await saveDraft()
-        if (activeDraftStore && await draftContext() !== activeDraftStore.context) {
+        if (taskDraftStore && await draftContext() !== taskDraftStore.context) {
           parentSubmitGuard.reset()
           setTaskSaveError('账号已切换，请返回原账号后继续此草稿')
           return
@@ -983,11 +983,13 @@ export const attachEventListeners = (container: HTMLElement): void => {
           return
         }
         pendingTaskId = null
-        const draftCleared = await clearDraft()
+        const draftCleanup = clearDraft()
         resetEditingTask()
         reRender()
         showToast(container, `已创建大任务和 ${children.length} 个子任务`, 'success')
-        if (!draftCleared) showToast(container, '任务已保存，但草稿清理失败', 'error')
+        void draftCleanup.then(draftCleared => {
+          if (!draftCleared) showToast(container, '任务已保存，但草稿清理失败', 'error')
+        })
       } finally {
         endTaskSave()
       }
@@ -1076,7 +1078,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
         pendingTaskId ||= crypto.randomUUID()
         await saveDraft()
       }
-      if (activeDraftStore && await draftContext() !== activeDraftStore.context) {
+      if (taskDraftStore && await draftContext() !== taskDraftStore.context) {
         setTaskSaveError('账号已切换，请返回原账号后继续此草稿')
         return
       }
@@ -1097,11 +1099,13 @@ export const attachEventListeners = (container: HTMLElement): void => {
         return
       }
       pendingTaskId = null
-      const draftCleared = await clearDraft()
+      const draftCleanup = clearDraft()
       resetEditingTask()
       reRender()
-      if (!draftCleared) showToast(container, '任务已保存，但草稿清理失败', 'error')
-      else if (!editingTask) showToast(container, noTimeLimit ? '已添加到任务池' : '任务已添加', 'success')
+      if (!editingTask) showToast(container, noTimeLimit ? '已添加到任务池' : '任务已添加', 'success')
+      void draftCleanup.then(draftCleared => {
+        if (!draftCleared) showToast(container, '任务已保存，但草稿清理失败', 'error')
+      })
     } finally {
       endTaskSave()
     }

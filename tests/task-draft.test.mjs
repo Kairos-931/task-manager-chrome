@@ -15,6 +15,8 @@ const { TaskDraftStore, draftContext, draftSessionId, readLatestTaskDraft } = aw
 const data = new Map()
 let delayNextSet = false
 let releaseSet = null
+let delayNextRemove = false
+let releaseRemove = null
 let openIds = [22]
 const tabQueries = []
 globalThis.testAccount = null
@@ -35,7 +37,15 @@ globalThis.chrome = {
       for (const [key, value] of Object.entries(values)) data.set(key, value)
       callback()
     },
-    remove: (key, callback) => { data.delete(key); callback() }
+    remove: (key, callback) => {
+      if (delayNextRemove) {
+        delayNextRemove = false
+        releaseRemove = () => { data.delete(key); callback() }
+        return
+      }
+      data.delete(key)
+      callback()
+    }
   } }
 }
 
@@ -65,6 +75,20 @@ const generation = a.snapshot()
 await a.clear()
 await a.save(draft('popup:account-a'), generation)
 assert.equal(await a.read(), undefined, 'a delayed pre-clear write cannot revive a cleared draft')
+
+const reopenedForm = new TaskDraftStore('newtab:account-a', 'tab-22')
+const committedDraft = { ...draft('newtab:account-a'), pendingTaskId: 'already-saved-task', fields: { title: '提交前的草稿' } }
+await reopenedForm.save(committedDraft)
+delayNextRemove = true
+const pendingDraftClear = reopenedForm.clear()
+await Promise.resolve()
+assert.ok(releaseRemove, 'clear starts a delayed remove on its captured store and key')
+const newFormDraft = { ...draft('newtab:account-a'), fields: { title: '重开后新填写的草稿' } }
+const pendingNewDraftSave = reopenedForm.save(newFormDraft, reopenedForm.snapshot())
+assert.equal((await reopenedForm.read())?.fields.title, '提交前的草稿', 'the saved draft remains while its cleanup is pending')
+releaseRemove()
+await Promise.all([pendingDraftClear, pendingNewDraftSave])
+assert.equal((await reopenedForm.read())?.fields.title, '重开后新填写的草稿', 'a newly opened form writes after cleanup and is not deleted by the older remove')
 
 globalThis.window.location.pathname = '/newtab/newtab.html'
 assert.equal(await draftSessionId(), 'tab-22')
@@ -97,8 +121,10 @@ assert.equal(noResurrection.draft?.fields.title, '较早关闭的草稿', 'an ol
 
 const source = await readFile(new URL('../shared/events.ts', import.meta.url), 'utf8')
 assert.match(source, /currentDraftConflict\(\)/)
-assert.match(source, /await draftContext\(\) !== activeDraftStore\.context/)
+assert.match(source, /const taskDraftStore = activeDraftStore/)
+assert.match(source, /await draftContext\(\) !== taskDraftStore\.context/)
 assert.match(source, /if \(!saved\) \{[\s\S]*?saveDraft\(\)/)
+assert.match(source, /taskDraftStore\.clear\(\)/)
 assert.match(source, /clearDraft\(\)[\s\S]*?resetEditingTask\(\)/)
 const taskOutput = await build({ entryPoints: [fileURLToPath(new URL('../shared/task.ts', import.meta.url))], bundle: true, format: 'esm', platform: 'node', write: false })
 const { getState, setState, createParentWithChildrenPersisted } = await import(`data:text/javascript,${encodeURIComponent(taskOutput.outputFiles[0].text)}`)

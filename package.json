@@ -1,10 +1,11 @@
 {
   "name": "task-manager-extension",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "type": "module",
   "scripts": {
     "build": "tsc && node scripts/generate-icons.js && npx tailwindcss -i ./styles/tailwind.css -o ./styles/main.css --minify && node scripts/bundle.mjs && node scripts/copy-assets.js && node scripts/check-release.mjs",
     "test": "node --experimental-strip-types tests/run.mjs",
+    "test:newtab-browser": "node tests/newtab-native-submit.browser.test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint shared backend/index.js demo scripts/serve-demo.mjs tests",
     "check": "npm run typecheck && npm run lint && npm test",

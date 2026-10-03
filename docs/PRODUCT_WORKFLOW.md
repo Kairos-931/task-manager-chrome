@@ -7,7 +7,7 @@
 - Shared checkout: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER`
 - Initialized: `2026-09-04`
 - Status: active
-- Active developer requirement: None; Issue #71 UX-05 is implemented and deployed, awaiting user acceptance. Extension v3.19.0 is in the stable loaded directory; Worker Version ID `96d6b39d-a3d5-4972-ab4f-b91d505dee05` serves 100% traffic at the unchanged URL. The implementation slot is released. Current execution profile used for #71: gpt-6-sol / low per the user's latest developer-thread instruction. Issue #70 UX-02 candidate 3.18.0 and #69 UX-01 remain awaiting user acceptance; #66/#68 are deployed awaiting real phone acceptance; #67 awaits product acceptance. Google sync Issue #62 remains a separate open item for remaining acceptance and data-ownership decisions.
+- Active developer requirement: Issue #73, newtab add stuck after click. Version 4.0.2 is in the unchanged stable loaded directory `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`; user reload and acceptance are pending. Issue #71 UX-05 was implemented and deployed, awaiting its own user acceptance; Worker Version ID `96d6b39d-a3d5-4972-ab4f-b91d505dee05` serves 100% traffic at the unchanged URL. Issue #70 UX-02 candidate 3.18.0 and #69 UX-01 remain awaiting user acceptance; #66/#68 are deployed awaiting real phone acceptance; #67 awaits product acceptance. Google sync Issue #62 remains a separate open item for remaining acceptance and data-ownership decisions.
 - UX-05 extension v3.19.0 at `outputs/TaskMaster-3.19.0-ux05-20261003`; public key and permissions match the stable loaded directory `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`. Pre-update backup: `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-ux05-71-20261003`. Worker deployed as Version ID `96d6b39d-a3d5-4972-ab4f-b91d505dee05`; prior rollback point `b327393b-e2f0-4ced-bdda-ec4a3ae30664`. The #62 Google sync candidate was 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`.
 - Verified live acceptance: user manually loaded the candidate and confirmed Google sign-in plus same-account mobile-add → computer display.
 - Remaining #62 acceptance and old-data ownership confirmation are pending; two-computer, deletion, and full isolation acceptance are not inferred.
@@ -120,6 +120,13 @@
 - typecheck、lint、build 和 UX-01 故障注入回归通过。完整测试仍被既有 `ui-layout` 静态断言阻断；`optional-split-child-dates` 另有跨区块静态正则误报，详情记录在 `docs/requirements/REQ-20261003-task-save-failure.md`。
 - 未执行 GUI/视觉验收、push 或 Worker 部署。Google 同步 Issue #62 仍单独开放，已有手机到电脑新增路径的确认不代表其余账号隔离、删除与数据归属验收完成。
 - 开发→产品反馈事件 `TM-20261003-task-save-failure-69` 于 2026-10-03 04:53 UTC 发送至任务 `01a0f1af-be64-7860-8c0d-660fdb71e2c9`；工具返回相同 `threadId` 且 `isError=false`。
+
+## 2026-10-03 Issue #73 新标签页添加反馈修复
+
+- 本地修复提交 `fix: close newtask modal after local save`，版本 4.0.2；稳定加载目录保持原路径，更新前 4.0.1 备份为 `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-newtab-add-73-20261003-4.0.1`。更新后扩展 ID、公钥、权限不变，14 个加载文件 SHA-256 与候选逐项一致。
+- 已定位可复现的代码阻塞：本地任务持久化成功后等待草稿删除回调才关弹窗和解锁；修复使本地成功先完成 UI 收尾，迟到清理继续按原 store/key/context 串行处理。Edge 隔离 E2E 覆盖延迟清理下立即开新表单、保留新草稿、重载时抑制指向已保存任务的旧草稿、失败重试、合成账号远端刷新。
+- 候选目录 `outputs/TaskMaster-4.0.2-newtab-add-73-20261003-r3`。release build/check、typecheck、lint、4 项定向回归及 Edge 154 `test:newtab-browser` 通过；Edge 用例包含普通/大任务延迟草稿清理。此前已知 `npm test` 有无关旧 `ui-layout` 静态断言失败，本次不报告全量测试通过。
+- 开发→产品状态已发送。Issue #73 保持开放，待用户 Reload 原扩展并重新打开新标签页做一次 title-only 新增验收；未触碰真实 Google 凭据/任务、GUI、部署或 push。产品核对后的错误触发仍为假设，不能宣称已唯一归因真人卡顿。
 
 
 ## 2026-10-03 Issue #71 UX-05 实施检查点
