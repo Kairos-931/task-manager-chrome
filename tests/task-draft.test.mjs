@@ -15,13 +15,17 @@ const { TaskDraftStore, draftContext, draftSessionId, readLatestTaskDraft } = aw
 const data = new Map()
 let delayNextSet = false
 let releaseSet = null
+let openIds = [22]
+const tabQueries = []
 globalThis.testAccount = null
 globalThis.window = { location: { pathname: '/popup/popup.html' } }
 globalThis.chrome = {
   runtime: { lastError: null },
-  tabs: { getCurrent: callback => callback({ id: 22 }) },
+  tabs: { getCurrent: callback => callback({ id: 22 }), query: (query, callback) => { tabQueries.push(query); callback(openIds.map(id => ({ id }))) } },
   storage: { local: {
-    get: (keys, callback) => callback(Object.fromEntries(keys.filter(key => data.has(key)).map(key => [key, data.get(key)]))),
+    get: (keys, callback) => callback(keys === null
+      ? Object.fromEntries(data)
+      : Object.fromEntries(keys.filter(key => data.has(key)).map(key => [key, data.get(key)]))),
     set: (values, callback) => {
       if (delayNextSet) {
         delayNextSet = false
@@ -68,6 +72,28 @@ const tab22 = new TaskDraftStore('newtab:account-a', 'tab-22')
 const tab23 = new TaskDraftStore('newtab:account-a', 'tab-23')
 await tab22.save(draft('newtab:account-a'))
 assert.equal(await tab23.read(), undefined, 'another tab has its own storage slot')
+
+const activeTabKey = 'tm_task_draft_v1:newtab:account-a:tab-23'
+const closedOlderKey = 'tm_task_draft_v1:newtab:account-a:tab-101'
+const closedLatestKey = 'tm_task_draft_v1:newtab:account-a:tab-102'
+const anotherAccountKey = 'tm_task_draft_v1:newtab:account-b:tab-103'
+data.set(activeTabKey, { ...draft('newtab:account-a'), updated: 50, fields: { title: '仍打开标签的草稿' } })
+data.set(closedOlderKey, { ...draft('newtab:account-a'), updated: 60, fields: { title: '较早关闭的草稿' } })
+data.set(closedLatestKey, { ...draft('newtab:account-a'), updated: 70, fields: { title: '最近关闭的草稿' } })
+data.set(anotherAccountKey, { ...draft('newtab:account-b'), updated: 80, fields: { title: '另一个账号的草稿' } })
+openIds = [22, 23, 24]
+const recovered = await readLatestTaskDraft('newtab:account-a', 'tab-24')
+assert.equal(recovered.draft?.fields.title, '最近关闭的草稿', 'a new tab ID recovers the newest draft from a closed same-account tab')
+assert.deepEqual(tabQueries.at(-1), {}, 'recovery queries tab IDs only and requests no sensitive tab properties')
+assert.equal(data.has(closedLatestKey), false, 'the adopted source key is moved so a later clear cannot resurrect it')
+assert.equal(data.get(activeTabKey).fields.title, '仍打开标签的草稿', 'drafts owned by open tabs are neither loaded nor overwritten')
+assert.equal(data.get(closedOlderKey).fields.title, '较早关闭的草稿', 'other valid closed drafts remain untouched')
+assert.equal(data.get(anotherAccountKey).fields.title, '另一个账号的草稿', 'another account remains isolated')
+await recovered.store.clear()
+assert.equal(await recovered.store.read(), undefined, 'clearing the recovered draft removes the only copy that was adopted')
+openIds = [22, 23, 24, 25]
+const noResurrection = await readLatestTaskDraft('newtab:account-a', 'tab-25')
+assert.equal(noResurrection.draft?.fields.title, '较早关闭的草稿', 'an older separate draft may remain, but the cleared draft is gone')
 
 const source = await readFile(new URL('../shared/events.ts', import.meta.url), 'utf8')
 assert.match(source, /currentDraftConflict\(\)/)

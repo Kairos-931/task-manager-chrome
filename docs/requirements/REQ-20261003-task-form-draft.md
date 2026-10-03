@@ -1,9 +1,9 @@
 # 任务表单中断后恢复草稿（UX-02）
 
-- Status: implemented_awaiting_user_acceptance
+- Status: in_development
 - Confirmed date: 2026-10-03
 - GitHub Issue: https://github.com/Kairos-931/task-manager-chrome/issues/70
-- Source: 用户已确认逐项解决交互评审问题，第二项为草稿恢复；用户指定后续使用 gpt-6-sol / low。
+- Source: 用户已确认逐项解决交互评审问题，第二项为草稿恢复；首次派发配置为gpt-6-sol/low，后续用户明确恢复Luna/max，当前执行以gpt-6-luna/max为准。
 
 ## PRD 摘要
 
@@ -68,14 +68,26 @@ Chrome Popup 与新标签页的任务新增表单（普通与可拆分模式）�
 - 原任务已删除：保留草稿，提示“原任务已删除，草稿尚未保存。”提供“另存为新任务”和“放弃草稿”。另存须用新ID，通过正常新增保存链路；原删除记录和墓碑不得复活或清理。
 - 状态与时序：选择覆盖/另存后仍要完成本地持久化才清草稿；失败保留输入并复用#69安全重试。同一新任务重试复用新ID。明确放弃才清草稿，没有选择、关闭整个入口、存储失败均不静默丢弃。
 - 保存前需再核对账号归属与目标任务当前状态；若从恢复时到保存前又发生新修改/删除，重新呈现对应风险状态，不用旧的一次选择绕过新变化。此检测沿用已有任务更新时间/本地同步语义，不扩展云端协议、版本锁或字段合并系统。
-- 影响：正常恢复流程不增加步骤；只有确有修改/删除的恢复路径要求一次明确选择，避免用户的草稿覆盖其后续工作或重建已删除任务。模型和预算边界按用户最新指示使用gpt-6-luna/max。
+- 影响：正常恢复流程不增加步骤；只有确有修改/删除的恢复路径要求一次明确选择，避免用户的草稿覆盖其后续工作或重建已删除任务。该产品决定时模型和预算边界为gpt-6-sol/low（保留历史记录）。
 - 增补验收：无显式选择不写任务；覆盖保留ID/系统字段与历史；另存使用新ID且原墓碑保留；失败、重复提交与后续新变动继续受保护；账号变化阻止旧草稿提交。
 - 发送凭据：需求最初于2026-10-03按gpt-6-sol/low派发；用户随后明确要求“继续使用露娜max开发”，并说明已手工切到Luna。最新运行配置以用户纠正及当前AGENTS.md为准，功能范围不变。
 
 ## 交付记录
+
+### 2026-10-03 产品复核候选与验收缺口
+
+开发提交ef13e56，候选TaskMaster-3.18.0-ux02-final2-20261003。产品验证发布检查与task-draft回归通过，manifest3.18.0且身份/权限与安装包一致。全量check两处既有断言失败，真人/GUI验收未做。
+
+尚未更新安装目录：现有manifest仍3.17.5。源码task-draft.ts中newtab使用tab-ID作为会话，readLatestTaskDraft仅查该ID对应键；新标签页关闭后换新tab-ID，没有查找/恢复已关闭页面草稿的路径，未满足本规格“同一入口重新打开恢复”的规则。要求补齐：同账号/访客、同newtab入口恢复已关闭标签页的最近未提交草稿；不能抢占/覆盖仍打开标签页草稿，不自动提交，不跨账号，不复活已成功清理草稿。多个已关闭草稿恢复最近一份即可，其余合法数据保留。采用最小本机实现，不增加草稿管理页面或云协议/权限。补充销毁旧tab-ID、分配新tab-ID的行为回归及多仍存活tab草稿隔离验证；Luna/max，范围不扩展。
+
+开发报告中Sol/low派发句属于历史工具凭据。2026-10-03用户随后明确恢复Luna/max，产品已发送同项配置修正；当前配置以Approved model与canonical AGENTS的最新条款为准，不沿用隔离副本的旧Next-development句。该缺口已由send_message_to_thread成功送达开发任务，模型gpt-6-luna/thinking max；本项继续in_development，未开始下一项。
 
 2026-10-03 主开发终态completed、runtime idle已核对，#69旧验收保留。临发送再次检查仍空闲，使用send_message_to_thread成功交付01a0f6ce-2b91-7343-bb37-1b3f5d3d467a，最初model gpt-6-sol、thinking low；用户后续明确纠正当前执行配置为gpt-6-luna/max。UX-02/#70成为唯一在执行事项。
 
 2026-10-03 开发在干净工作树、分支 `codex/task-form-draft-70` 实现：`shared/task-draft.ts` 本机分入口/账号/标签草稿存取及清理序列；表单自动捕获和恢复；编辑目标更新时间与删除状态的显式选择；新增和父子任务稳定ID防成功后草稿清理失败造成重复。版本从 3.17.5 提升到 3.18.0，保留 manifest 公钥。
 
 验证：`npm run typecheck`、`npm run lint`、草稿与 #69 定向测试通过；`npm run build` 与 `check-release` 在候选目录 `outputs/TaskMaster-3.18.0-ux02-final2-20261003` 通过。排除基线已知的 `ui-layout.test.mjs`、`optional-split-child-dates.test.mjs` 静态断言后，其余 `tests/run.mjs` 用例通过；原样全量 `npm test` 仍先停在 `ui-layout` 断言。未做 GUI/真人操作验收，未改已加载扩展目录、部署 Worker、推送或发布 tag。下一步由产品核对候选和用户 Reload 验收；#62 Google 同步仍按独立 Issue 处理。
+
+2026-10-03 开发补齐已关闭新标签页恢复：无当前tab-ID草稿时，仅查同账号/访客上下文与newtab入口下已关闭tab的草稿，按更新时间迁移最近一份；仍打开的tab-ID跳过且键不修改，旧来源迁移后移除以免清理后再次恢复。使用Tabs API只查询tab ID，不读取URL/title，不增加manifest权限。新增回归覆盖旧tab销毁、新tab-ID恢复、活跃tab隔离、账号隔离、较早草稿保留及清理后不复活。
+
+此次修补验证：`npm run typecheck`、`npm run lint`、`tests/task-draft.test.mjs`通过；最终build/check-release见候选目录 `outputs/TaskMaster-3.18.0-ux02-final3-20261003`。完整测试仍停在既有`ui-layout.test.mjs` DOM顺序静态断言；排除该断言与既有`optional-split-child-dates.test.mjs`后其他`tests/run.mjs`用例通过。当前安装目录再次只读核对为3.17.5，候选版本3.18.0，公钥与权限保持一致；未进行GUI/真人验收。等待产品复核后用户加载验收。

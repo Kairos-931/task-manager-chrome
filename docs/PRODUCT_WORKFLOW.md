@@ -7,8 +7,8 @@
 - Shared checkout: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER`
 - Initialized: `2026-09-04`
 - Status: active
-- Active developer requirement: Issue #70 UX-02 task form draft recovery is implemented in candidate 3.18.0 and awaits user acceptance; execution profile is gpt-6-luna / max per latest user instruction. Issue #69 UX-01 remains awaiting user acceptance; Issues #66 and #68 are deployed in version 3.17.4 and awaiting real phone acceptance. Issue #67 remains deployed awaiting product acceptance; Google sync Issue #62 remains open for its remaining acceptance and data-ownership decisions.
-- Current UX-02 candidate: 3.18.0 at `outputs/TaskMaster-3.18.0-ux02-final2-20261003`; public key and extension ID match the approved Google callback. The #62 Google sync candidate was 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`.
+- Active developer requirement: Issue #70 UX-02 task form draft recovery is being completed in candidate 3.18.0; execution profile is gpt-6-luna / max per latest user instruction. Issue #69 UX-01 remains awaiting user acceptance; Issues #66 and #68 are deployed in version 3.17.4 and awaiting real phone acceptance. Issue #67 remains deployed awaiting product acceptance; Google sync Issue #62 remains open for its remaining acceptance and data-ownership decisions.
+- Current UX-02 candidate: 3.18.0 at `outputs/TaskMaster-3.18.0-ux02-final3-20261003`; public key and extension ID match the approved Google callback. The #62 Google sync candidate was 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`.
 - Verified live acceptance: user manually loaded the candidate and confirmed Google sign-in plus same-account mobile-add → computer display.
 - Remaining #62 acceptance and old-data ownership confirmation are pending; two-computer, deletion, and full isolation acceptance are not inferred.
 - Issue #64: product approved the candidate identity configuration; product-side issue status remains authoritative.

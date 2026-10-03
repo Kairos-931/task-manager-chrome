@@ -26,11 +26,27 @@ const storageGet = (key: string): Promise<TaskDraft | undefined> => new Promise(
     else resolve(result[key] as TaskDraft | undefined)
   })
 })
+const storageGetAll = (): Promise<Record<string, unknown>> => new Promise((resolve, reject) => {
+  chrome.storage.local.get(null, result => {
+    if (chrome.runtime.lastError) reject(chrome.runtime.lastError)
+    else resolve(result)
+  })
+})
 const storageSet = (key: string, draft: TaskDraft): Promise<void> => new Promise((resolve, reject) => {
   chrome.storage.local.set({ [key]: draft }, () => chrome.runtime.lastError ? reject(chrome.runtime.lastError) : resolve())
 })
 const storageRemove = (key: string): Promise<void> => new Promise((resolve, reject) => {
   chrome.storage.local.remove(key, () => chrome.runtime.lastError ? reject(chrome.runtime.lastError) : resolve())
+})
+
+const openTabIds = (): Promise<Set<number>> => new Promise((resolve, reject) => {
+  const tabs = chrome.tabs as typeof chrome.tabs & {
+    query(queryInfo: Record<string, never>, callback: (result: Array<{ id?: number }>) => void): void
+  }
+  tabs.query({}, result => {
+    if (chrome.runtime.lastError) reject(chrome.runtime.lastError)
+    else resolve(new Set(result.flatMap(tab => tab.id === undefined ? [] : [tab.id])))
+  })
 })
 
 export class TaskDraftStore {
@@ -80,7 +96,30 @@ export const draftSessionId = async (): Promise<string> => {
 
 export const readLatestTaskDraft = async (context: string, sessionId: string): Promise<{ store: TaskDraftStore; draft?: TaskDraft }> => {
   const store = new TaskDraftStore(context, sessionId)
-  const draft = await store.read()
-  if (draft?.version !== 1 || draft.context !== context) return { store }
-  return { store, draft }
+  const currentDraft = await store.read()
+  if (currentDraft?.version === 1 && currentDraft.context === context) return { store, draft: currentDraft }
+  if (!context.startsWith('newtab:') || !sessionId.startsWith('tab-')) return { store }
+
+  const [openIds, values] = await Promise.all([openTabIds(), storageGetAll()])
+  const sourcePrefix = `${PREFIX}${context}:tab-`
+  const candidates = Object.entries(values).flatMap(([key, value]) => {
+    if (!key.startsWith(sourcePrefix) || key === store.key) return []
+    const tabId = Number(key.slice(sourcePrefix.length))
+    const draft = value as TaskDraft
+    if (!Number.isSafeInteger(tabId) || openIds.has(tabId) || draft?.version !== 1 || draft.context !== context) return []
+    return [{ key, draft }]
+  }).sort((left, right) => right.draft.updated - left.draft.updated)
+  const orphan = candidates[0]
+  if (!orphan) return { store }
+
+  // Copy first, then remove the closed tab's key. If either storage operation
+  // fails, keep the original available for a later reopen and avoid recovery.
+  await store.save(orphan.draft)
+  try {
+    await storageRemove(orphan.key)
+  } catch (error) {
+    await store.clear().catch(() => undefined)
+    throw error
+  }
+  return { store, draft: orphan.draft }
 }
