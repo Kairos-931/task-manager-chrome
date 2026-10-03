@@ -1101,6 +1101,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
       resetEditingTask()
       reRender()
       if (!draftCleared) showToast(container, '任务已保存，但草稿清理失败', 'error')
+      else if (!editingTask) showToast(container, noTimeLimit ? '已添加到任务池' : '任务已添加', 'success')
     } finally {
       endTaskSave()
     }
