@@ -27,12 +27,16 @@ class Section {
 }
 class Form {
   constructor() {
-    this.normal = new Section([new Control({ required: true, value: '2026-10-02' })])
+    this.normal = new Section([new Control({ required: false, value: '' })])
+    this.normalAdvanced = new Section([new Control({ required: false, value: '' })])
     this.parent = new Section([
       new Control({ required: true, value: '' }),
-      new Control({ required: true, value: '' })
+      new Control({ required: true, value: '' }),
+      new Control({ required: false, value: '' }),
+      new Control({ required: false, value: '' })
     ])
     this.completed = new Section([new Control()])
+    this.moreOptions = { open: false }
     this.submit = new Control()
     this.buttons = [
       { dataset: { taskMode: 'normal' }, classList: new ClassList() },
@@ -42,6 +46,8 @@ class Form {
   querySelector(selector) {
     return {
       '#normalTaskFields': this.normal,
+      '#normalAdvancedFields': this.normalAdvanced,
+      '#taskMoreOptions': this.moreOptions,
       '#parentChildrenFields': this.parent,
       '#taskCompletedField': this.completed,
       '#taskSubmitBtn': this.submit
@@ -49,7 +55,7 @@ class Form {
   }
   querySelectorAll(selector) { return selector === '[data-task-mode]' ? this.buttons : [] }
   checkValidity() {
-    return [this.normal, this.parent, this.completed].every(section =>
+    return [this.normal, this.normalAdvanced, this.parent, this.completed].every(section =>
       section.controls.every(control => !control.required || control.disabled || Boolean(control.value))
     )
   }
@@ -59,16 +65,19 @@ const form = new Form()
 applyTaskEntryMode(form, 'normal')
 assert.equal(form.parent.controls.every(control => control.disabled), true)
 assert.equal(form.normal.controls[0].disabled, false)
+assert.equal(form.normalAdvanced.controls[0].disabled, false)
 assert.equal(form.submit.disabled, false, 'ordinary task submit button remains enabled')
 assert.equal(form.submit.textContent, '添加')
 assert.equal(form.checkValidity(), true, 'hidden child requirements must not block ordinary task submission')
 
 applyTaskEntryMode(form, 'parent')
 assert.equal(form.normal.controls[0].disabled, true)
+assert.equal(form.normalAdvanced.controls[0].disabled, true)
 assert.equal(form.parent.controls.every(control => control.disabled), false)
+assert.equal(form.moreOptions.open, true, 'parent mode reveals the shared task options')
 assert.equal(form.submit.textContent, '创建可拆分任务')
 assert.equal(form.checkValidity(), false, 'visible child requirements remain enforced in parent mode')
-form.parent.controls.forEach((control, index) => { control.value = index === 0 ? '子任务' : '2026-10-03' })
+form.parent.controls.forEach((control, index) => { if (index < 2) control.value = `子任务 ${index + 1}` })
 assert.equal(form.checkValidity(), true, 'valid parent task fields allow submission')
 
 assert.match(eventsSource, /if \(taskForm && !getState\(\)\.editingTask\) setTaskMode\('normal'\)/)
@@ -92,5 +101,10 @@ const renderBundle = await build({
 })
 const { renderModal, setState } = await import(`data:text/javascript,${encodeURIComponent(renderBundle.outputFiles[0].text)}`)
 setState({ editingTask: null })
-assert.match(renderModal(), /<section id="parentChildrenFields" class="hidden[\s\S]*?class="split-child-title[^>]*required/)
+const addMarkup = renderModal()
+assert.match(addMarkup, /id="dueDate" name="dueDate" value=""/)
+assert.match(addMarkup, /<details id="taskMoreOptions"/)
+assert.match(addMarkup, /id="durationInput" value="" min="0"/)
+assert.match(addMarkup, /<section id="parentChildrenFields" class="hidden[\s\S]*?class="split-child-title[^>]*required/)
+assert.doesNotMatch(addMarkup, /id="noTimeLimit"/)
 console.log('Task form regression tests passed')

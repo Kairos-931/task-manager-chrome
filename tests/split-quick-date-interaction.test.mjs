@@ -44,6 +44,14 @@ assert.equal(getState().tasks.filter(task => task.isParent)[0].duration, 0)
 const countBeforeInvalidCreate = getState().tasks.length
 assert.equal(createParentWithChildren({ title: '不会写入', description: '', priority: 'high', category: '默认', hardDeadline: undefined, completed: false, noTimeLimit: true, repeatType: 'none', repeatDays: [], repeatInterval: 1 }, [{ title: '无效', duration: 30, dueDate: '' }]), false)
 assert.equal(getState().tasks.length, countBeforeInvalidCreate)
+assert.equal(createParentWithChildren({ title: '未排期大任务', description: '', priority: 'medium', category: '默认', hardDeadline: undefined, completed: false, noTimeLimit: true, repeatType: 'none', repeatDays: [], repeatInterval: 1 }, [
+  { title: '待安排且未估时一', duration: 0, dueDate: '' },
+  { title: '待安排且未估时二', duration: 0, dueDate: '' }
+]), true)
+const unplannedParent = getState().tasks.find(task => task.title === '未排期大任务')
+const unplannedChildren = getState().tasks.filter(task => task.parentId === unplannedParent.id)
+assert.equal(unplannedChildren.length, 2)
+assert.ok(unplannedChildren.every(task => task.noTimeLimit && task.dueDate === '' && task.duration === 0))
 const failedSnapshot = getState().tasks.length
 assert.equal(await createParentWithChildrenPersisted({ title: '保存失败', description: '', priority: 'high', category: '默认', hardDeadline: undefined, completed: false, noTimeLimit: true, repeatType: 'none', repeatDays: [], repeatInterval: 1 }, [{ title: '一', duration: 30, dueDate: '2099-01-08' }, { title: '二', duration: 60, dueDate: '2099-01-09' }], async () => false), false)
 assert.equal(getState().tasks.length, failedSnapshot)

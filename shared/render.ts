@@ -212,9 +212,9 @@ export const renderStats = (): string => {
     <div id="statsRow" class="stats-row">
       <div class="stats-row-bar">
         <div class="stats-row-items">
-          <span><span class="text-gray-500">待完成</span> <span class="font-medium text-orange-500">${formatHours(stats.pending)}</span></span>
+          <span><span class="text-gray-500">待完成</span> <span class="font-medium text-orange-500">${formatHours(stats.pending)}</span>${stats.pendingUnestimated > 0 ? `<small class="text-gray-400">· 未估时 ${stats.pendingUnestimated}</small>` : ''}</span>
           <span class="text-gray-300 dark:text-gray-600">·</span>
-          <span><span class="text-gray-500">今日</span> <span class="font-medium">${stats.todayDone}/${stats.todayTotal}</span></span>
+          <span><span class="text-gray-500">今日</span> <span class="font-medium">${stats.todayDone}/${stats.todayTotal}</span>${stats.todayUnestimated > 0 ? `<small class="text-gray-400">· 未估时 ${stats.todayUnestimated}</small>` : ''}</span>
           <span class="text-gray-300 dark:text-gray-600">·</span>
           <span class="${stats.overdueCount > 0 ? 'text-red-500 font-medium' : 'text-gray-500'}">${stats.overdueCount} 项过期</span>
         </div>
@@ -410,7 +410,7 @@ export const renderTaskItem = (task: Task, options: TaskItemRenderOptions = {}):
             <div class="font-medium truncate ${task.completed ? 'line-through text-gray-400' : ''}">${escapeHtml(task.title)}</div>
             <div class="flex items-center gap-2 mt-0.5 text-xs text-gray-400">
               <span>${task.noTimeLimit ? '任务池' : getDateLabel(task.dueDate)}</span>
-              ${task.duration > 0 ? `<span>· ${formatHours(task.duration)}</span>` : ''}
+              ${task.duration > 0 ? `<span>· ${formatHours(task.duration)}</span>` : '<span>· 未估时</span>'}
             </div>
           </div>
           <div class="task-actions popup-focus-actions flex items-center gap-1 flex-shrink-0">
@@ -442,7 +442,7 @@ export const renderTaskItem = (task: Task, options: TaskItemRenderOptions = {}):
           <div class="font-medium truncate ${task.completed ? 'line-through text-gray-400' : ''}">${escapeHtml(task.title)}</div>
           <div class="flex items-center gap-2 mt-0.5 text-xs text-gray-400">
             <span class="${overdue ? 'text-red-500 font-medium' : ''}">${task.noTimeLimit ? '任务池' : getDateLabel(task.dueDate)}</span>
-            ${task.duration > 0 ? `<span>· ${formatHours(task.duration)}</span>` : ''}
+            ${task.duration > 0 ? `<span>· ${formatHours(task.duration)}</span>` : '<span>· 未估时</span>'}
           </div>
         </div>
         <details class="task-more-menu flex-shrink-0">
@@ -475,7 +475,7 @@ export const renderTaskItem = (task: Task, options: TaskItemRenderOptions = {}):
           ${parent ? `<span class="text-xs px-2 py-0.5 rounded flex-shrink-0 bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-300">属于 ${escapeHtml(parent.title)}</span>` : ''}
         </div>
         <div class="flex items-center gap-3 mt-1 text-xs text-gray-400">
-          ${task.duration > 0 ? `<span>${formatHours(task.duration)}</span>` : ''}
+          ${task.duration > 0 ? `<span>${formatHours(task.duration)}</span>` : task.isParent ? '' : '<span>未估时</span>'}
           ${!task.noTimeLimit ? `<span class="${overdue ? 'text-red-500 font-medium' : ''}">${getRemainingTime(displayDate, displayCompleted)}</span>` : ''}
           ${task.repeatType !== 'none' ? `<span class="text-blue-500">🔄</span>` : ''}
           ${task.hardDeadline ? `<span class="${task.hardDeadline < today && !displayCompleted ? 'text-red-600 font-medium' : 'text-red-400'}">硬截止 ${task.hardDeadline}</span>` : ''}
@@ -690,6 +690,7 @@ export const renderWeekView = (): string => {
     return !(state.hideCompleted && isTaskCompletedOnDate(task, date))
   }))
   const weekTaskCount = tasksByDay.reduce((sum, tasks) => sum + tasks.length, 0)
+  const weekUnestimatedCount = tasksByDay.reduce((sum, tasks) => sum + tasks.filter(task => task.duration === 0).length, 0)
   const weekMinutes = tasksByDay.reduce((sum, tasks) => sum + tasks.reduce((daySum, task) => daySum + task.duration, 0), 0)
   const historicalOverdue = getHistoricalOverdueTasks(state.tasks, weekStart, {
     hideOverdue: state.hideOverdue,
@@ -729,7 +730,7 @@ export const renderWeekView = (): string => {
 
       <div class="px-4 py-3 border-b dark:border-gray-700 flex items-center justify-between gap-3">
         <div><h3 class="font-semibold">本周聚焦</h3><p class="text-xs text-gray-500 mt-0.5">拖动任务可调整到本周其他日期。</p></div>
-        <span class="text-xs text-gray-400">${weekTaskCount} 项 · ${formatHours(weekMinutes)}</span>
+        <span class="text-xs text-gray-400">${weekTaskCount} 项 · ${formatHours(weekMinutes)}${weekUnestimatedCount > 0 ? ` · 未估时 ${weekUnestimatedCount}` : ''}</span>
       </div>
       <div>
         ${days.map((d, index) => {
@@ -737,6 +738,7 @@ export const renderWeekView = (): string => {
           const isToday = d === todayStr
           const pendingMin = dayTasks.filter(task => !isTaskCompletedOnDate(task, d)).reduce((sum, task) => sum + task.duration, 0)
           const completedMin = dayTasks.filter(task => isTaskCompletedOnDate(task, d)).reduce((sum, task) => sum + task.duration, 0)
+          const unestimatedCount = dayTasks.filter(task => task.duration === 0).length
           return `
             <div class="week-day-row grid border-b last:border-b-0 dark:border-gray-700 hover:bg-gray-50/50 dark:hover:bg-gray-700/30 transition drop-zone ${isToday ? 'bg-blue-50/40 dark:bg-blue-900/10' : ''}" style="grid-template-columns:7rem minmax(0,1fr)" data-date="${d}">
               <div class="week-day-label p-3 border-r dark:border-gray-700 ${isToday ? 'bg-blue-50/50 dark:bg-blue-900/20' : ''}">
@@ -745,6 +747,7 @@ export const renderWeekView = (): string => {
                   <span>${dayTasks.length} 项</span>
                   ${pendingMin > 0 ? `<br><span class="text-orange-500">待完成 ${formatHours(pendingMin)}</span>` : ''}
                   ${completedMin > 0 ? `<br><span class="text-green-500">已完成 ${formatHours(completedMin)}</span>` : ''}
+                  ${unestimatedCount > 0 ? `<br><span class="text-gray-400">未估时 ${unestimatedCount} 项</span>` : ''}
                 </div>
               </div>
               <div class="p-2 min-h-[80px] flex flex-wrap content-start gap-2 min-w-0">
@@ -797,7 +800,7 @@ const renderWeekTaskCard = (task: Task, date: string, isPastDate: boolean): stri
             ${task.repeatType !== 'none' ? '<span class="text-blue-500">🔄</span>' : ''}
           </div>
           <div class="flex items-center gap-2 text-xs text-gray-400">
-            <span>${formatHours(task.duration)}</span>
+            <span>${task.duration > 0 ? formatHours(task.duration) : '未估时'}</span>
             ${cat ? `<span class="px-1 py-0.5 rounded text-white" style="background-color:${cat.color}">${escapeHtml(cat.name)}</span>` : ''}
             ${isPastDate && !done ? '<span class="text-red-500 font-medium">本周内逾期</span>' : ''}
           </div>
@@ -832,17 +835,21 @@ export const renderMonthView = (): string => {
     const parsed = parseDate(date)
     return parsed.getFullYear() === year && parsed.getMonth() === month
   }
+  const unestimatedCountForDates = (dates: string[]): number =>
+    [...new Set(dates)].reduce((count, date) => count + tasks.filter(task => task.duration === 0 && isTaskDueOnDate(task, date)).length, 0)
   const weekSummaries = weeks.map(week =>
     summarizeTaskDurationsForDates(tasks, week.filter(isDateInDisplayedMonth))
   )
+  const weekUnestimatedCounts = weeks.map(week => unestimatedCountForDates(week.filter(isDateInDisplayedMonth)))
 
   // 月汇总
   const monthDates = weeks.flat().filter(isDateInDisplayedMonth)
   const monthSummary = summarizeTaskDurationsForDates(tasks, monthDates)
   const monthPending = monthSummary.pending
   const monthDone = monthSummary.done
+  const monthUnestimatedCount = unestimatedCountForDates(monthDates)
 
-  const renderWeekSummary = (week: string[], ws: { pending: number; done: number }): string => {
+  const renderWeekSummary = (week: string[], ws: { pending: number; done: number }, unestimatedCount: number): string => {
     const hasToday = week.some(dd => dd === todayStr)
     const bgClass = hasToday ? 'bg-blue-50/30 dark:bg-blue-900/10' : ''
     const pendingHtml = ws.pending > 0
@@ -852,7 +859,8 @@ export const renderMonthView = (): string => {
     const totalHtml = (ws.pending > 0 || ws.done > 0)
       ? `<div class="text-[10px] text-gray-400 border-t border-gray-200 dark:border-gray-700 pt-0.5 mt-0.5">合计 <span class="font-semibold text-gray-500 dark:text-gray-300">${formatHours(ws.pending + ws.done)}</span></div>`
       : `<span class="text-[10px] text-gray-300 dark:text-gray-600">—</span>`
-    return `<div class="flex flex-col items-center justify-center gap-1 py-2 px-1 border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 ${bgClass}">${pendingHtml}${doneHtml}${totalHtml}</div>`
+    const unestimatedHtml = unestimatedCount > 0 ? `<div class="text-[9px] text-gray-400">未估 ${unestimatedCount}</div>` : ''
+    return `<div class="flex flex-col items-center justify-center gap-1 py-2 px-1 border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 ${bgClass}">${pendingHtml}${doneHtml}${totalHtml}${unestimatedHtml}</div>`
   }
 
   const gridCells = weeks.map((week, wi) => {
@@ -865,8 +873,10 @@ export const renderMonthView = (): string => {
       const daySummary = summarizeTaskDurationsForDates(dayTasks, [d])
       const pendingMin = daySummary.pending
       const completedMin = daySummary.done
+      const unestimatedCount = dayTasks.filter(task => task.duration === 0).length
       const miniPending = pendingMin > 0 ? `<span class="text-[9px] text-orange-500 bg-orange-50 dark:bg-orange-900/20 px-1 rounded leading-tight font-medium">${formatHours(pendingMin)}</span>` : ''
       const miniDone = completedMin > 0 ? `<span class="text-[9px] text-green-500 bg-green-50 dark:bg-green-900/20 px-1 rounded leading-tight font-medium">✓${formatHours(completedMin)}</span>` : ''
+      const miniUnestimated = unestimatedCount > 0 ? `<span class="text-[9px] text-gray-500 bg-gray-100 dark:bg-gray-700 px-1 rounded leading-tight" title="未估时任务">${unestimatedCount} 未估</span>` : ''
       const taskCards = dayTasks.slice(0, 2).map(t => {
         const done = isTaskCompletedOnDate(t, d)
         return `<div class="month-task-item text-xs p-1 rounded mb-1 truncate ${done ? 'line-through opacity-40 bg-gray-100 dark:bg-gray-700' : 'bg-blue-100/50 dark:bg-blue-900/30'}" draggable="true" data-task-id="${t.id}" title="双击编辑">${escapeHtml(t.title)}</div>`
@@ -874,9 +884,9 @@ export const renderMonthView = (): string => {
       const moreHtml = dayTasks.length > 2 ? `<div class="text-xs text-gray-400">+${dayTasks.length - 2}</div>` : ''
       const cellClasses = `min-h-[100px] p-2 border-b border-r dark:border-gray-700 ${isCurrentMonth ? '' : 'bg-gray-50 dark:bg-gray-900/50'} ${isToday ? 'bg-blue-50/50 dark:bg-blue-900/20' : ''} hover:bg-gray-100 dark:hover:bg-gray-700/30 transition cursor-pointer drop-zone`
       const dayNumClass = `text-sm ${isCurrentMonth ? '' : 'text-gray-300 dark:text-gray-600'} ${isToday ? 'font-bold text-blue-500' : ''}`
-      return `<div class="${cellClasses}" data-date="${d}"><div class="flex items-center gap-1 mb-1"><span class="${dayNumClass}">${dayDate.getDate()}</span>${miniPending}${miniDone}</div>${taskCards}${moreHtml}</div>`
+      return `<div class="${cellClasses}" data-date="${d}"><div class="flex items-center gap-1 mb-1"><span class="${dayNumClass}">${dayDate.getDate()}</span>${miniPending}${miniDone}${miniUnestimated}</div>${taskCards}${moreHtml}</div>`
     }).join('')
-    return dayCells + renderWeekSummary(week, ws)
+    return dayCells + renderWeekSummary(week, ws, weekUnestimatedCounts[wi])
   }).join('')
 
   return `
@@ -897,7 +907,7 @@ export const renderMonthView = (): string => {
       </div>
       <div class="grid" style="grid-template-columns:repeat(7,1fr) 72px;border:1px solid #e5e7eb">
         <div class="col-span-7 px-3 py-2 text-xs text-gray-500 bg-gray-50 dark:bg-gray-900/30 border-r dark:border-gray-700 flex items-center gap-4">
-          本月合计：<span class="font-semibold text-orange-600 dark:text-orange-400">${formatHours(monthPending)} 待办</span><span class="text-gray-300 dark:text-gray-600">|</span><span class="font-semibold text-green-600 dark:text-green-400">${formatHours(monthDone)} 已完成</span><span class="text-gray-300 dark:text-gray-600">|</span><span class="font-semibold text-gray-600 dark:text-gray-300">${formatHours(monthPending + monthDone)} 总计</span>
+          本月合计：<span class="font-semibold text-orange-600 dark:text-orange-400">${formatHours(monthPending)} 待办</span><span class="text-gray-300 dark:text-gray-600">|</span><span class="font-semibold text-green-600 dark:text-green-400">${formatHours(monthDone)} 已完成</span><span class="text-gray-300 dark:text-gray-600">|</span><span class="font-semibold text-gray-600 dark:text-gray-300">${formatHours(monthPending + monthDone)} 总计</span><span class="text-gray-300 dark:text-gray-600">|</span><span class="font-semibold text-gray-500 dark:text-gray-300">未估时 ${monthUnestimatedCount} 项</span>
         </div>
         <div class="flex items-center justify-center text-xs font-semibold text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-900/30">${formatHours(monthPending + monthDone)}</div>
       </div>
@@ -966,10 +976,10 @@ export const renderModal = (): string => {
     description: '',
     priority: 'medium' as Priority,
     category: defaultCategory || categories[0]?.id || '',
-    dueDate: formatDate(new Date()),
+    dueDate: '',
     hardDeadline: '',
     focusDate: '',
-    duration: 60,
+    duration: 0,
     repeatType: 'none' as const,
     repeatDays: [],
     repeatInterval: 1,
@@ -979,6 +989,74 @@ export const renderModal = (): string => {
     isParent: false
   }
   const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+  const completedField = '<div id="taskCompletedField" class="pt-2"><label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="taskCompleted" ' + (task.completed ? 'checked' : '') + ' class="rounded"><span class="text-sm">已完成</span></label></div>'
+  const propertyFields = '<div><label class="block text-sm font-medium mb-1">备注</label><textarea name="description" rows="2" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white resize-none">' + escapeHtml(task.description) + '</textarea></div>' +
+    '<div class="grid grid-cols-2 gap-4"><div><label class="block text-sm font-medium mb-1">优先级</label><select name="priority" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white"><option value="high" ' + (task.priority === 'high' ? 'selected' : '') + '>高</option><option value="medium" ' + (task.priority === 'medium' ? 'selected' : '') + '>中</option><option value="low" ' + (task.priority === 'low' ? 'selected' : '') + '>低</option></select></div><div><label class="block text-sm font-medium mb-1">分类</label><select name="category" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">' + categories.map(c => '<option value="' + c.id + '" ' + (task.category === c.id ? 'selected' : '') + '>' + escapeHtml(c.name) + '</option>').join('') + '</select></div></div>'
+  const hardDeadlineField = '<div><label class="block text-sm font-medium mb-1">硬截止日期（可选）</label><input type="date" name="hardDeadline" value="' + (task.hardDeadline || '') + '" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white"></div>'
+  const durationField = '<div><label class="block text-sm font-medium mb-1">预计时长 (小时)</label><div class="flex items-center gap-2"><button type="button" id="durationDecrease" class="px-3 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">-</button><input type="number" name="duration" id="durationInput" value="' + (task.duration > 0 ? (task.duration / 60).toFixed(1) : '') + '" min="' + (task.duration > 0 ? '0.1' : '0') + '" max="24" step="0.1" placeholder="未估时" class="w-20 text-center px-2 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white"><button type="button" id="durationIncrease" class="px-3 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">+</button></div></div>'
+  const repeatFields = '<div><label class="block text-sm font-medium mb-1">重复</label><select name="repeatType" id="repeatType" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white"><option value="none" ' + (task.repeatType === 'none' ? 'selected' : '') + '>不重复</option><option value="daily" ' + (task.repeatType === 'daily' ? 'selected' : '') + '>每天</option><option value="weekly" ' + (task.repeatType === 'weekly' ? 'selected' : '') + '>每周几</option><option value="monthly" ' + (task.repeatType === 'monthly' ? 'selected' : '') + '>每月</option><option value="workdays" ' + (task.repeatType === 'workdays' ? 'selected' : '') + '>工作日</option><option value="custom" ' + (task.repeatType === 'custom' ? 'selected' : '') + '>自定义间隔</option></select></div>' +
+    '<div id="repeatEndDateField" class="' + (task.repeatType === 'none' ? 'hidden ' : '') + 'mt-4"><label class="block text-sm font-medium mb-1" for="repeatEndDate">重复截止日期 *</label><input type="date" name="repeatEndDate" id="repeatEndDate" value="' + (task.repeatEndDate || '') + '" min="' + (task.dueDate || '') + '" ' + (task.repeatType !== 'none' ? 'required' : '') + ' aria-required="true" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white"><p id="repeatEndDateError" class="mt-1 text-sm text-red-500" role="alert" aria-live="polite"></p></div>' +
+    '<div id="weeklyDays" class="' + (task.repeatType !== 'weekly' ? 'hidden' : '') + '"><label class="block text-sm font-medium mb-1">选择星期</label><div class="flex gap-2">' + weekdays.map((d, i) => '<label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" name="repeatDays" value="' + i + '" ' + ((task.repeatDays as number[]).includes(i) ? 'checked' : '') + ' class="rounded"><span class="text-sm">' + d.slice(1) + '</span></label>').join('') + '</div></div>' +
+    '<div id="customInterval" class="' + (task.repeatType !== 'custom' ? 'hidden' : '') + '"><label class="block text-sm font-medium mb-1">间隔天数</label><input type="number" name="repeatInterval" value="' + task.repeatInterval + '" min="1" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white"></div>'
+
+  if (!isEditing) {
+    return `
+      <div id="taskModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[90%] max-w-lg overflow-y-auto" style="max-height:90vh;max-height:90svh;">
+          <div class="flex items-center justify-between p-4 border-b dark:border-gray-700">
+            <h2 class="text-lg font-semibold">添加任务</h2>
+            <button id="closeModal" class="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition" aria-label="关闭">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <form id="taskForm" class="p-4 space-y-4">
+            <div class="task-mode-switch" role="group" aria-label="任务类型"><button type="button" class="task-mode-btn active" data-task-mode="normal">普通任务</button><button type="button" class="task-mode-btn" data-task-mode="parent">大任务</button></div>
+            <div>
+              <label class="block text-sm font-medium mb-1" for="taskTitle">任务名称 *</label>
+              <input type="text" id="taskTitle" name="title" value="" required class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
+            </div>
+            <div id="normalTaskFields" class="border-t dark:border-gray-700 pt-4">
+              <label class="block text-sm font-medium mb-1" for="dueDate">计划日期（可选）</label>
+              ${renderQuickDates('')}
+              <input type="date" id="dueDate" name="dueDate" value="" class="w-full mt-2 px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
+            </div>
+            <details id="taskMoreOptions" class="border-t dark:border-gray-700 pt-3">
+              <summary class="cursor-pointer text-sm font-medium text-gray-600 dark:text-gray-300">更多选项</summary>
+              <div class="space-y-4 pt-3">
+                ${propertyFields}
+                ${completedField}
+                <div id="normalAdvancedFields" class="space-y-4">
+                  ${hardDeadlineField}
+                  ${durationField}
+                  ${repeatFields}
+                </div>
+              </div>
+            </details>
+            <section id="parentChildrenFields" class="hidden border-t dark:border-gray-700 pt-4 space-y-3">
+              <p class="text-sm text-gray-500">父任务不设置日期和时长；每个子任务都可单独安排，暂不安排的会进入任务池。</p>
+              <label class="block text-sm font-medium">硬截止日期（可选）<input type="date" name="parentHardDeadline" class="mt-1 w-full px-3 py-2 border rounded-lg"></label>
+              <div id="newParentChildren" class="split-children-list">${renderSplitChildRow(0, undefined, '', { allowUnscheduled: true })}${renderSplitChildRow(1, undefined, '', { allowUnscheduled: true })}</div>
+              <button type="button" id="addParentChildBtn" class="text-sm text-blue-600">+ 添加子任务</button>
+              <p id="parentTaskError" class="text-sm text-red-500" aria-live="polite"></p>
+            </section>
+            <p id="taskSaveError" class="text-sm text-red-500" role="alert" aria-live="polite"></p>
+            <div id="taskDraftConflict" class="hidden rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
+              <p id="taskDraftConflictMessage"></p>
+              <div class="mt-2 flex gap-3">
+                <button type="button" id="taskDraftProceed" class="rounded bg-amber-700 px-3 py-1 text-white"></button>
+                <button type="button" id="taskDraftDiscard" class="rounded border border-amber-700 px-3 py-1">放弃草稿</button>
+              </div>
+            </div>
+            <div class="flex gap-3 pt-4">
+              <div class="flex-1"></div>
+              <button type="button" id="cancelBtn" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition">取消</button>
+              <button type="submit" id="taskSubmitBtn" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">添加</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `
+  }
 
   return `
     <div id="taskModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
@@ -1053,7 +1131,7 @@ export const renderModal = (): string => {
               <label class="block text-sm font-medium mb-1">预计时长 (小时)</label>
               <div class="flex items-center gap-2">
                 <button type="button" id="durationDecrease" class="px-3 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">-</button>
-                <input type="number" name="duration" id="durationInput" value="${(task.duration / 60).toFixed(1)}" min="0.1" step="0.1" class="w-16 text-center px-2 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
+                <input type="number" name="duration" id="durationInput" value="${task.duration > 0 ? (task.duration / 60).toFixed(1) : ''}" min="0" max="24" step="0.1" placeholder="未估时" class="w-20 text-center px-2 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
                 <button type="button" id="durationIncrease" class="px-3 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">+</button>
               </div>
             </div>
@@ -1132,7 +1210,7 @@ export const renderSplitChildRow = (
         <span class="split-child-field-label">预计时间</span>
         <div class="split-child-duration-control">
           <button type="button" class="split-duration-decrease px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="减少 0.5 小时">−</button>
-          <input type="number" class="split-child-duration w-14 text-center px-1 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${child ? (child.duration / 60).toFixed(2).replace(/\.?0+$/, '') : '1'}" min="0.5" step="0.5" aria-label="预计小时">
+          <input type="number" class="split-child-duration w-14 text-center px-1 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${child && child.duration > 0 ? (child.duration / 60).toFixed(2).replace(/\.?0+$/, '') : ''}" min="0" max="24" step="0.5" placeholder="未估时" aria-label="预计小时">
           <button type="button" class="split-duration-increase px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="增加 0.5 小时">+</button>
         </div>
       </div>

@@ -7,8 +7,8 @@
 - Shared checkout: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER`
 - Initialized: `2026-09-04`
 - Status: active
-- Active developer requirement: Issue #70 UX-02 task form draft recovery is implemented in candidate 3.18.0 and awaits product/user acceptance; execution profile is gpt-6-luna / max per latest user instruction. Issue #69 UX-01 remains awaiting user acceptance; Issues #66 and #68 are deployed in version 3.17.4 and awaiting real phone acceptance. Issue #67 remains deployed awaiting product acceptance; Google sync Issue #62 remains open for its remaining acceptance and data-ownership decisions.
-- Current UX-02 candidate: 3.18.0 at `outputs/TaskMaster-3.18.0-ux02-final3-20261003`; public key and extension ID match the approved Google callback. The #62 Google sync candidate was 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`.
+- Active developer requirement: None; Issue #71 UX-05 is implemented and deployed, awaiting user acceptance. Extension v3.19.0 is in the stable loaded directory; Worker Version ID `96d6b39d-a3d5-4972-ab4f-b91d505dee05` serves 100% traffic at the unchanged URL. The implementation slot is released. Current execution profile used for #71: gpt-6-sol / low per the user's latest developer-thread instruction. Issue #70 UX-02 candidate 3.18.0 and #69 UX-01 remain awaiting user acceptance; #66/#68 are deployed awaiting real phone acceptance; #67 awaits product acceptance. Google sync Issue #62 remains a separate open item for remaining acceptance and data-ownership decisions.
+- UX-05 extension v3.19.0 at `outputs/TaskMaster-3.19.0-ux05-20261003`; public key and permissions match the stable loaded directory `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`. Pre-update backup: `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-ux05-71-20261003`. Worker deployed as Version ID `96d6b39d-a3d5-4972-ab4f-b91d505dee05`; prior rollback point `b327393b-e2f0-4ced-bdda-ec4a3ae30664`. The #62 Google sync candidate was 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`.
 - Verified live acceptance: user manually loaded the candidate and confirmed Google sign-in plus same-account mobile-add → computer display.
 - Remaining #62 acceptance and old-data ownership confirmation are pending; two-computer, deletion, and full isolation acceptance are not inferred.
 - Issue #64: product approved the candidate identity configuration; product-side issue status remains authoritative.
@@ -120,3 +120,12 @@
 - typecheck、lint、build 和 UX-01 故障注入回归通过。完整测试仍被既有 `ui-layout` 静态断言阻断；`optional-split-child-dates` 另有跨区块静态正则误报，详情记录在 `docs/requirements/REQ-20261003-task-save-failure.md`。
 - 未执行 GUI/视觉验收、push 或 Worker 部署。Google 同步 Issue #62 仍单独开放，已有手机到电脑新增路径的确认不代表其余账号隔离、删除与数据归属验收完成。
 - 开发→产品反馈事件 `TM-20261003-task-save-failure-69` 于 2026-10-03 04:53 UTC 发送至任务 `01a0f1af-be64-7860-8c0d-660fdb71e2c9`；工具返回相同 `threadId` 且 `isError=false`。
+
+
+## 2026-10-03 Issue #71 UX-05 实施检查点
+
+- 已在 `codex/fast-task-capture-71` 实现扩展普通新增与手机添加的简化录入、无日期任务池、未估时表达、更多选项折叠及子任务可选排期；版本更新为 3.19.0。
+- 扩展候选通过构建和发布清单检查，14 个候选文件已核验哈希并复制到用户既有加载目录 `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`。旧 3.18.0 目录备份至 `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-ux05-71-20261003`；用户只需在 Chrome 扩展页 Reload 以验收电脑端。
+- 手机端代码已部署：产品提供已存在的 Wrangler 4.146.0 路径，未安装依赖。dry-run 通过，Worker 版本 `96d6b39d-a3d5-4972-ab4f-b91d505dee05` 已部署且 100% 流量生效；回退点 `b327393b-e2f0-4ced-bdda-ec4a3ae30664`。同 URL 只读检查：首页 200/no-store、日期 optional、未估时空值、“更多选项”存在；Google 客户端配置与会话恢复代码保留；未认证账号分类及旧任务/分类 API 401。没有生产任务写入、迁移或 GUI。
+- typecheck、lint、build、CSS build 与其余 27 个独立测试通过。全量历史阻断：`ui-layout.test.mjs` 的旧断言检查错误文件；`newtab-favicon.test.mjs` 的严格换行符比较在 Windows 失败。未改动无关断言。未进行 GUI、生产任务写入、push 或 tag。
+- Google 同步 Issue #62 与 #71 分开维护；本次没有修改 #62 同步协议或账号数据行为，也不据此宣告 #62 完成。

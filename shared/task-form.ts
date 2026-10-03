@@ -8,14 +8,19 @@ const setSectionDisabled = (section: HTMLElement | null, disabled: boolean): voi
 
 export const applyTaskEntryMode = (taskForm: HTMLFormElement, mode: TaskEntryMode): void => {
   const normalFields = taskForm.querySelector<HTMLElement>('#normalTaskFields')
+  const normalAdvancedFields = taskForm.querySelector<HTMLElement>('#normalAdvancedFields')
+  const taskMoreOptions = taskForm.querySelector<HTMLDetailsElement>('#taskMoreOptions')
   const parentFields = taskForm.querySelector<HTMLElement>('#parentChildrenFields')
   const completedField = taskForm.querySelector<HTMLElement>('#taskCompletedField')
   setSectionDisabled(normalFields, mode === 'parent')
+  setSectionDisabled(normalAdvancedFields, mode === 'parent')
   setSectionDisabled(parentFields, mode !== 'parent')
   setSectionDisabled(completedField, mode === 'parent')
   normalFields?.classList.toggle('hidden', mode === 'parent')
+  normalAdvancedFields?.classList.toggle('hidden', mode === 'parent')
   parentFields?.classList.toggle('hidden', mode !== 'parent')
   completedField?.classList.toggle('hidden', mode === 'parent')
+  if (mode === 'parent' && taskMoreOptions) taskMoreOptions.open = true
   taskForm.querySelectorAll<HTMLElement>('[data-task-mode]').forEach(button => {
     button.classList.toggle('active', button.dataset.taskMode === mode)
   })

@@ -286,7 +286,7 @@ try {
   const clientTaskId = '11111111-1111-4111-8111-111111111111'
   const mobileTaskBody = {
     clientTaskId,
-    title: 'Phone task', category: 'default-life', priority: 'high', duration: 45,
+    title: 'Phone task', category: 'default-life', priority: 'high', duration: 0,
     dueDate: '', noTimeLimit: true, completed: true, deviceId: 'mobile-device',
   }
   const createMobileTask = body => worker.fetch(new Request('https://taskmaster.test/api/account/tasks', {
@@ -304,6 +304,7 @@ try {
   const mobileTask = (await mobileTaskResponse.json()).task
   assert.equal(mobileTask.id, clientTaskId)
   assert.equal(mobileTask.noTimeLimit, true)
+  assert.equal(mobileTask.duration, 0)
   assert.equal(mobileTask.completed, true)
   assert.equal(mobileTask.completedAt, mobileTask.updatedAt)
   assert.ok([...db.records.values()].some(record => record.sub === 'google-sub-a' && record.id === mobileTask.id))
@@ -375,7 +376,10 @@ try {
   assert.match(mobileHtml, /尚未配置|尚未配置|未配置/)
   assert.doesNotMatch(mobileHtml, /API_TOKEN|id="apiToken"|your-worker\.workers\.dev/)
   assert.doesNotMatch(mobileHtml, /管理员旧版入口|旧版连接页面|href="\/legacy"/)
-  assert.match(mobileHtml, /id="noTimeLimit"/)
+  assert.match(mobileHtml, /计划日期（可选）/)
+  assert.match(mobileHtml, /id="dueDate" type="date">/)
+  assert.doesNotMatch(mobileHtml, /id="noTimeLimit"/)
+  assert.match(mobileHtml, /id="duration" type="number" min="0"[^>]*placeholder="未估时"/)
   assert.match(mobileHtml, /id="completed"/)
   const oldLegacyPageUrl = await worker.fetch(new Request(
     'https://taskmaster.test/legacy?apiUrl=https%3A%2F%2Fold.example&apiToken=do-not-forward',

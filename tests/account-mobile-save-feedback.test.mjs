@@ -135,6 +135,10 @@ const makeHarness = ({
   }
   const html = renderAccountMobilePage({ GOOGLE_WEB_CLIENT_ID: 'test-client-id' })
   assert.match(html, /id="saveFeedback" role="status" aria-live="polite"/)
+  assert.match(html, /计划日期（可选）/)
+  assert.match(html, /id="dueDate" type="date">/)
+  assert.match(html, /id="duration" type="number" min="0"[^>]*placeholder="未估时"/)
+  assert.doesNotMatch(html, /id="noTimeLimit"/)
   const script = html.match(/<script>\s*([\s\S]*?)\s*<\/script>/)?.[1]
   assert.ok(script, 'the mobile page should render its inline application script')
   runInNewContext(script, {
@@ -182,6 +186,9 @@ assert.equal(timedOutPage.elements.get('saveFeedback').classList.contains('savin
 assert.equal(timedOutPage.elements.get('saveFeedbackRetry').hidden, true)
 await Promise.all([firstSaveAttempt, duplicateClickAttempt])
 assert.equal(timedOutPage.requests.length, 1)
+assert.equal(timedOutPage.requests[0].dueDate, '')
+assert.equal(timedOutPage.requests[0].noTimeLimit, true)
+assert.equal(timedOutPage.requests[0].duration, 0)
 assert.match(timedOutPage.elements.get('status').textContent, /任务可能已保存/)
 assert.equal(timedOutPage.elements.get('status').classList.contains('uncertain'), true)
 assert.equal(timedOutPage.elements.get('title').value, 'Timeout-safe task')
@@ -220,9 +227,16 @@ assert.equal(reloadPage.elements.get('saveFeedback').hidden, false)
 assert.equal(reloadPage.elements.get('saveFeedback').classList.contains('success'), true)
 assert.equal(reloadPage.elements.get('saveFeedbackDismiss').textContent, '继续添加')
 reloadPage.elements.get('title').value = 'Next task without waiting for the popup'
+reloadPage.elements.get('dueDate').value = '2020-01-01'
+reloadPage.elements.get('duration').value = '45'
 await reloadPage.elements.get('submitBtn').listeners.get('click')()
 assert.equal(reloadPage.requests.length, 2, 'a visible success popup must not block the next task')
 assert.notEqual(reloadPage.requests[1].clientTaskId, reloadPage.requests[0].clientTaskId)
+assert.equal(reloadPage.requests[1].dueDate, '2020-01-01', 'an explicitly chosen past date must be preserved')
+assert.equal(reloadPage.requests[1].noTimeLimit, false)
+assert.equal(reloadPage.requests[1].duration, 45)
+assert.equal(reloadPage.elements.get('dueDate').value, '')
+assert.equal(reloadPage.elements.get('duration').value, '')
 reloadPage.flushFeedbackTimer()
 assert.equal(reloadPage.elements.get('saveFeedback').hidden, true, 'success feedback closes automatically')
 

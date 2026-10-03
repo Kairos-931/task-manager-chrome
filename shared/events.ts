@@ -287,8 +287,8 @@ const bindGoogleAccountPanels = (container: HTMLElement): void => {
 }
 
 const repeatEndDateErrorFor = (dueDate: string, repeatEndDate: string): string => {
-  if (!repeatEndDate) return '请选择重复截止日期'
   if (!dueDate) return '请选择首次计划日期'
+  if (!repeatEndDate) return '请选择重复截止日期'
   if (dueDate && repeatEndDate < dueDate) return '重复截止日期不能早于首次计划日期'
   return ''
 }
@@ -526,7 +526,8 @@ export const attachEventListeners = (container: HTMLElement): void => {
     const editingTask = getState().editingTask
     return { version: 1, context: activeDraftStore?.context || '', updated: Date.now(), mode: taskMode,
       taskId: editingTask?.id, taskUpdatedAt: restored?.taskUpdatedAt ?? editingTask?.updatedAt,
-      pendingTaskId: pendingTaskId || undefined, fields, children }
+      pendingTaskId: pendingTaskId || undefined, fields, children,
+      moreOptionsOpen: taskForm.querySelector<HTMLDetailsElement>('#taskMoreOptions')?.open }
   }
   let baselineDraft: TaskDraft
   const saveDraft = (): Promise<void> => {
@@ -558,7 +559,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
       rows.replaceChildren()
       draft.children.forEach((child, index) => {
         const wrapper = document.createElement('div')
-        wrapper.innerHTML = renderSplitChildRow(index, { ...child, duration: Math.round(Number(child.duration) * 60) }, child.dueDate)
+        wrapper.innerHTML = renderSplitChildRow(index, { ...child, duration: Math.round(Number(child.duration) * 60) }, child.dueDate, { allowUnscheduled: true })
         const row = wrapper.firstElementChild
         if (row) {
           row.querySelector<HTMLInputElement>('.split-child-duration')!.value = child.duration
@@ -566,6 +567,8 @@ export const attachEventListeners = (container: HTMLElement): void => {
         }
       })
     }
+    const taskMoreOptions = taskForm.querySelector<HTMLDetailsElement>('#taskMoreOptions')
+    if (taskMoreOptions) taskMoreOptions.open = draft.moreOptionsOpen ?? (draft.mode === 'parent' || draft.fields.repeatType !== 'none')
     queueMicrotask(() => {
       taskForm.querySelector<HTMLSelectElement>('#repeatType')?.dispatchEvent(new Event('change', { bubbles: true }))
       taskForm.querySelector<HTMLInputElement>('#noTimeLimit')?.dispatchEvent(new Event('change', { bubbles: true }))
@@ -669,7 +672,8 @@ export const attachEventListeners = (container: HTMLElement): void => {
       const input = row.querySelector<HTMLInputElement>('.split-child-duration')
       if (input && (target.classList.contains('split-duration-increase') || target.classList.contains('split-duration-decrease'))) {
         const step = target.classList.contains('split-duration-increase') ? 0.5 : -0.5
-        input.value = String(Math.min(24, Math.max(0.5, (Number.parseFloat(input.value) || 1) + step)))
+        const next = Math.min(24, Math.max(0, (Number.parseFloat(input.value) || 0) + step))
+        input.value = next > 0 ? String(next) : ''
       }
     })
     bindSplitQuickDates(parentChildren)
@@ -678,9 +682,8 @@ export const attachEventListeners = (container: HTMLElement): void => {
   container.querySelector('#addParentChildBtn')?.addEventListener('click', () => {
     if (!parentChildren) return
     const index = parentChildren.querySelectorAll('.split-child-row').length + 1
-    const today = formatDate(new Date())
     const row = document.createElement('div')
-    row.innerHTML = renderSplitChildRow(index - 1, undefined, today)
+    row.innerHTML = renderSplitChildRow(index - 1, undefined, '', { allowUnscheduled: true })
     parentChildren.appendChild(row.firstElementChild!)
   })
   taskForm?.addEventListener('submit', async (e) => {
@@ -712,11 +715,12 @@ export const attachEventListeners = (container: HTMLElement): void => {
     if (!editingTask && taskMode === 'parent') {
       const rows = [...container.querySelectorAll<HTMLDivElement>('#newParentChildren .split-child-row')]
       const children = rows.map(row => ({ title: (row.querySelector<HTMLInputElement>('.split-child-title')?.value || '').trim(), duration: Math.round(Number.parseFloat(row.querySelector<HTMLInputElement>('.split-child-duration')?.value || '0') * 60), dueDate: row.querySelector<HTMLInputElement>('.split-child-date')?.value || '' }))
-      const invalidIndex = children.findIndex(child => !child.title || child.duration < 30 || child.duration > 1440 || child.duration % 30 !== 0 || !child.dueDate)
+      const invalidIndex = children.findIndex(child => !child.title || child.duration < 0 || child.duration > 1440 || child.duration % 30 !== 0)
       if (children.length < 2 || invalidIndex !== -1) {
         const invalid = children[Math.max(0, invalidIndex)]
-        const field = !invalid?.title ? '.split-child-title' : !invalid?.duration || invalid.duration < 30 || invalid.duration > 1440 || invalid.duration % 30 !== 0 ? '.split-child-duration' : '.split-child-date'
-        const message = children.length < 2 ? '至少保留两个子任务。' : !invalid?.title ? `请填写子任务 ${invalidIndex + 1} 的标题。` : field === '.split-child-duration' ? `请填写子任务 ${invalidIndex + 1} 的有效预计时间。` : `请选择子任务 ${invalidIndex + 1} 的计划日期。`
+        const invalidDuration = invalid && (invalid.duration < 0 || invalid.duration > 1440 || invalid.duration % 30 !== 0)
+        const field = !invalid?.title ? '.split-child-title' : invalidDuration ? '.split-child-duration' : '.split-child-title'
+        const message = children.length < 2 ? '至少保留两个子任务。' : !invalid?.title ? `请填写子任务 ${invalidIndex + 1} 的标题。` : `子任务 ${invalidIndex + 1} 的预计时间需为 0 至 24 小时，并以 0.5 小时递增；可留空。`
         ;(container.querySelector('#parentTaskError') as HTMLElement | null)?.replaceChildren(document.createTextNode(message))
         const target = rows[Math.max(0, invalidIndex)]?.querySelector<HTMLElement>(field)
         target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -790,21 +794,27 @@ export const attachEventListeners = (container: HTMLElement): void => {
       return
     }
 
-    const noTimeLimit = (form.querySelector('#noTimeLimit') as HTMLInputElement)?.checked || false
+    const noTimeLimitInput = form.querySelector<HTMLInputElement>('#noTimeLimit')
+    const selectedDueDate = (formData.get('dueDate') as string) || ''
+    const noTimeLimit = noTimeLimitInput ? noTimeLimitInput.checked : !selectedDueDate
     const repeatDays: number[] = []
     form.querySelectorAll('[name="repeatDays"]:checked').forEach(cb => {
       repeatDays.push(parseInt((cb as HTMLInputElement).value))
     })
     const durationInput = form.querySelector('#durationInput') as HTMLInputElement
-    const duration = Math.round(parseFloat(durationInput?.value || '1') * 60) || 60
+    const durationValue = durationInput?.value.trim() || ''
+    const parsedDuration = durationValue ? Number.parseFloat(durationValue) : 0
+    const duration = Number.isFinite(parsedDuration) ? Math.round(parsedDuration * 60) : 0
     const repeatType = formData.get('repeatType') as Task['repeatType']
-    const dueDate = noTimeLimit ? '' : (formData.get('dueDate') as string)
+    const dueDate = noTimeLimit ? '' : selectedDueDate
     const repeatEndDate = repeatType === 'none' ? '' : ((formData.get('repeatEndDate') as string) || '').trim()
     if (repeatType !== 'none') {
       const repeatEndDateError = repeatEndDateErrorFor(dueDate, repeatEndDate)
       if (repeatEndDateError) {
+        const moreOptions = form.querySelector<HTMLDetailsElement>('#taskMoreOptions')
+        if (moreOptions) moreOptions.open = true
         setRepeatEndDateError(repeatEndDateError)
-        repeatEndDateInput?.focus()
+        ;(repeatEndDateError === '请选择首次计划日期' ? dueDateInput : repeatEndDateInput)?.focus()
         return
       }
     } else {
@@ -1106,9 +1116,9 @@ export const attachEventListeners = (container: HTMLElement): void => {
     if (!isDec && !isInc) return
     const input = target.closest('.split-child-row')?.querySelector('.split-child-duration') as HTMLInputElement | null
     if (!input) return
-    const current = Number.parseFloat(input.value) || 1
-    const next = isDec ? Math.max(0.5, current - 0.5) : Math.min(24, current + 0.5)
-    input.value = next.toFixed(1)
+    const current = Number.parseFloat(input.value) || 0
+    const next = isDec ? Math.max(0, current - 0.5) : Math.min(24, current + 0.5)
+    input.value = next > 0 ? next.toFixed(1) : ''
   })
 
   // 子任务快捷日期：严格限定在拆分弹窗及其各自行内
@@ -1134,7 +1144,8 @@ export const attachEventListeners = (container: HTMLElement): void => {
     if (!splittingTaskId) return
     const rows = [...container.querySelectorAll<HTMLDivElement>('.split-child-row')]
     const children = rows.map(row => {
-      const durationHours = Number.parseFloat((row.querySelector('.split-child-duration') as HTMLInputElement).value)
+      const durationValue = (row.querySelector('.split-child-duration') as HTMLInputElement).value.trim()
+      const durationHours = durationValue ? Number.parseFloat(durationValue) : 0
       return {
         id: row.dataset.childId,
         title: (row.querySelector('.split-child-title') as HTMLInputElement).value.trim(),
@@ -1146,7 +1157,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
     const invalidChildIndex = children.findIndex(child =>
       !child.title ||
       !Number.isFinite(child.durationHours) ||
-      child.durationHours < 0.5 ||
+      child.durationHours < 0 ||
       child.durationHours > 24 ||
       Math.abs(child.durationHours * 2 - Math.round(child.durationHours * 2)) > Number.EPSILON
     )
@@ -1162,7 +1173,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
       : invalidRow?.querySelector<HTMLInputElement>('.split-child-duration')
     const message = !invalidChild?.title
       ? `请填写子任务 ${invalidChildIndex + 1} 的标题。`
-      : `子任务 ${invalidChildIndex + 1} 的预计时间需为 0.5 至 24 小时，并以 0.5 小时递增。`
+      : `子任务 ${invalidChildIndex + 1} 的预计时间需为 0 至 24 小时，并以 0.5 小时递增；可留空。`
       showSplitError(message)
       invalidField?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       invalidField?.focus()
@@ -1249,15 +1260,16 @@ export const attachEventListeners = (container: HTMLElement): void => {
   container.querySelector('#durationDecrease')?.addEventListener('click', () => {
     const input = container.querySelector('#durationInput') as HTMLInputElement
     if (input) {
-      const val = parseFloat(input.value) - 0.5
-      input.value = Math.max(0.5, val).toFixed(1)
+      const val = (parseFloat(input.value) || 0) - 0.5
+      const next = Math.max(0, val)
+      input.value = next > 0 ? next.toFixed(1) : ''
     }
   })
 
   container.querySelector('#durationIncrease')?.addEventListener('click', () => {
     const input = container.querySelector('#durationInput') as HTMLInputElement
     if (input) {
-      const val = parseFloat(input.value) + 0.5
+      const val = (parseFloat(input.value) || 0) + 0.5
       input.value = Math.min(24, val).toFixed(1)
     }
   })
@@ -1287,17 +1299,15 @@ export const attachEventListeners = (container: HTMLElement): void => {
   const dueDateInput = container.querySelector<HTMLInputElement>('input[name="dueDate"]')
   const setRepeatEndDateError = (message: string): void => {
     if (repeatEndDateError) repeatEndDateError.textContent = message
-    if (repeatEndDateInput && typeof repeatEndDateInput.setCustomValidity === 'function') {
-      repeatEndDateInput.setCustomValidity(message)
-    }
   }
   const syncRepeatEndDateField = (): void => {
     const active = repeatTypeInput?.value !== 'none'
     const value = repeatEndDateInput?.value || ''
     repeatEndDateField?.classList.toggle('hidden', active === false)
     if (repeatEndDateInput) {
-      repeatEndDateInput.required = active
-      repeatEndDateInput.min = dueDateInput?.value || ''
+      repeatEndDateInput.required = false
+      repeatEndDateInput.setAttribute('aria-required', String(active))
+      repeatEndDateInput.removeAttribute('min')
     }
     if (active === false || value.length === 0) setRepeatEndDateError('')
     else setRepeatEndDateError(repeatEndDateErrorFor(dueDateInput?.value || '', value))

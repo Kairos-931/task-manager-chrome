@@ -502,7 +502,7 @@ export interface SplitChildInput {
 
 export const splitTask = (id: string, children: SplitChildInput[]): boolean => {
   const task = state.tasks.find(t => t.id === id)
-  const validChildren = children.filter(child => child.title.trim() && child.duration > 0)
+  const validChildren = children.filter(child => child.title.trim() && child.duration >= 0)
   if (!task || task.repeatType !== 'none' || validChildren.length < 2) return false
 
   const now = Date.now()
@@ -593,7 +593,7 @@ export const createParentWithChildren = (
   children: SplitChildInput[],
   parentId = generateId()
 ): boolean => {
-  const validChildren = children.filter(child => child.title.trim() && child.duration > 0 && child.dueDate)
+  const validChildren = children.filter(child => child.title.trim() && child.duration >= 0)
   if (validChildren.length < 2 || validChildren.length !== children.length) return false
   const now = Date.now()
   const newParent: Task = {
@@ -603,9 +603,9 @@ export const createParentWithChildren = (
   }
   const newChildren: Task[] = validChildren.map(child => ({
     id: generateId(), title: child.title.trim(), description: '', priority: parent.priority, category: parent.category,
-    dueDate: child.dueDate, hardDeadline: parent.hardDeadline, focusDate: child.dueDate === getTodayStr() ? getTodayStr() : undefined,
+    dueDate: child.dueDate || '', hardDeadline: parent.hardDeadline, focusDate: child.dueDate === getTodayStr() ? getTodayStr() : undefined,
     duration: child.duration, repeatType: 'none', repeatDays: [], repeatInterval: 1, completed: false, completedDates: [],
-    createdAt: now, updatedAt: now, noTimeLimit: false, parentId
+    createdAt: now, updatedAt: now, noTimeLimit: !child.dueDate, parentId
   }))
   state.tasks.push(newParent, ...newChildren)
   return true
@@ -714,13 +714,16 @@ export const getWeeklyGoalStats = (): WeeklyGoalStats | null => {
 
 export const getStats = (ignoreFilters = false) => {
   const tasks = (ignoreFilters ? state.tasks : getFilteredTasks()).filter(isExecutableTask)
-  const pending = tasks.filter(t => !t.completed && t.repeatType === 'none').reduce((s, t) => s + t.duration, 0)
+  const pendingTasks = tasks.filter(t => !t.completed && t.repeatType === 'none')
+  const pending = pendingTasks.reduce((s, t) => s + t.duration, 0)
+  const pendingUnestimated = pendingTasks.filter(t => t.duration === 0).length
   const done = tasks.filter(t => t.completed && t.repeatType === 'none').reduce((s, t) => s + t.duration, 0)
   const overdueCount = tasks.filter(t => !t.completed && !t.noTimeLimit && isOverdue(t.dueDate, false)).length
   const todayStr = formatDate(new Date())
   const todayTasks = tasks.filter(t => !t.noTimeLimit && isTaskDueOnDate(t, todayStr))
   const todayDone = todayTasks.filter(t => isTaskCompletedOnDate(t, todayStr)).length
-  return { pending, done, overdueCount, todayTotal: todayTasks.length, todayDone }
+  const todayUnestimated = todayTasks.filter(t => t.duration === 0).length
+  return { pending, pendingUnestimated, done, overdueCount, todayTotal: todayTasks.length, todayDone, todayUnestimated }
 }
 
 export const getParentTaskProgress = (task: Task) => getTaskProgress(task, state.tasks)

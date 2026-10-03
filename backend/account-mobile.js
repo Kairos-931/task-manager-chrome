@@ -48,6 +48,9 @@ export const renderAccountMobilePage = (env) => {
     .feedback-actions button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
     label { display: block; margin: 0 0 6px; color: #475569; font-size: 13px; font-weight: 600; }
     input, select, textarea { width: 100%; margin-bottom: 14px; padding: 11px 12px; border: 1px solid #cbd5e1; border-radius: 9px; color: #0f172a; background: #fff; font: inherit; }
+    #moreOptions { margin: 4px 0 14px; border-top: 1px solid #e2e8f0; padding-top: 12px; }
+    #moreOptions summary { color: #475569; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .advanced-fields { padding-top: 12px; }
     .check-row { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; color: #475569; font-weight: 500; cursor: pointer; }
     .check-row input { width: 18px; height: 18px; flex: 0 0 auto; margin: 0; accent-color: #2563eb; }
     textarea { min-height: 76px; resize: vertical; }
@@ -61,7 +64,8 @@ export const renderAccountMobilePage = (env) => {
     @media (prefers-color-scheme: dark) {
       body { color: #e2e8f0; background: #0f172a; }
       .card { border-color: #334155; background: #1e293b; }
-      .account-copy span, header p, #loginHelp, #status, label { color: #94a3b8; }
+      .account-copy span, header p, #loginHelp, #status, label, #moreOptions summary { color: #94a3b8; }
+      #moreOptions { border-color: #334155; }
       #status.uncertain { color: #fbbf24; }
       input, select, textarea { border-color: #475569; color: #e2e8f0; background: #0f172a; }
       .secondary { color: #cbd5e1; background: #334155; }
@@ -85,18 +89,22 @@ export const renderAccountMobilePage = (env) => {
     <section id="taskCard" class="card" hidden>
       <label for="title">任务名称</label>
       <input id="title" maxlength="500" autocomplete="off" placeholder="输入要添加的任务" required>
-      <div class="row">
-        <div><label for="priority">优先级</label><select id="priority"><option value="medium">中</option><option value="high">高</option><option value="low">低</option></select></div>
-        <div><label for="category">分类</label><select id="category"></select></div>
-      </div>
-      <label for="dueDate">计划日期</label>
-      <input id="dueDate" type="date" required>
-      <label class="check-row" for="noTimeLimit"><input id="noTimeLimit" type="checkbox"><span>放入任务池，不设置计划日期</span></label>
-      <label for="duration">预计时长（分钟）</label>
-      <input id="duration" type="number" min="0" max="1440" step="15" value="60" inputmode="numeric">
-      <label class="check-row" for="completed"><input id="completed" type="checkbox"><span>添加时标记为已完成</span></label>
-      <label for="description">备注</label>
-      <textarea id="description" maxlength="5000" placeholder="可选"></textarea>
+      <label for="dueDate">计划日期（可选）</label>
+      <input id="dueDate" type="date">
+      <details id="moreOptions">
+        <summary>更多选项</summary>
+        <div class="advanced-fields">
+          <div class="row">
+            <div><label for="priority">优先级</label><select id="priority"><option value="medium">中</option><option value="high">高</option><option value="low">低</option></select></div>
+            <div><label for="category">分类</label><select id="category"></select></div>
+          </div>
+          <label for="duration">预计时长（分钟）</label>
+          <input id="duration" type="number" min="0" max="1440" step="15" placeholder="未估时" inputmode="numeric">
+          <label class="check-row" for="completed"><input id="completed" type="checkbox"><span>添加时标记为已完成</span></label>
+          <label for="description">备注</label>
+          <textarea id="description" maxlength="5000" placeholder="可选"></textarea>
+        </div>
+      </details>
       <button id="submitBtn" class="primary" type="button">添加任务</button>
       <p id="status"></p>
     </section>
@@ -124,18 +132,10 @@ export const renderAccountMobilePage = (env) => {
       const saveFeedbackDismiss = document.getElementById('saveFeedbackDismiss');
       const signOutBtn = document.getElementById('signOutBtn');
       const restartLoginBtn = document.getElementById('restartLoginBtn');
-      const today = new Date();
-      document.getElementById('dueDate').value = [today.getFullYear(), String(today.getMonth() + 1).padStart(2, '0'), String(today.getDate()).padStart(2, '0')].join('-');
-      document.getElementById('noTimeLimit').addEventListener('change', (event) => {
-        const noTimeLimit = event.currentTarget.checked;
-        const dueDate = document.getElementById('dueDate');
-        dueDate.disabled = noTimeLimit;
-        dueDate.required = !noTimeLimit;
-      });
       const MOBILE_SESSION_KEY = 'tm_google_mobile_session_v1';
       const MOBILE_PENDING_TASK_PREFIX = 'tm_mobile_pending_task_v1:';
       const CLIENT_TASK_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      const TASK_FIELD_IDS = ['title', 'description', 'priority', 'category', 'dueDate', 'noTimeLimit', 'duration', 'completed'];
+      const TASK_FIELD_IDS = ['title', 'description', 'priority', 'category', 'dueDate', 'duration', 'completed'];
       const MOBILE_SAVE_TIMEOUT_MS = 15000;
       let googleCredential = '';
       let accountSub = '';
@@ -219,9 +219,8 @@ export const renderAccountMobilePage = (env) => {
       };
       const pendingTaskStorageKey = (sub) => MOBILE_PENDING_TASK_PREFIX + sub;
       const setTaskFieldsLocked = (locked) => {
-        const noTimeLimit = document.getElementById('noTimeLimit').checked;
         for (const id of TASK_FIELD_IDS) {
-          document.getElementById(id).disabled = locked || (id === 'dueDate' && noTimeLimit);
+          document.getElementById(id).disabled = locked;
         }
       };
       const hideSaveFeedback = () => {
@@ -262,11 +261,10 @@ export const renderAccountMobilePage = (env) => {
         document.getElementById('title').value = '';
         document.getElementById('description').value = '';
         document.getElementById('priority').value = 'medium';
-        document.getElementById('noTimeLimit').checked = false;
-        document.getElementById('dueDate').value = [today.getFullYear(), String(today.getMonth() + 1).padStart(2, '0'), String(today.getDate()).padStart(2, '0')].join('-');
-        document.getElementById('dueDate').required = true;
-        document.getElementById('duration').value = '60';
+        document.getElementById('dueDate').value = '';
+        document.getElementById('duration').value = '';
         document.getElementById('completed').checked = false;
+        document.getElementById('moreOptions').open = false;
         status.textContent = '';
         status.classList.remove('error', 'uncertain');
         hideSaveFeedback();
@@ -296,12 +294,10 @@ export const renderAccountMobilePage = (env) => {
         document.getElementById('description').value = payload.description;
         document.getElementById('priority').value = payload.priority;
         document.getElementById('category').value = payload.category;
-        document.getElementById('dueDate').value = payload.dueDate;
-        document.getElementById('noTimeLimit').checked = payload.noTimeLimit;
-        document.getElementById('dueDate').disabled = payload.noTimeLimit;
-        document.getElementById('dueDate').required = !payload.noTimeLimit;
-        document.getElementById('duration').value = String(payload.duration);
+        document.getElementById('dueDate').value = payload.noTimeLimit ? '' : payload.dueDate;
+        document.getElementById('duration').value = payload.duration === 0 ? '' : String(payload.duration);
         document.getElementById('completed').checked = payload.completed;
+        document.getElementById('moreOptions').open = true;
       };
       const restorePendingTaskMutation = () => {
         pendingTaskMutation = null;
@@ -574,8 +570,8 @@ export const renderAccountMobilePage = (env) => {
               description: document.getElementById('description').value.trim(),
               priority: document.getElementById('priority').value,
               category: document.getElementById('category').value,
-              dueDate: document.getElementById('noTimeLimit').checked ? '' : document.getElementById('dueDate').value,
-              noTimeLimit: document.getElementById('noTimeLimit').checked,
+              dueDate: document.getElementById('dueDate').value,
+              noTimeLimit: !document.getElementById('dueDate').value,
               duration: Number(document.getElementById('duration').value),
               completed: document.getElementById('completed').checked,
               deviceId,
@@ -647,10 +643,11 @@ export const renderAccountMobilePage = (env) => {
           lastSaveWasDefiniteFailure = false;
           document.getElementById('title').value = '';
           document.getElementById('description').value = '';
-          document.getElementById('noTimeLimit').checked = false;
-          document.getElementById('dueDate').disabled = false;
-          document.getElementById('dueDate').required = true;
+          document.getElementById('priority').value = 'medium';
+          document.getElementById('dueDate').value = '';
+          document.getElementById('duration').value = '';
           document.getElementById('completed').checked = false;
+          document.getElementById('moreOptions').open = false;
           setSaveStatus(body.alreadyProcessed
             ? '已确认此前已保存到账号，电脑联网后会自动同步。'
             : '已保存到账号，电脑联网后会自动同步。', 'success');

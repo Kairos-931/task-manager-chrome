@@ -130,6 +130,7 @@ const normalParent = {
 }
 
 const blankRowHtml = renderSplitChildRow(0, undefined, '', { allowUnscheduled: true })
+assert.match(blankRowHtml, /class="split-child-duration[^"]*" value="" min="0"/)
 assert.match(blankRowHtml, /class="split-child-unscheduled"[^>]*aria-pressed="true"[^>]*>暂不安排/)
 assert.match(blankRowHtml, /split-child-date-status[^>]*>暂不安排 · 进入任务池/)
 assert.match(blankRowHtml, /class="split-child-date[^"]*"[^>]*value=""/)
@@ -184,6 +185,15 @@ assert.deepEqual(children.map(child => ({ dueDate: child.dueDate, noTimeLimit: c
   { dueDate: '', noTimeLimit: true }
 ])
 
+const unestimatedParent = { ...normalParent, id: 'unestimated-parent' }
+setState({ tasks: [unestimatedParent] })
+assert.equal(splitTask(unestimatedParent.id, [
+  { title: '未估步骤一', duration: 0, dueDate: '' },
+  { title: '未估步骤二', duration: 0, dueDate: '' }
+]), true)
+children = getState().tasks.filter(task => task.parentId === unestimatedParent.id)
+assert.ok(children.every(child => child.duration === 0 && child.noTimeLimit && child.dueDate === ''))
+
 const editableParent = { ...normalParent, id: 'editable-parent', isParent: true, dueDate: '', duration: 0, noTimeLimit: true }
 const existingDated = { ...normalParent, id: 'existing-dated', parentId: editableParent.id, dueDate: '2099-01-08', noTimeLimit: false }
 const existingPool = { ...normalParent, id: 'existing-pool', parentId: editableParent.id, dueDate: '', noTimeLimit: true }
@@ -219,11 +229,12 @@ const [taskSource, renderSource, eventsSource] = await Promise.all([
   readFile(new URL('../shared/render.ts', import.meta.url), 'utf8'),
   readFile(new URL('../shared/events.ts', import.meta.url), 'utf8')
 ])
-assert.match(taskSource, /noTimeLimit: childDate\.length === 0/)
+assert.match(taskSource, /noTimeLimit: !child\.dueDate/)
 assert.match(renderSource, /allowUnscheduled/)
 assert.match(renderSource, /renderSplitChildRow\(index, child, child\?\.dueDate \|\| ''/)
 assert.match(eventsSource, /waitingCount = children\.filter\(child => !child\.dueDate\)\.length/)
 assert.match(eventsSource, /splitTaskSnapshot/)
-assert.doesNotMatch(eventsSource, /invalidChildIndex[\s\S]*!child\.dueDate/)
+const parentValidation = eventsSource.match(/const invalidIndex = children\.findIndex\(child => ([^\n]+)\)/)?.[1] || ''
+assert.doesNotMatch(parentValidation, /dueDate/)
 
 console.log('Optional split child date tests passed')

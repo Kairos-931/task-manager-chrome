@@ -11,6 +11,7 @@ export interface TaskDraft {
   pendingTaskId?: string
   fields: Record<string, string | boolean>
   children: Array<{ title: string; duration: string; dueDate: string }>
+  moreOptionsOpen?: boolean
 }
 
 const PREFIX = 'tm_task_draft_v1:'
