@@ -115,7 +115,8 @@
 
 ## 2026-10-03 Issue #69 UX-01 候选完成
 
-- 用户按本轮指令将执行配置改为 gpt-6-sol / low。实现提交位于分支 `codex/task-save-failure-69`，候选版本 3.17.5，待用户加载后验收。
+- 用户按本轮指令将执行配置改为 gpt-6-sol / low。实现提交 `bf203ba` 位于分支 `codex/task-save-failure-69`，候选版本 3.17.5，待用户加载后验收。
 - 候选目录：`outputs/TaskMaster-3.17.5-final-20261003`。扩展 manifest 公钥与现有已加载目录 `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` 一致；旧加载目录没有被覆盖。
 - typecheck、lint、build 和 UX-01 故障注入回归通过。完整测试仍被既有 `ui-layout` 静态断言阻断；`optional-split-child-dates` 另有跨区块静态正则误报，详情记录在 `docs/requirements/REQ-20261003-task-save-failure.md`。
 - 未执行 GUI/视觉验收、push 或 Worker 部署。Google 同步 Issue #62 仍单独开放，已有手机到电脑新增路径的确认不代表其余账号隔离、删除与数据归属验收完成。
+- 开发→产品反馈事件 `TM-20261003-task-save-failure-69` 于 2026-10-03 04:53 UTC 发送至任务 `01a0f1af-be64-7860-8c0d-660fdb71e2c9`；工具返回相同 `threadId` 且 `isError=false`。

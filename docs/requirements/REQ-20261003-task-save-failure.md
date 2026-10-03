@@ -79,3 +79,4 @@
 - 候选 manifest 公钥与实际已加载目录 `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` 相同；该实际目录及扩展身份未被修改。正式加载目录中的当前 manifest 版本为 3.16.3。
 - 完整 `npm run check` 在既有 `tests/ui-layout.test.mjs` 断言处失败：测试从 `events.ts` 查找拆分子任务布局标记，而标记位于 `render.ts`。单跑 `tests/optional-split-child-dates.test.mjs` 也被既有跨区块静态正则阻断；其正则把普通拆分任务和另一个大任务创建表单的必填日期检查连在一起。本需求未改动这些布局/拆分日期行为，也未为通过检查绕过或更改无关断言；这两项需单列为仓库已有测试缺陷。
 - 未启动桌面 GUI 或真人视觉检查；未替换实际已加载目录、未 push、未部署 Worker。当前候选等待用户加载后的真实表单验收。
+- 开发→产品反馈事件 `TM-20261003-task-save-failure-69` 已于 2026-10-03 04:53 UTC 发送至产品任务 `01a0f1af-be64-7860-8c0d-660fdb71e2c9`；工具返回相同 `threadId`，`isError=false`。本地实现提交为 `bf203ba`。
