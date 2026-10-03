@@ -590,12 +590,12 @@ export const splitTask = (id: string, children: SplitChildInput[]): boolean => {
 
 export const createParentWithChildren = (
   parent: Omit<Task, 'id' | 'createdAt' | 'completedAt' | 'updatedAt' | 'completedDates' | 'repeatStartDate' | 'duration' | 'dueDate' | 'focusDate' | 'isParent' | 'parentId'>,
-  children: SplitChildInput[]
+  children: SplitChildInput[],
+  parentId = generateId()
 ): boolean => {
   const validChildren = children.filter(child => child.title.trim() && child.duration > 0 && child.dueDate)
   if (validChildren.length < 2 || validChildren.length !== children.length) return false
   const now = Date.now()
-  const parentId = generateId()
   const newParent: Task = {
     ...parent, id: parentId, duration: 0, dueDate: '', focusDate: undefined, isParent: true,
     completed: false, completedDates: [], noTimeLimit: true, repeatType: 'none', repeatDays: [], repeatInterval: 1,
@@ -614,9 +614,10 @@ export const createParentWithChildren = (
 export const createParentWithChildrenPersisted = async (
   parent: Parameters<typeof createParentWithChildren>[0],
   children: SplitChildInput[],
-  persist: () => Promise<boolean> = persistState
+  persist: () => Promise<boolean> = persistState,
+  parentId?: string
 ): Promise<boolean> => {
-  return persistTaskMutation(() => createParentWithChildren(parent, children), persist)
+  return persistTaskMutation(() => createParentWithChildren(parent, children, parentId), persist)
 }
 
 export const deleteCategory = (id: string): void => {

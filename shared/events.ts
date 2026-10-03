@@ -7,6 +7,8 @@ import { showToast } from './sync'
 import { isValidLocalDate } from './replan-policy.js'
 import { bindTaskQuickDates, bindSplitQuickDates, createSubmissionGuard, createResettableSubmissionGuard } from './quick-dates'
 import { applyTaskEntryMode } from './task-form'
+import { draftContext, draftSessionId, readLatestTaskDraft, TaskDraftStore } from './task-draft'
+import type { TaskDraft } from './task-draft'
 import { getTodayScrollBehavior, isAnchorVisible } from './list-navigation'
 import type { PendingGoogleAuthorization } from './storage'
 
@@ -14,6 +16,38 @@ let draggedTaskId: string | null = null
 let currentContainer: HTMLElement | null = null
 let taskMenuDismissHandler: ((event: PointerEvent) => void) | null = null
 let listScrollHandler: (() => void) | null = null
+let activeDraftStore: TaskDraftStore | null = null
+let recoveredDraft: TaskDraft | undefined
+
+export const initializeTaskDraft = async (container: HTMLElement): Promise<void> => {
+  const context = await draftContext()
+  const sessionId = await draftSessionId()
+  let storageUnavailable = false
+  const result = await readLatestTaskDraft(context, sessionId).catch(() => {
+    storageUnavailable = true
+    return { store: new TaskDraftStore(context, sessionId), draft: undefined }
+  })
+  activeDraftStore = result.store
+  recoveredDraft = result.draft
+  if (recoveredDraft?.pendingTaskId && getState().tasks.some(task => task.id === recoveredDraft?.pendingTaskId)) {
+    recoveredDraft = undefined
+    void result.store.clear().catch(() => undefined)
+  }
+  if (recoveredDraft?.taskId) {
+    const task = getState().tasks.find(item => item.id === recoveredDraft?.taskId)
+    if (task) setState({ editingTask: task })
+  }
+  renderApp(container)
+  attachEventListeners(container)
+  if (storageUnavailable) container.querySelector('#taskSaveError')?.replaceChildren(document.createTextNode('本机暂无法保留草稿，请完成任务后直接保存'))
+}
+
+export const refreshTaskDraftContext = async (container: HTMLElement): Promise<boolean> => {
+  if (await draftContext() === activeDraftStore?.context) return false
+  resetEditingTask()
+  await initializeTaskDraft(container)
+  return true
+}
 
 const closePopupTaskMenus = (container: HTMLElement): void => {
   container.querySelectorAll<HTMLDetailsElement>('details.task-more-menu[open]').forEach(menu => {
@@ -165,7 +199,7 @@ const bindGoogleAccountPanels = (container: HTMLElement): void => {
       await activateGoogleAccount(authorization)
       if (switchPanel) switchPanel.classList.add('hidden')
       await loadState()
-      reRender()
+      if (!await refreshTaskDraftContext(container)) reRender()
       syncToast('已连接 Google，正在同步此账号的任务')
     }
 
@@ -241,6 +275,7 @@ const bindGoogleAccountPanels = (container: HTMLElement): void => {
         setFeedback(panel, revoked
           ? '已退出。任务仍保存在本机；重新登录后可继续同步。'
           : '本机已退出；当前网络未能确认远端撤销，服务端会话最长 7 天后自动到期。', !revoked)
+        await refreshTaskDraftContext(container)
         syncToast('已退出 Google 同步')
       } catch (error) {
         setFeedback(panel, error instanceof Error ? error.message : '退出失败，请重试', true)
@@ -465,7 +500,77 @@ export const attachEventListeners = (container: HTMLElement): void => {
   const taskForm = container.querySelector('#taskForm') as HTMLFormElement
   let taskMode: 'normal' | 'parent' = 'normal'
   let taskSaveInProgress = false
+  let taskFormDirty = false
   let pendingTaskId: string | null = null
+  const restored = recoveredDraft
+  recoveredDraft = undefined
+  if (restored?.pendingTaskId) pendingTaskId = restored.pendingTaskId
+  const draftTaskId = restored?.taskId || getState().editingTask?.id
+  const draftTaskUpdatedAt = restored?.taskUpdatedAt ?? getState().editingTask?.updatedAt
+  let approvedUpdatedAt: number | undefined
+  let approvedDeleted = false
+  const fieldKey = (control: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement): string =>
+    control.name === 'repeatDays' ? `repeatDays:${control.value}` : control.name || control.id
+  const captureDraft = (): TaskDraft => {
+    const fields: TaskDraft['fields'] = {}
+    taskForm.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input, textarea, select').forEach(control => {
+      if (control.closest('.split-child-row')) return
+      const key = fieldKey(control)
+      if (key) fields[key] = control.type === 'checkbox' ? (control as HTMLInputElement).checked : control.value
+    })
+    const children = [...taskForm.querySelectorAll<HTMLElement>('#newParentChildren .split-child-row')].map(row => ({
+      title: row.querySelector<HTMLInputElement>('.split-child-title')?.value || '',
+      duration: row.querySelector<HTMLInputElement>('.split-child-duration')?.value || '',
+      dueDate: row.querySelector<HTMLInputElement>('.split-child-date')?.value || ''
+    }))
+    const editingTask = getState().editingTask
+    return { version: 1, context: activeDraftStore?.context || '', updated: Date.now(), mode: taskMode,
+      taskId: editingTask?.id, taskUpdatedAt: restored?.taskUpdatedAt ?? editingTask?.updatedAt,
+      pendingTaskId: pendingTaskId || undefined, fields, children }
+  }
+  let baselineDraft: TaskDraft
+  const saveDraft = (): Promise<void> => {
+    if (!activeDraftStore) return Promise.resolve()
+    const draft = captureDraft()
+    if (JSON.stringify([draft.mode, draft.fields, draft.children]) === JSON.stringify([baselineDraft.mode, baselineDraft.fields, baselineDraft.children])) {
+      void clearDraft()
+      return Promise.resolve()
+    }
+    const store = activeDraftStore
+    const generation = store.snapshot()
+    return store.save(draft, generation).catch(() => setTaskSaveError('本机暂无法保留草稿，请完成任务后直接保存'))
+  }
+  const clearDraft = async (): Promise<boolean> => {
+    if (!activeDraftStore) return true
+    try { await activeDraftStore.clear(); return true }
+    catch { setTaskSaveError('草稿清理失败，请稍后重试'); return false }
+  }
+  const restoreFields = (draft: TaskDraft) => {
+    if (draft.mode === 'parent' && !getState().editingTask) setTaskMode('parent')
+    taskForm.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input, textarea, select').forEach(control => {
+      if (control.closest('.split-child-row')) return
+      const value = draft.fields[fieldKey(control)]
+      if (typeof value === 'boolean' && control.type === 'checkbox') (control as HTMLInputElement).checked = value
+      else if (typeof value === 'string') control.value = value
+    })
+    const rows = taskForm.querySelector<HTMLElement>('#newParentChildren')
+    if (rows && draft.mode === 'parent') {
+      rows.replaceChildren()
+      draft.children.forEach((child, index) => {
+        const wrapper = document.createElement('div')
+        wrapper.innerHTML = renderSplitChildRow(index, { ...child, duration: Math.round(Number(child.duration) * 60) }, child.dueDate)
+        const row = wrapper.firstElementChild
+        if (row) {
+          row.querySelector<HTMLInputElement>('.split-child-duration')!.value = child.duration
+          rows.appendChild(row)
+        }
+      })
+    }
+    queueMicrotask(() => {
+      taskForm.querySelector<HTMLSelectElement>('#repeatType')?.dispatchEvent(new Event('change', { bubbles: true }))
+      taskForm.querySelector<HTMLInputElement>('#noTimeLimit')?.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+  }
   type TaskFormControl = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement
   let taskSaveDisabledStates: Array<{ control: TaskFormControl; disabled: boolean }> = []
   let taskSubmitOriginalLabel = ''
@@ -473,6 +578,25 @@ export const attachEventListeners = (container: HTMLElement): void => {
   const setTaskSaveError = (message: string) => {
     const error = container.querySelector('#taskSaveError') as HTMLElement | null
     error?.replaceChildren(document.createTextNode(message))
+  }
+  const showDraftConflict = (kind: 'updated' | 'deleted') => {
+    const panel = container.querySelector<HTMLElement>('#taskDraftConflict')
+    const message = container.querySelector<HTMLElement>('#taskDraftConflictMessage')
+    const proceed = container.querySelector<HTMLButtonElement>('#taskDraftProceed')
+    panel?.classList.remove('hidden')
+    if (message) message.textContent = kind === 'updated' ? '这条任务已更新，草稿尚未保存。' : '原任务已删除，草稿尚未保存。'
+    if (proceed) proceed.textContent = kind === 'updated' ? '用草稿覆盖最新内容' : '另存为新任务'
+    panel?.setAttribute('data-kind', kind)
+    setTaskSaveError('')
+  }
+  const hideDraftConflict = () => container.querySelector('#taskDraftConflict')?.classList.add('hidden')
+  const currentDraftConflict = (): 'updated' | 'deleted' | null => {
+    if (!draftTaskId) return null
+    const current = getState().tasks.find(task => task.id === draftTaskId)
+    if (!current) return approvedDeleted ? null : 'deleted'
+    if (approvedDeleted) { approvedDeleted = false; return 'updated' }
+    if (current.updatedAt !== draftTaskUpdatedAt && current.updatedAt !== approvedUpdatedAt) return 'updated'
+    return null
   }
   const beginTaskSave = (): boolean => {
     if (taskSaveInProgress) return false
@@ -509,6 +633,31 @@ export const attachEventListeners = (container: HTMLElement): void => {
   // Hidden required controls still participate in native form validation unless disabled.
   // Initialize only new-task forms; edit forms must keep their existing save label and fields.
   if (taskForm && !getState().editingTask) setTaskMode('normal')
+  baselineDraft = captureDraft()
+  if (restored) {
+    restoreFields(restored)
+    const modal = container.querySelector<HTMLElement>('#taskModal')
+    modal?.classList.remove('hidden')
+    taskFormDirty = true
+    setTaskSaveError('已恢复上次填写的内容')
+    const conflict = currentDraftConflict()
+    if (conflict) showDraftConflict(conflict)
+  }
+  container.querySelector('#taskDraftProceed')?.addEventListener('click', () => {
+    const kind = container.querySelector<HTMLElement>('#taskDraftConflict')?.dataset.kind
+    if (kind === 'updated') {
+      const current = getState().tasks.find(task => task.id === draftTaskId)
+      if (!current) { showDraftConflict('deleted'); return }
+      approvedUpdatedAt = current.updatedAt
+    } else if (kind === 'deleted') approvedDeleted = true
+    hideDraftConflict()
+    taskForm.requestSubmit()
+  })
+  container.querySelector('#taskDraftDiscard')?.addEventListener('click', async () => {
+    if (!await clearDraft()) return
+    resetEditingTask()
+    reRender()
+  })
   const parentChildren = container.querySelector<HTMLElement>('#newParentChildren')
   const bindParentChildControls = () => {
     if (!parentChildren) return
@@ -537,9 +686,20 @@ export const attachEventListeners = (container: HTMLElement): void => {
   taskForm?.addEventListener('submit', async (e) => {
     e.preventDefault()
     if (taskSaveInProgress) return
+    try {
+      if (activeDraftStore && await draftContext() !== activeDraftStore.context) {
+        setTaskSaveError('账号已切换，请返回原账号后继续此草稿')
+        return
+      }
+    } catch {
+      setTaskSaveError('无法确认当前账号，请稍后重试')
+      return
+    }
+    const conflict = currentDraftConflict()
+    if (conflict) { showDraftConflict(conflict); return }
     const form = e.target as HTMLFormElement
     const formData = new FormData(form)
-    const { editingTask } = getState()
+    const editingTask = approvedDeleted ? null : (draftTaskId ? getState().tasks.find(task => task.id === draftTaskId) || null : getState().editingTask)
 
     const commonData = {
       title: (formData.get('title') as string).trim(),
@@ -566,16 +726,28 @@ export const attachEventListeners = (container: HTMLElement): void => {
       if (!parentSubmitGuard.trySubmit()) return
       if (!beginTaskSave()) return
       try {
-        const created = await createParentWithChildrenPersisted({ ...commonData, hardDeadline: (formData.get('parentHardDeadline') as string) || undefined, completed: false, noTimeLimit: true, repeatType: 'none', repeatDays: [], repeatInterval: 1 }, children)
+        pendingTaskId ||= crypto.randomUUID()
+        await saveDraft()
+        if (activeDraftStore && await draftContext() !== activeDraftStore.context) {
+          parentSubmitGuard.reset()
+          setTaskSaveError('账号已切换，请返回原账号后继续此草稿')
+          return
+        }
+        const laterConflict = currentDraftConflict()
+        if (laterConflict) { parentSubmitGuard.reset(); showDraftConflict(laterConflict); return }
+        const created = await createParentWithChildrenPersisted({ ...commonData, hardDeadline: (formData.get('parentHardDeadline') as string) || undefined, completed: false, noTimeLimit: true, repeatType: 'none', repeatDays: [], repeatInterval: 1 }, children, persistState, pendingTaskId)
         if (!created) {
           ;(container.querySelector('#parentTaskError') as HTMLElement | null)?.replaceChildren(document.createTextNode('本地保存失败，请重试'))
           parentSubmitGuard.reset()
+          saveDraft()
           return
         }
         pendingTaskId = null
+        const draftCleared = await clearDraft()
         resetEditingTask()
         reRender()
         showToast(container, `已创建大任务和 ${children.length} 个子任务`, 'success')
+        if (!draftCleared) showToast(container, '任务已保存，但草稿清理失败', 'error')
       } finally {
         endTaskSave()
       }
@@ -604,11 +776,14 @@ export const attachEventListeners = (container: HTMLElement): void => {
           }
         })
         if (!saved) {
+          saveDraft()
           setTaskSaveError('本地保存失败，内容已保留，请重试')
           return
         }
+        const draftCleared = await clearDraft()
         resetEditingTask()
         reRender()
+        if (!draftCleared) showToast(container, '任务已保存，但草稿清理失败', 'error')
       } finally {
         endTaskSave()
       }
@@ -651,6 +826,16 @@ export const attachEventListeners = (container: HTMLElement): void => {
 
     if (!beginTaskSave()) return
     try {
+      if (!editingTask) {
+        pendingTaskId ||= crypto.randomUUID()
+        await saveDraft()
+      }
+      if (activeDraftStore && await draftContext() !== activeDraftStore.context) {
+        setTaskSaveError('账号已切换，请返回原账号后继续此草稿')
+        return
+      }
+      const laterConflict = currentDraftConflict()
+      if (laterConflict) { showDraftConflict(laterConflict); return }
       const saved = await persistTaskMutation(() => {
         if (editingTask) {
           updateTask(editingTask.id, taskData)
@@ -661,22 +846,25 @@ export const attachEventListeners = (container: HTMLElement): void => {
         }
       })
       if (!saved) {
+        saveDraft()
         setTaskSaveError('本地保存失败，内容已保留，请重试')
         return
       }
       pendingTaskId = null
+      const draftCleared = await clearDraft()
       resetEditingTask()
       reRender()
+      if (!draftCleared) showToast(container, '任务已保存，但草稿清理失败', 'error')
     } finally {
       endTaskSave()
     }
   })
 
   // 模态框关闭
-  let taskFormDirty = false
   taskForm?.addEventListener('input', () => {
     taskFormDirty = true
     setTaskSaveError('')
+    saveDraft()
   })
 
   container.querySelectorAll('.task-focus-toggle').forEach(btn => {
@@ -1009,10 +1197,18 @@ export const attachEventListeners = (container: HTMLElement): void => {
   })
   taskForm?.addEventListener('change', () => {
     taskFormDirty = true
+    saveDraft()
+  })
+  taskForm?.addEventListener('click', event => {
+    const target = event.target as Element
+    if (!target.closest('[data-task-mode], #addParentChildBtn, .remove-split-child, .split-duration-increase, .split-duration-decrease, .split-quick-dates .quick-date-btn, #durationIncrease, #durationDecrease')) return
+    taskFormDirty = true
+    queueMicrotask(saveDraft)
   })
 
-  const closeTaskModal = () => {
+  const closeTaskModal = async () => {
     if (taskFormDirty && !confirm('当前填写的内容尚未保存，确定关闭吗？')) return
+    if (!await clearDraft()) return
     const modal = container.querySelector('#taskModal') as HTMLElement
     modal?.classList.add('hidden')
     resetEditingTask()
@@ -1020,18 +1216,18 @@ export const attachEventListeners = (container: HTMLElement): void => {
   }
 
   container.querySelector('#closeModal')?.addEventListener('click', () => {
-    closeTaskModal()
+    void closeTaskModal()
   })
 
   container.querySelector('#cancelBtn')?.addEventListener('click', () => {
-    closeTaskModal()
+    void closeTaskModal()
   })
 
   container.querySelector('#taskModal')?.addEventListener('keydown', (e) => {
     if ((e as KeyboardEvent).key === 'Escape') {
       e.preventDefault()
       if (taskSaveInProgress) return
-      closeTaskModal()
+      void closeTaskModal()
     }
   })
 

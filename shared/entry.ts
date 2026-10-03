@@ -3,7 +3,7 @@
 
 import { loadState, persistState, getState, setState, resetEditingTask, getFilteredTasks, getStats, getWeeklyGoalStats, addTask, updateTask, deleteTask, toggleTask, moveTaskToDate, addCategory, deleteCategory, formatDate, parseDate, formatHours, getDateLabel, getRemainingTime, isOverdue, isTaskDueOnDate, getPriorityColor, getCatColor, getCatName, escapeHtml } from './task'
 import { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, renderPoolView, renderListView, renderDayView, renderWeekView, renderMonthView, renderTaskList, renderModal, renderCategoryModal, renderGoalSettingsModal, renderSyncModal, renderMobileSyncPanel, renderWeeklyGoalCard, renderSyncIndicator } from './render'
-import { attachEventListeners } from './events'
+import { attachEventListeners, initializeTaskDraft, refreshTaskDraftContext } from './events'
 import { onSyncStatusChange, shouldRefreshAppForSyncStatus } from './sync'
 
 // 同步操作反馈 toast（独立定义避免循环依赖）
@@ -47,12 +47,16 @@ function autoInit() {
     attachEventListeners(container)
   }
 
-  loadState().then(() => {
+  loadState().then(async () => {
     if (window.location.pathname.includes('popup')) {
       setState({ currentView: 'focus' })
     }
-    renderApp(container)
-    attachEventListeners(container)
+    try {
+      await initializeTaskDraft(container)
+    } catch {
+      renderApp(container)
+      attachEventListeners(container)
+    }
 
     // Auto-sync mobile tasks with toast feedback
     chrome.runtime.sendMessage({ action: 'syncRemoteTasks' }, (result: { synced?: number }) => {
@@ -75,12 +79,12 @@ function autoInit() {
 
     chrome.runtime.onMessage.addListener((message) => {
       if (message?.action === 'googleAccountAuthExpired') {
-        if (!isInteractiveTaskModalOpen(container)) reRender()
+        void refreshTaskDraftContext(container).then(changed => { if (!changed && !isInteractiveTaskModalOpen(container)) reRender() })
         return
       }
       if (message?.action === 'googleAccountSyncUpdated') {
-        void loadState().then(() => {
-          if (!isInteractiveTaskModalOpen(container)) reRender()
+        void loadState().then(async () => {
+          if (!await refreshTaskDraftContext(container) && !isInteractiveTaskModalOpen(container)) reRender()
         })
       }
     })

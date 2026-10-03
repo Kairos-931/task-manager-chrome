@@ -1091,6 +1091,13 @@ export const renderModal = (): string => {
           </div>
           `}
           <p id="taskSaveError" class="text-sm text-red-500" role="alert" aria-live="polite"></p>
+          <div id="taskDraftConflict" class="hidden rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
+            <p id="taskDraftConflictMessage"></p>
+            <div class="mt-2 flex gap-3">
+              <button type="button" id="taskDraftProceed" class="rounded bg-amber-700 px-3 py-1 text-white"></button>
+              <button type="button" id="taskDraftDiscard" class="rounded border border-amber-700 px-3 py-1">放弃草稿</button>
+            </div>
+          </div>
           <div class="flex gap-3 pt-4">
             ${isEditing ? `<button type="button" id="deleteTaskBtn" class="px-4 py-2 border border-red-500 text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition">删除</button>` : ''}
             <div class="flex-1"></div>
