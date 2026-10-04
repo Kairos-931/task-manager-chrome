@@ -267,6 +267,59 @@ try {
   assert.equal(finalState.feedback, '已添加到任务池', 'Success feedback appears after persistence.')
   assert.ok(initialTaskCount === 0, 'The isolated browser profile starts without production tasks.')
 
+  const legacySeeded = await evaluate(`new Promise(resolve=>chrome.storage.local.get(['tm_local_backup'],result=>{
+    const data=JSON.parse(result.tm_local_backup)
+    const formatDate=date=>date.getFullYear()+'-'+String(date.getMonth()+1).padStart(2,'0')+'-'+String(date.getDate()).padStart(2,'0')
+    const today=formatDate(new Date())
+    const yesterdayDate=new Date()
+    yesterdayDate.setDate(yesterdayDate.getDate()-1)
+    const yesterday=formatDate(yesterdayDate)
+    const base=(id,extra={})=>({id,title:id,description:'',priority:'medium',category:'default-work',dueDate:today,duration:0,repeatType:'daily',repeatDays:[],repeatInterval:1,completed:false,completedDates:[],createdAt:1,updatedAt:1,noTimeLimit:false,...extra})
+    const missing=base('tm73-legacy-missing',{repeatStartDate:yesterday})
+    delete missing.repeatDays
+    delete missing.completedDates
+    const nullHistory=base('tm73-legacy-null',{repeatDays:null,completedDates:null})
+    const wrongType=base('tm73-legacy-wrong-type',{repeatType:'none',repeatDays:'invalid',completedDates:'not-an-array',completed:true})
+    const partial=base('tm73-legacy-partial',{repeatType:'weekly',repeatStartDate:today,repeatDays:[new Date().getDay(),8,'invalid'],completedDates:[yesterday,'not-a-date',null]})
+    const valid=base('tm73-legacy-valid',{repeatStartDate:yesterday,completedDates:[yesterday]})
+    const parent=base('tm73-legacy-parent',{isParent:true,repeatType:'none',dueDate:'',noTimeLimit:true,completedDates:undefined,repeatDays:undefined})
+    const child=base('tm73-legacy-child',{parentId:parent.id,repeatType:'none',completedDates:undefined,repeatDays:undefined})
+    const legacy=[missing,nullHistory,wrongType,partial,valid,parent,child]
+    data.tasks.push(...legacy)
+    chrome.storage.local.set({tm_local_backup:JSON.stringify(data)},()=>resolve({count:data.tasks.length,legacyIds:legacy.map(task=>task.id),today,yesterday}))
+  }))`)
+  assert.equal(legacySeeded.legacyIds.length, 7, 'Seven synthetic legacy tasks cover missing, null, wrong-type, partial, valid and parent-child history.')
+  await page.call('Page.reload', { ignoreCache: true })
+  await waitFor(async () => evaluate('!!document.querySelector("[data-task-id=tm73-legacy-missing]")'), 'legacy local task set loads into the real newtab')
+  const beforeLegacySubmit = await evaluate("new Promise(resolve=>chrome.storage.local.get(['tm_local_backup'],r=>resolve(JSON.parse(r.tm_local_backup).tasks.length)))")
+  assert.equal(beforeLegacySubmit, 8, 'The isolated local backup contains the first task and all seven synthetic legacy records.')
+
+  const legacyForm = await evaluate("(function(){document.addEventListener('submit',()=>{window.__submitCount=(window.__submitCount||0)+1},true);document.querySelector('#addTaskBtn').click();const form=document.querySelector('#taskForm');const title=form.querySelector('[name=title]');title.value='tm73-legacy-compatible-submit';title.dispatchEvent(new Event('input',{bubbles:true}));return{opened:!document.querySelector('#taskModal').classList.contains('hidden'),valid:form.checkValidity()}})()")
+  assert.deepEqual(legacyForm, { opened: true, valid: true }, 'The real form opens and accepts a title with legacy tasks loaded.')
+  await evaluate("document.querySelector('#taskSubmitBtn').click()")
+  const legacySave = await waitFor(async () => evaluate(`new Promise(resolve=>chrome.storage.local.get(['tm_local_backup'],r=>{
+    const tasks=JSON.parse(r.tm_local_backup).tasks
+    const byId=Object.fromEntries(tasks.map(task=>[task.id,task]))
+    const newTasks=tasks.filter(task=>task.title==='tm73-legacy-compatible-submit')
+    resolve(newTasks.length===1 && tasks.length===${beforeLegacySubmit + 1}
+      ? {count:tasks.length,newCount:newTasks.length,missing:byId['tm73-legacy-missing'].completedDates,nullHistory:byId['tm73-legacy-null'].completedDates,wrongType:byId['tm73-legacy-wrong-type'].completedDates,wrongTypeCompleted:byId['tm73-legacy-wrong-type'].completed,partial:byId['tm73-legacy-partial'].completedDates,partialDays:byId['tm73-legacy-partial'].repeatDays,valid:byId['tm73-legacy-valid'].completedDates,parentChild:byId['tm73-legacy-child'].parentId,modalHidden:document.querySelector('#taskModal')?.classList.contains('hidden'),feedback:document.querySelector('.toast-message')?.textContent||''}
+      : null)
+  }))`), 'one new task persists with every legacy record', 12_000)
+  assert.deepEqual(legacySave, {
+    count: beforeLegacySubmit + 1,
+    newCount: 1,
+    missing: [],
+    nullHistory: [],
+    wrongType: [],
+    wrongTypeCompleted: true,
+    partial: [legacySeeded.yesterday],
+    partialDays: [new Date().getDay()],
+    valid: [legacySeeded.yesterday],
+    parentChild: 'tm73-legacy-parent',
+    modalHidden: true,
+    feedback: '已添加到任务池',
+  }, 'A real form save preserves legacy tasks, explicit history and parent-child links while normalizing optional fields.')
+
   // Reopen the long-lived newtab in a synthetic account context. The fake
   // session and fetch response stay entirely inside this isolated profile.
   await evaluate("new Promise(resolve=>chrome.storage.local.set({tm_google_account:{sub:'tm73-test-account',email:'tm73@example.invalid',connected:true},tm_google_session_token_v1:'tm73-isolated-session'},resolve))")
@@ -516,6 +569,8 @@ try {
     requiredControls,
     validFormState,
     persisted,
+    legacySeeded,
+    legacySave,
     finalState,
     accountDraftKeys,
     firstRemoteWhileEditing,

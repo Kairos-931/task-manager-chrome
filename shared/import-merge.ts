@@ -100,11 +100,9 @@ const normalizeTask = (value: unknown): Task | null => {
   if (value.focusDate !== undefined && value.focusDate !== '' && !validDateOnly(value.focusDate)) return null
   if (!Number.isFinite(value.duration) || Number(value.duration) < 0) return null
   if (value.repeatType !== undefined && !repeatTypes.has(String(value.repeatType))) return null
-  if (value.repeatDays !== undefined && (!Array.isArray(value.repeatDays) || value.repeatDays.some(day => !Number.isInteger(day) || Number(day) < 0 || Number(day) > 6))) return null
   if (value.repeatInterval !== undefined && (!Number.isFinite(value.repeatInterval) || Number(value.repeatInterval) < 1)) return null
   if (value.repeatEndDate !== undefined && value.repeatEndDate !== '' && !validDateOnly(value.repeatEndDate)) return null
   if (value.completed !== undefined && typeof value.completed !== 'boolean') return null
-  if (value.completedDates !== undefined && (!Array.isArray(value.completedDates) || value.completedDates.some(date => !validDateOnly(date)))) return null
   if (value.repeatStartDate !== undefined && value.repeatStartDate !== '' && !validDateOnly(value.repeatStartDate)) return null
   if (value.completedAt !== undefined && !Number.isFinite(value.completedAt)) return null
   if (value.createdAt !== undefined && !Number.isFinite(value.createdAt)) return null
@@ -123,10 +121,14 @@ const normalizeTask = (value: unknown): Task | null => {
     dueDate: typeof value.dueDate === 'string' ? value.dueDate : '',
     duration: Number(value.duration),
     repeatType: repeatTypes.has(String(value.repeatType)) ? value.repeatType as Task['repeatType'] : 'none',
-    repeatDays: Array.isArray(value.repeatDays) ? [...value.repeatDays] as number[] : [],
+    repeatDays: Array.isArray(value.repeatDays)
+      ? value.repeatDays.filter((day: unknown): day is number => Number.isInteger(day) && Number(day) >= 0 && Number(day) <= 6)
+      : [],
     repeatInterval: Number.isFinite(value.repeatInterval) ? Number(value.repeatInterval) : 1,
     completed: value.completed === true,
-    completedDates: Array.isArray(value.completedDates) ? [...value.completedDates] as string[] : [],
+    completedDates: Array.isArray(value.completedDates)
+      ? value.completedDates.filter((date: unknown): date is string => validDateOnly(date))
+      : [],
     createdAt,
     updatedAt: Number.isFinite(value.updatedAt) ? Number(value.updatedAt) : createdAt,
     noTimeLimit: value.noTimeLimit === true || (!value.dueDate && value.noTimeLimit !== false),

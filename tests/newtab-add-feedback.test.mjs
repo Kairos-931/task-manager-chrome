@@ -131,6 +131,8 @@ class FakeForm extends FakeElement {
     ])
     this.submitButton = new FakeElement()
     this.submitButton.textContent = '添加'
+    this.titleInput = new FakeElement()
+    this.titleInput.name = 'title'
     this.dueDate = new FakeElement()
     this.dueDate.name = 'dueDate'
     this.duration = new FakeElement()
@@ -147,6 +149,7 @@ class FakeForm extends FakeElement {
   }
   querySelector(selector) {
     if (selector === '#taskSubmitBtn') return this.submitButton
+    if (selector === '[name="title"]') return this.titleInput
     if (selector === '#durationInput') return this.duration
     if (selector === '#repeatType') return this.repeatType
     if (selector === '#repeatEndDate') return this.repeatEndDate
@@ -157,6 +160,7 @@ class FakeForm extends FakeElement {
   }
   querySelectorAll(selector) {
     if (selector === '[data-task-mode]') return this.modeButtons
+    if (selector === 'input, textarea, select, button') return [this.titleInput, this.submitButton]
     return []
   }
 }
@@ -261,6 +265,7 @@ const resetScenario = (values = {}, persistMode = 'success') => {
     editingTask: null
   })
   const container = new FakeContainer()
+  container.form.titleInput.value = globalThis.testFormValues.title
   container.form.dueDate.value = globalThis.testFormValues.dueDate
   app.attachEventListeners(container)
   return { container, form: container.form, submit: container.form.listeners.get('submit')[0] }
@@ -318,6 +323,71 @@ assert.equal(app.getState().tasks.filter(task => task.isParent).length, 1)
 assert.equal(app.getState().tasks.filter(task => task.parentId).length, 2)
 assert.equal(globalThis.testToasts[0]?.message, '已创建大任务和 2 个子任务')
 assert.equal(globalThis.testToasts.some(toast => toast.message === '已添加到任务池'), false, 'parent feedback does not claim all children enter the pool')
+
+const legacyTask = (id, overrides = {}) => ({
+  id,
+  title: id,
+  description: '',
+  priority: 'medium',
+  category: 'work',
+  dueDate: '2026-10-04',
+  duration: 0,
+  repeatType: 'daily',
+  repeatDays: [],
+  repeatInterval: 1,
+  completed: false,
+  completedDates: [],
+  createdAt: 1,
+  updatedAt: 1,
+  noTimeLimit: false,
+  ...overrides
+})
+const legacyTasks = [
+  legacyTask('legacy-missing-history', { repeatStartDate: '2026-10-03' }),
+  legacyTask('legacy-null-history', { completed: true, repeatDays: null, completedDates: null }),
+  legacyTask('legacy-wrong-type-history', { repeatDays: 'invalid', completedDates: '2026-10-03' }),
+  legacyTask('legacy-partial-history', { repeatDays: [0, 8, 'invalid'], completedDates: ['2026-10-03', 'not-a-date', null] }),
+  legacyTask('legacy-valid-history', { completedDates: ['2026-10-03'] }),
+  legacyTask('legacy-parent', { isParent: true, duration: 0, dueDate: '', noTimeLimit: true, completedDates: undefined, repeatDays: undefined }),
+  legacyTask('legacy-child', { id: 'legacy-child', parentId: 'legacy-parent', repeatType: 'none', completedDates: undefined, repeatDays: undefined })
+]
+delete legacyTasks[0].completedDates
+delete legacyTasks[0].repeatDays
+const legacyTaskCount = legacyTasks.length
+
+scenario = resetScenario({ title: '兼容旧任务后新增' })
+app.setState({ tasks: legacyTasks })
+await scenario.submit(submitEvent(scenario.form))
+const savedLegacyTasks = app.getState().tasks
+assert.equal(savedLegacyTasks.length, legacyTaskCount + 1, 'Adding a task preserves every existing legacy task.')
+assert.ok(savedLegacyTasks.some(task => task.title === '兼容旧任务后新增'), 'The new task saves alongside legacy tasks.')
+assert.equal(savedLegacyTasks.find(task => task.id === 'legacy-missing-history').completedDates, undefined, 'Missing completion history does not block the form mutation.')
+assert.equal(savedLegacyTasks.find(task => task.id === 'legacy-null-history').completedDates, null, 'Null completion history does not block the form mutation.')
+assert.equal(savedLegacyTasks.find(task => task.id === 'legacy-null-history').completed, true, 'A legacy completion flag survives when no date history exists.')
+assert.equal(savedLegacyTasks.find(task => task.id === 'legacy-wrong-type-history').completedDates, '2026-10-03', 'Wrong-type history does not block the form mutation.')
+assert.deepEqual(savedLegacyTasks.find(task => task.id === 'legacy-partial-history').completedDates, ['2026-10-03', 'not-a-date', null], 'Unmodified legacy history remains available to storage normalization.')
+assert.deepEqual(savedLegacyTasks.find(task => task.id === 'legacy-partial-history').repeatDays, [0, 8, 'invalid'])
+assert.deepEqual(savedLegacyTasks.find(task => task.id === 'legacy-valid-history').completedDates, ['2026-10-03'], 'Valid completion history remains unchanged.')
+assert.equal(savedLegacyTasks.find(task => task.id === 'legacy-child').parentId, 'legacy-parent', 'The existing parent-child relationship remains intact.')
+assert.equal(globalThis.testToasts[0]?.message, '已添加到任务池', 'Legacy-compatible save receives normal success feedback.')
+
+scenario = resetScenario({ title: '异常数据下保留输入并可重试' })
+app.setState({ tasks: [null] })
+const originalConsoleError = console.error
+console.error = () => {}
+try {
+  await scenario.submit(submitEvent(scenario.form))
+} finally {
+  console.error = originalConsoleError
+}
+assert.equal(app.getState().tasks[0], null, 'A pre-save preparation error does not mutate the legacy task list.')
+assert.match(scenario.container.saveError.textContent, /本机任务数据异常/)
+assert.equal(scenario.form.titleInput.value, '异常数据下保留输入并可重试', 'The form keeps the entered title after a preparation error.')
+assert.equal(scenario.form.submitButton.disabled, false, 'The submit button is available for retry after a preparation error.')
+assert.equal(scenario.form.submitButton.textContent, '添加', 'The retry label is restored after a preparation error.')
+app.setState({ tasks: [] })
+await scenario.submit(submitEvent(scenario.form))
+assert.equal(app.getState().tasks.filter(task => task.title === '异常数据下保留输入并可重试').length, 1, 'The same form can be retried successfully.')
 
 for (const [key, value] of Object.entries(originalGlobals)) {
   if (value === undefined) delete globalThis[key]

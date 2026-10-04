@@ -7,7 +7,8 @@
 - Shared checkout: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER`
 - Initialized: `2026-09-04`
 - Status: active
-- Active developer requirement: Issue #73, newtab add stuck after click. Version 4.0.2 is in the unchanged stable loaded directory `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`; user reload and acceptance are pending. Issue #71 UX-05 was implemented and deployed, awaiting its own user acceptance; Worker Version ID `96d6b39d-a3d5-4972-ab4f-b91d505dee05` serves 100% traffic at the unchanged URL. Issue #70 UX-02 candidate 3.18.0 and #69 UX-01 remain awaiting user acceptance; #66/#68 are deployed awaiting real phone acceptance; #67 awaits product acceptance. Google sync Issue #62 remains a separate open item for remaining acceptance and data-ownership decisions.
+- Active developer requirement: Issue #73, newtab add stuck after click. Version 4.0.3 is installed in the unchanged stable loaded directory `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`; awaiting one user reload and acceptance. Issue #71 UX-05 was implemented and deployed, awaiting its own user acceptance; Worker Version ID `96d6b39d-a3d5-4972-ab4f-b91d505dee05` serves 100% traffic at the unchanged URL. Issue #70 UX-02 candidate 3.18.0 and #69 UX-01 remain awaiting user acceptance; #66/#68 are deployed awaiting real phone acceptance; #67 awaits product acceptance. Google sync Issue #62 remains a separate open item for remaining acceptance and data-ownership decisions.
+- Queued product requirement: Issue #74, keep duration, priority, and category visible in the add-task form (`REQ-20261004-task-capture-visible-fields.md`). It is confirmed but waits until Issue #73 is accepted or otherwise complete; no #74 implementation is mixed into this fix.
 - UX-05 extension v3.19.0 at `outputs/TaskMaster-3.19.0-ux05-20261003`; public key and permissions match the stable loaded directory `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`. Pre-update backup: `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-ux05-71-20261003`. Worker deployed as Version ID `96d6b39d-a3d5-4972-ab4f-b91d505dee05`; prior rollback point `b327393b-e2f0-4ced-bdda-ec4a3ae30664`. The #62 Google sync candidate was 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`.
 - Verified live acceptance: user manually loaded the candidate and confirmed Google sign-in plus same-account mobile-add → computer display.
 - Remaining #62 acceptance and old-data ownership confirmation are pending; two-computer, deletion, and full isolation acceptance are not inferred.
@@ -127,6 +128,15 @@
 - 已定位可复现的代码阻塞：本地任务持久化成功后等待草稿删除回调才关弹窗和解锁；修复使本地成功先完成 UI 收尾，迟到清理继续按原 store/key/context 串行处理。Edge 隔离 E2E 覆盖延迟清理下立即开新表单、保留新草稿、重载时抑制指向已保存任务的旧草稿、失败重试、合成账号远端刷新。
 - 候选目录 `outputs/TaskMaster-4.0.2-newtab-add-73-20261003-r3`。release build/check、typecheck、lint、4 项定向回归及 Edge 154 `test:newtab-browser` 通过；Edge 用例包含普通/大任务延迟草稿清理。此前已知 `npm test` 有无关旧 `ui-layout` 静态断言失败，本次不报告全量测试通过。
 - 开发→产品状态已发送。Issue #73 保持开放，待用户 Reload 原扩展并重新打开新标签页做一次 title-only 新增验收；未触碰真实 Google 凭据/任务、GUI、部署或 push。产品核对后的错误触发仍为假设，不能宣称已唯一归因真人卡顿。
+
+## 2026-10-04 Issue #73 4.0.3 PATCH 与待验收
+
+- 真人 Chrome Console 已将当前卡住的直接根因定位到 `cloneTask` 在 `persistTaskMutation` 创建保存快照时展开缺失/异常的 `completedDates`；local backup 有 197 条任务。4.0.2 的延迟草稿清理修复不是这次异常的根因。
+- 4.0.3 对本机加载数据、备份导入及 mutation 快照中的 `repeatDays` / `completedDates` 做可选字段兼容；无法确认的完成日期不补造。按产品 DEC-newtab-add-02，改 `dueDate` 不推断完成历史；无历史时保留原 `completed` 标记，有明确历史时维持有截止日期系列的既有判定。mutation 准备异常显示可见错误、保留输入并恢复提交按钮。
+- 合成数据回归覆盖缺失/null/错类型/部分无效完成历史、合法日期、父子关联；真实 Edge 154 隔离浏览器加载 4.0.3，表单仅提交一次并保留全部记录。`npm run build`、typecheck、lint、newtab feedback、task save failure、task draft、modal-sync、repeat-end-date、import storage 与 Edge `test:newtab-browser` 通过。
+- 完整 `npm test` 仍被旧 `optional-split-child-dates` 静态正则断言阻断；与本次代码无关，没有改写该断言。未进行 GUI、生产任务读写、Google 授权、Worker 部署或 push。
+- 4.0.3 候选：`C:\Users\Kairos\AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\TaskMaster\worktrees\google-sync-c7c107c\outputs\TaskMaster-4.0.3-newtab-legacy-history-73-20261004`。稳定路径 `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` 保持不变；原 4.0.2 备份位于 `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-newtab-add-73-20261004-4.0.2`。14 个文件逐项 SHA-256 一致，扩展 ID `gjifmpjgedleemhkikajgepickfphflo`、公钥及权限未变。
+- Issue #73 仍开放，等用户 Reload 后进行一次普通新增验收；失败时请不要反复创建，用单条最早 Console 错误继续定位。Google 同步 Issue #62 仍单独开放，本次没有更改同步协议或其验收状态。
 
 
 ## 2026-10-03 Issue #71 UX-05 实施检查点

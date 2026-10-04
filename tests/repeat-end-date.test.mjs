@@ -29,7 +29,7 @@ globalThis.chrome = {
 const entry = await build({
   stdin: {
     contents: `
-      export { setState, getState, toggleTask, toggleTaskOnDate, getWeeklyGoalStats } from './shared/task.ts'
+      export { setState, getState, toggleTask, toggleTaskOnDate, moveTaskToDate, getWeeklyGoalStats } from './shared/task.ts'
       export { isTaskDueOnDate, summarizeTaskDurationsForDates } from './shared/calendar.ts'
       export { normalizeStorageData, saveData } from './shared/storage.ts'
     `,
@@ -42,7 +42,7 @@ const entry = await build({
   write: false
 })
 
-const { setState, getState, toggleTask, toggleTaskOnDate, getWeeklyGoalStats, isTaskDueOnDate, summarizeTaskDurationsForDates, normalizeStorageData, saveData } =
+const { setState, getState, toggleTask, toggleTaskOnDate, moveTaskToDate, getWeeklyGoalStats, isTaskDueOnDate, summarizeTaskDurationsForDates, normalizeStorageData, saveData } =
   await import(`data:text/javascript,${encodeURIComponent(entry.outputFiles[0].text)}`)
 const waitForToggleThrottle = () => new Promise(resolve => setTimeout(resolve, 510))
 
@@ -150,6 +150,41 @@ const storageData = (tasks) => ({
   hideOverdue: false,
   showNoTimeLimitOnly: false
 })
+const missingHistory = task({ id: 'missing-history', completed: true, repeatStartDate: '2026-09-10', dueDate: '2026-09-12', repeatEndDate: '2026-09-12' })
+delete missingHistory.completedDates
+const malformedHistory = task({ id: 'malformed-history', repeatDays: 'invalid', completedDates: null })
+const normalizedHistory = normalizeStorageData(storageData([
+  missingHistory,
+  malformedHistory,
+  task({ id: 'valid-history', completedDates: ['2026-09-10', 'bad-date'] })
+]))
+assert.deepEqual(normalizedHistory.tasks.find(item => item.id === 'missing-history').completedDates, [])
+assert.equal(normalizedHistory.tasks.find(item => item.id === 'missing-history').completed, true, 'Missing history does not erase the original completion flag.')
+assert.deepEqual(normalizedHistory.tasks.find(item => item.id === 'malformed-history').completedDates, [])
+assert.deepEqual(normalizedHistory.tasks.find(item => item.id === 'malformed-history').repeatDays, [])
+assert.deepEqual(normalizedHistory.tasks.find(item => item.id === 'valid-history').completedDates, ['2026-09-10'])
+
+setState({ tasks: [task({ id: 'manual-reschedule', repeatStartDate: '2026-09-10', dueDate: '2026-09-11' })] })
+moveTaskToDate('manual-reschedule', '2026-09-12')
+await saveData(storageData(getState().tasks))
+const rescheduledBackup = JSON.parse(localStore.get('tm_local_backup'))
+assert.equal(rescheduledBackup.tasks[0].dueDate, '2026-09-12')
+assert.deepEqual(rescheduledBackup.tasks[0].completedDates, [], 'Changing a recurring due date alone must not create completion history.')
+assert.equal(rescheduledBackup.tasks[0].completed, false)
+
+setState({ tasks: [missingHistory] })
+await saveData(storageData(getState().tasks))
+const missingHistoryBackup = JSON.parse(localStore.get('tm_local_backup'))
+assert.deepEqual(missingHistoryBackup.tasks[0].completedDates, [])
+assert.equal(missingHistoryBackup.tasks[0].completed, true, 'Storage migration preserves a legacy completion flag when history is absent.')
+
+setState({ tasks: [task({ id: 'explicit-completion', repeatStartDate: '2026-09-10', dueDate: '2026-09-10' })] })
+toggleTask('explicit-completion')
+assert.deepEqual(getState().tasks[0].completedDates, ['2026-09-10'], 'Completing an occurrence records its exact date.')
+await saveData(storageData(getState().tasks))
+const completionBackup = JSON.parse(localStore.get('tm_local_backup'))
+assert.deepEqual(completionBackup.tasks[0].completedDates, ['2026-09-10'], 'Explicit completion history survives persistence.')
+
 const endedForStorage = task({
   id: 'ended-storage',
   repeatStartDate: '2026-09-10',

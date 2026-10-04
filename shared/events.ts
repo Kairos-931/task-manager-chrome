@@ -818,6 +818,11 @@ export const attachEventListeners = (container: HTMLElement): void => {
     const error = container.querySelector('#taskSaveError') as HTMLElement | null
     error?.replaceChildren(document.createTextNode(message))
   }
+  const reportTaskPreparationFailure = (error: unknown): void => {
+    console.error('[TaskMaster] task mutation preparation failed', error)
+    void saveDraft()
+    setTaskSaveError('本机任务数据异常，本次未保存；内容已保留，请重试')
+  }
   const showDraftConflict = (kind: 'updated' | 'deleted') => {
     const panel = container.querySelector<HTMLElement>('#taskDraftConflict')
     const message = container.querySelector<HTMLElement>('#taskDraftConflictMessage')
@@ -975,7 +980,14 @@ export const attachEventListeners = (container: HTMLElement): void => {
         }
         const laterConflict = currentDraftConflict()
         if (laterConflict) { parentSubmitGuard.reset(); showDraftConflict(laterConflict); return }
-        const created = await createParentWithChildrenPersisted({ ...commonData, hardDeadline: (formData.get('parentHardDeadline') as string) || undefined, completed: false, noTimeLimit: true, repeatType: 'none', repeatDays: [], repeatInterval: 1 }, children, persistState, pendingTaskId)
+        let created: boolean
+        try {
+          created = await createParentWithChildrenPersisted({ ...commonData, hardDeadline: (formData.get('parentHardDeadline') as string) || undefined, completed: false, noTimeLimit: true, repeatType: 'none', repeatDays: [], repeatInterval: 1 }, children, persistState, pendingTaskId)
+        } catch (error) {
+          parentSubmitGuard.reset()
+          reportTaskPreparationFailure(error)
+          return
+        }
         if (!created) {
           ;(container.querySelector('#parentTaskError') as HTMLElement | null)?.replaceChildren(document.createTextNode('本地保存失败，请重试'))
           parentSubmitGuard.reset()
@@ -1000,23 +1012,29 @@ export const attachEventListeners = (container: HTMLElement): void => {
       const parentCompleted = (form.querySelector('#taskCompleted') as HTMLInputElement)?.checked || false
       if (!beginTaskSave()) return
       try {
-        const saved = await persistTaskMutation(() => {
-          updateTask(editingTask.id, {
-            ...commonData,
-            completed: parentCompleted,
-            completedAt: parentCompleted ? (editingTask.completedAt ?? Date.now()) : undefined
-          })
-          // 勾选父任务完成时，同步把所有未完成的非循环子任务标记完成
-          if (parentCompleted && !editingTask.completed) {
-            const now = Date.now()
-            for (const child of getState().tasks) {
-              if (child.parentId !== editingTask.id || child.completed || child.repeatType !== 'none') continue
-              child.completed = true
-              child.completedAt = now
-              child.updatedAt = now
+        let saved: boolean
+        try {
+          saved = await persistTaskMutation(() => {
+            updateTask(editingTask.id, {
+              ...commonData,
+              completed: parentCompleted,
+              completedAt: parentCompleted ? (editingTask.completedAt ?? Date.now()) : undefined
+            })
+            // 勾选父任务完成时，同步把所有未完成的非循环子任务标记完成
+            if (parentCompleted && !editingTask.completed) {
+              const now = Date.now()
+              for (const child of getState().tasks) {
+                if (child.parentId !== editingTask.id || child.completed || child.repeatType !== 'none') continue
+                child.completed = true
+                child.completedAt = now
+                child.updatedAt = now
+              }
             }
-          }
-        })
+          })
+        } catch (error) {
+          reportTaskPreparationFailure(error)
+          return
+        }
         if (!saved) {
           saveDraft()
           setTaskSaveError('本地保存失败，内容已保留，请重试')
@@ -1084,15 +1102,21 @@ export const attachEventListeners = (container: HTMLElement): void => {
       }
       const laterConflict = currentDraftConflict()
       if (laterConflict) { showDraftConflict(laterConflict); return }
-      const saved = await persistTaskMutation(() => {
-        if (editingTask) {
-          updateTask(editingTask.id, taskData)
-        } else {
-          const pendingTask = pendingTaskId && getState().tasks.find(task => task.id === pendingTaskId)
-          if (pendingTask && pendingTaskId) updateTask(pendingTaskId, taskData)
-          else pendingTaskId = addTask(taskData, pendingTaskId || undefined)
-        }
-      })
+      let saved: boolean
+      try {
+        saved = await persistTaskMutation(() => {
+          if (editingTask) {
+            updateTask(editingTask.id, taskData)
+          } else {
+            const pendingTask = pendingTaskId && getState().tasks.find(task => task.id === pendingTaskId)
+            if (pendingTask && pendingTaskId) updateTask(pendingTaskId, taskData)
+            else pendingTaskId = addTask(taskData, pendingTaskId || undefined)
+          }
+        })
+      } catch (error) {
+        reportTaskPreparationFailure(error)
+        return
+      }
       if (!saved) {
         saveDraft()
         setTaskSaveError('本地保存失败，内容已保留，请重试')

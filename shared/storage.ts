@@ -275,6 +275,12 @@ export const normalizeStorageData = (data: StorageData): StorageData => {
     tasks: Array.isArray(data.tasks)
       ? data.tasks.map(task => ({
           ...task,
+          repeatDays: Array.isArray(task.repeatDays)
+            ? task.repeatDays.filter(day => Number.isInteger(day) && day >= 0 && day <= 6)
+            : [],
+          completedDates: Array.isArray(task.completedDates)
+            ? task.completedDates.filter(isValidDateOnly)
+            : [],
           category: resolveTaskCategory(task.category || ''),
           hardDeadline: typeof task.hardDeadline === 'string' && task.hardDeadline ? task.hardDeadline : undefined,
           focusDate: typeof task.focusDate === 'string' && task.focusDate ? task.focusDate : undefined,
@@ -860,7 +866,7 @@ export const loadData = async (): Promise<StorageData> => {
   return getDefaultData()
 }
 
-/** 修复循环任务数据一致性：补齐完成记录，并保留已完成最后一期的重复系列状态。 */
+/** 修复循环任务规则，并按已有完成记录保留已结束的重复系列状态。 */
 const fixRecurringTasks = (tasks: any[]): any[] => tasks.map(t => {
   if (t.repeatType && t.repeatType !== 'none') {
     if (!Array.isArray(t.completedDates)) t.completedDates = []
@@ -871,22 +877,11 @@ const fixRecurringTasks = (tasks: any[]): any[] => tasks.map(t => {
         t.repeatDays = [anchor.getDay()]
       }
     }
-    // completedDates 为空但 dueDate 已推进 → 反推历史完成日期
-    if (t.completedDates.length === 0 && t.repeatStartDate && t.dueDate && t.dueDate > t.repeatStartDate) {
-      const start = new Date(t.repeatStartDate)
-      const current = new Date(t.dueDate)
-      const completed: string[] = []
-      const check = new Date(start)
-      while (check < current) {
-        const ds = `${check.getFullYear()}-${String(check.getMonth() + 1).padStart(2, '0')}-${String(check.getDate()).padStart(2, '0')}`
-        if (isTaskMatchRepeat(t, check)) {
-          completed.push(ds)
-        }
-        check.setDate(check.getDate() + 1)
-      }
-      t.completedDates = completed
+    // A due-date change can also come from manual rescheduling; it is not proof
+    // that every earlier occurrence was completed. Preserve only recorded history.
+    if (t.completedDates.length > 0) {
+      t.completed = Boolean(t.repeatEndDate && isRecurringSeriesComplete(t))
     }
-    t.completed = Boolean(t.repeatEndDate && isRecurringSeriesComplete(t))
   }
   return t
 })

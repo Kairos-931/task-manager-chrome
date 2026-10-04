@@ -246,8 +246,8 @@ export const updateTask = (id: string, updates: Partial<Task>): void => {
 
 const cloneTask = (task: Task): Task => ({
   ...task,
-  repeatDays: [...task.repeatDays],
-  completedDates: [...task.completedDates]
+  repeatDays: Array.isArray(task.repeatDays) ? [...task.repeatDays] : [],
+  completedDates: Array.isArray(task.completedDates) ? [...task.completedDates] : []
 })
 
 const sameTask = (left: Task | undefined, right: Task | undefined): boolean => {
@@ -264,9 +264,21 @@ export const persistTaskMutation = async (
   mutate: () => boolean | void,
   persist: () => Promise<boolean> = persistState
 ): Promise<boolean> => {
-  const before = new Map(state.tasks.map((task, index) => [task.id, { task: cloneTask(task), index }]))
-  if (mutate() === false) return false
-  const after = new Map(state.tasks.map((task, index) => [task.id, { task: cloneTask(task), index }]))
+  let beforeTasks: Task[] | undefined
+  let before = new Map<string, { task: Task; index: number }>()
+  let after = new Map<string, { task: Task; index: number }>()
+  try {
+    beforeTasks = state.tasks.map(cloneTask)
+    before = new Map(beforeTasks.map((task, index) => [task.id, { task, index }]))
+    if (mutate() === false) {
+      state = { ...state, tasks: beforeTasks.map(cloneTask) }
+      return false
+    }
+    after = new Map(state.tasks.map((task, index) => [task.id, { task: cloneTask(task), index }]))
+  } catch (error) {
+    if (beforeTasks) state = { ...state, tasks: beforeTasks.map(cloneTask) }
+    throw error
+  }
   const changedIds = new Set([...before.keys(), ...after.keys()])
   for (const id of changedIds) {
     if (sameTask(before.get(id)?.task, after.get(id)?.task)) changedIds.delete(id)

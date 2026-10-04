@@ -3,7 +3,12 @@ import { build } from 'esbuild'
 import { fileURLToPath } from 'node:url'
 
 const output = await build({
-  entryPoints: [fileURLToPath(new URL('../shared/storage.ts', import.meta.url))],
+  stdin: {
+    contents: "export * from './shared/storage.ts'; export { validateImportObject } from './shared/import-merge.ts'",
+    resolveDir: fileURLToPath(new URL('..', import.meta.url)),
+    sourcefile: 'import-preview-storage-entry.ts',
+    loader: 'ts',
+  },
   bundle: true,
   format: 'esm',
   platform: 'node',
@@ -76,6 +81,7 @@ const {
   exportData,
   normalizeStorageData,
   prepareImportPreview,
+  validateImportObject,
 } = await import(`data:text/javascript,${encodeURIComponent(output.outputFiles[0].text)}`)
 
 const category = (id, name) => ({ id, name, color: '#123456', updatedAt: 1 })
@@ -99,6 +105,27 @@ const backup = (tasks, categories = [category('cat-a', '工作')], extra = {}) =
 })
 const file = value => ({ text: async () => JSON.stringify(value) })
 const fakeAccount = (sub, email = `${sub}@example.test`) => ({ sub, email, connected: true })
+
+const missingHistory = task('legacy-missing-history', '缺少完成历史')
+delete missingHistory.completedDates
+delete missingHistory.repeatDays
+const malformedHistory = task('legacy-malformed-history', '损坏完成历史')
+malformedHistory.completedDates = 'not-an-array'
+malformedHistory.repeatDays = null
+const partialHistory = task('legacy-partial-history', '部分有效历史')
+partialHistory.completedDates = ['2026-10-03', 'invalid-date', null]
+partialHistory.repeatDays = [1, 8, 'invalid']
+const validHistory = task('legacy-valid-history', '有效完成历史')
+validHistory.completedDates = ['2026-10-02']
+const legacyValidation = validateImportObject(backup([missingHistory, malformedHistory, partialHistory, validHistory]))
+assert.equal(legacyValidation.valid, true, 'Malformed optional history does not reject otherwise valid imported tasks.')
+assert.equal(legacyValidation.data.tasks.length, 4, 'Every legacy imported task remains present.')
+assert.deepEqual(legacyValidation.data.tasks.find(item => item.id === 'legacy-missing-history').completedDates, [])
+assert.deepEqual(legacyValidation.data.tasks.find(item => item.id === 'legacy-malformed-history').completedDates, [])
+assert.deepEqual(legacyValidation.data.tasks.find(item => item.id === 'legacy-malformed-history').repeatDays, [])
+assert.deepEqual(legacyValidation.data.tasks.find(item => item.id === 'legacy-partial-history').completedDates, ['2026-10-03'])
+assert.deepEqual(legacyValidation.data.tasks.find(item => item.id === 'legacy-partial-history').repeatDays, [1])
+assert.deepEqual(legacyValidation.data.tasks.find(item => item.id === 'legacy-valid-history').completedDates, ['2026-10-02'])
 
 const duplicatedCategoryData = normalizeStorageData(data([], [category('cat-a', '工作'), category('cat-b', '工作')]))
 assert.equal(duplicatedCategoryData.categories.length, 2, 'same-name categories with different IDs survive normalization')
