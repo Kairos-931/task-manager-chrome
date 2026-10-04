@@ -130,7 +130,7 @@ const normalParent = {
 }
 
 const blankRowHtml = renderSplitChildRow(0, undefined, '', { allowUnscheduled: true })
-assert.match(blankRowHtml, /class="split-child-duration[^"]*" value="" min="0"/)
+assert.match(blankRowHtml, /class="split-child-duration[^"]*" value="1" min="0"/)
 assert.match(blankRowHtml, /class="split-child-unscheduled"[^>]*aria-pressed="true"[^>]*>暂不安排/)
 assert.match(blankRowHtml, /split-child-date-status[^>]*>暂不安排 · 进入任务池/)
 assert.match(blankRowHtml, /class="split-child-date[^"]*"[^>]*value=""/)

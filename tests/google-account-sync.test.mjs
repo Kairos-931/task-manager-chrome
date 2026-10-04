@@ -379,7 +379,7 @@ try {
   assert.match(mobileHtml, /计划日期（可选）/)
   assert.match(mobileHtml, /id="dueDate" type="date">/)
   assert.doesNotMatch(mobileHtml, /id="noTimeLimit"/)
-  assert.match(mobileHtml, /id="duration" type="number" min="0"[^>]*placeholder="未估时"/)
+  assert.match(mobileHtml, /id="duration" type="number" value="60" min="0"[^>]*placeholder="未估时"/)
   assert.match(mobileHtml, /id="completed"/)
   const oldLegacyPageUrl = await worker.fetch(new Request(
     'https://taskmaster.test/legacy?apiUrl=https%3A%2F%2Fold.example&apiToken=do-not-forward',

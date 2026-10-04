@@ -7,8 +7,8 @@
 - Shared checkout: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER`
 - Initialized: `2026-09-04`
 - Status: active
-- Active developer requirement: Issue #73, newtab add stuck after click. Version 4.0.3 is installed in the unchanged stable loaded directory `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`; awaiting one user reload and acceptance. Issue #71 UX-05 was implemented and deployed, awaiting its own user acceptance; Worker Version ID `96d6b39d-a3d5-4972-ab4f-b91d505dee05` serves 100% traffic at the unchanged URL. Issue #70 UX-02 candidate 3.18.0 and #69 UX-01 remain awaiting user acceptance; #66/#68 are deployed awaiting real phone acceptance; #67 awaits product acceptance. Google sync Issue #62 remains a separate open item for remaining acceptance and data-ownership decisions.
-- Queued product requirement: Issue #74, keep duration, priority, and category visible in the add-task form (`REQ-20261004-task-capture-visible-fields.md`). It is confirmed but waits until Issue #73 is accepted or otherwise complete; no #74 implementation is mixed into this fix.
+- Active developer requirement: Issue #74, keep duration, priority, and category visible in the add-task form (`REQ-20261004-task-capture-visible-fields.md`), implementation delivered as 4.1.0 and awaiting user acceptance. Issue #73 was accepted by the user after confirming an added task appeared; #74 keeps the stable loaded directory `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`.
+- Other acceptance work remains separate: #71 Worker release is at the unchanged URL; Google sync Issue #62 remains open for multi-device, deletion, account isolation, and old-data ownership decisions. No sync work is included in #74.
 - UX-05 extension v3.19.0 at `outputs/TaskMaster-3.19.0-ux05-20261003`; public key and permissions match the stable loaded directory `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`. Pre-update backup: `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-ux05-71-20261003`. Worker deployed as Version ID `96d6b39d-a3d5-4972-ab4f-b91d505dee05`; prior rollback point `b327393b-e2f0-4ced-bdda-ec4a3ae30664`. The #62 Google sync candidate was 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`.
 - Verified live acceptance: user manually loaded the candidate and confirmed Google sign-in plus same-account mobile-add → computer display.
 - Remaining #62 acceptance and old-data ownership confirmation are pending; two-computer, deletion, and full isolation acceptance are not inferred.
@@ -16,7 +16,7 @@
 - Mobile save-feedback Issue #66 was introduced in `84f0f06` at version 3.17.0, hardened in `1853e52` at 3.17.2, and given centered feedback in `b093cbe` at 3.17.3; the latest Worker is deployed and real phone visual acceptance is pending.
 - Mobile legacy-entry Issue #67 was implemented in `d5e5555` at version 3.17.1; included in the 3.17.2 Worker deployment and production redirect/page checks passed, with product acceptance pending.
 - Mobile session-restore Issue #68 was implemented in `51a0399` at version 3.17.4; deployed and production-read-only checks passed, with real browser reopen acceptance pending.
-- Last completed requirement: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER\docs\requirements\REQ-20260922-newtab-list-todo-favicon.md` (`2026-09-23`, implemented; awaiting user acceptance)
+- Last completed requirement: Issue #73, 4.0.3 newtab add recovery; user confirmed the new task was added successfully (`2026-10-04`).
 - Queue: empty
 ## Operating contract
 
@@ -129,7 +129,7 @@
 - 候选目录 `outputs/TaskMaster-4.0.2-newtab-add-73-20261003-r3`。release build/check、typecheck、lint、4 项定向回归及 Edge 154 `test:newtab-browser` 通过；Edge 用例包含普通/大任务延迟草稿清理。此前已知 `npm test` 有无关旧 `ui-layout` 静态断言失败，本次不报告全量测试通过。
 - 开发→产品状态已发送。Issue #73 保持开放，待用户 Reload 原扩展并重新打开新标签页做一次 title-only 新增验收；未触碰真实 Google 凭据/任务、GUI、部署或 push。产品核对后的错误触发仍为假设，不能宣称已唯一归因真人卡顿。
 
-## 2026-10-04 Issue #73 4.0.3 PATCH 与待验收
+## 2026-10-04 Issue #73 4.0.3 PATCH 与待验收（历史记录）
 
 - 真人 Chrome Console 已将当前卡住的直接根因定位到 `cloneTask` 在 `persistTaskMutation` 创建保存快照时展开缺失/异常的 `completedDates`；local backup 有 197 条任务。4.0.2 的延迟草稿清理修复不是这次异常的根因。
 - 4.0.3 对本机加载数据、备份导入及 mutation 快照中的 `repeatDays` / `completedDates` 做可选字段兼容；无法确认的完成日期不补造。按产品 DEC-newtab-add-02，改 `dueDate` 不推断完成历史；无历史时保留原 `completed` 标记，有明确历史时维持有截止日期系列的既有判定。mutation 准备异常显示可见错误、保留输入并恢复提交按钮。
@@ -137,6 +137,16 @@
 - 完整 `npm test` 仍被旧 `optional-split-child-dates` 静态正则断言阻断；与本次代码无关，没有改写该断言。未进行 GUI、生产任务读写、Google 授权、Worker 部署或 push。
 - 4.0.3 候选：`C:\Users\Kairos\AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\TaskMaster\worktrees\google-sync-c7c107c\outputs\TaskMaster-4.0.3-newtab-legacy-history-73-20261004`。稳定路径 `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` 保持不变；原 4.0.2 备份位于 `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-newtab-add-73-20261004-4.0.2`。14 个文件逐项 SHA-256 一致，扩展 ID `gjifmpjgedleemhkikajgepickfphflo`、公钥及权限未变。
 - Issue #73 仍开放，等用户 Reload 后进行一次普通新增验收；失败时请不要反复创建，用单条最早 Console 错误继续定位。Google 同步 Issue #62 仍单独开放，本次没有更改同步协议或其验收状态。
+
+## 2026-10-04 Issue #73 用户验收与 #74 交付
+
+- 用户确认 4.0.3 普通新增已成功；#73 验收完成并关闭，开发执行槽转入已确认的 Issue #74。
+- #74 独立分支 `codex/task-capture-visible-fields-74`，基线提交 `523b16f4e9d07b61b8082354d133a99111c0d27a`（4.0.3）。最终范围依产品 DEC-visible-fields-01：普通新增与已有手机添加入口直接显示预计时长、优先级、分类；新建默认 1 小时，主动清空仍表示未估时；编辑、草稿、历史任务和不确定重试保留原值；新子任务行默认 1 小时，父容器不赋时长。不改保存/API/同步协议。
+- 扩展候选 `outputs/TaskMaster-4.1.0-task-capture-visible-fields-74-r2-20261004` 已核对 14 个文件并复制到稳定目录 `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`。更新前版本 4.0.3 的完整备份位于 `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-core-fields-74-20261004-4.0.3`。候选与稳定目录文件 SHA-256 一致，公钥、扩展 ID、权限未变；用户须 Reload 扩展验收。
+- 手机正式入口 `https://taskmaster-api.yx9391.workers.dev/` 保持不变。原 4.0.3 相关 Worker `96d6b39d-a3d5-4972-ab4f-b91d505dee05` 上，#74 首版部署 `66577cb8-85b6-451a-a029-d1f065ea37de` 后收到同项 1 小时默认决定，已由最终版本 `0e29621a-1665-48f3-a50d-8b451b9f20e0` 替换且 100% 流量。最终版本前一回退点是 #74 首版 `66577cb8-85b6-451a-a029-d1f065ea37de`；回退整个 #74 可恢复 `96d6b39d-a3d5-4972-ab4f-b91d505dee05`。
+- 验证：相关表单、手机保存/清空/安全重试、账号隔离、完成状态、草稿、拆分日期/过去日期/重复与筛选用例通过；typecheck、lint、构建和发布校验通过。全量测试被既有 `tests/ui-layout.test.mjs:32` 拆分字段顺序静态断言阻断；单独 `tests/newtab-favicon.test.mjs` 在 Windows 被 CRLF/LF 严格比较阻断。未改动无关测试；无 GUI、生产任务写入、D1 迁移、push 或 tag。
+- Worker 部署后正式首页只读 GET 200/no-store，三字段默认在“更多选项”外、时长值为 60，备注/完成仍在高级区；Google 登录和会话恢复代码仍在；未认证分类 API 为 401。手机须刷新页面。
+- Issue #74 等用户完成扩展 Reload 和手机页刷新后的真人验收；本轮没有 GUI 视觉验收。Google 同步 #62 保持独立开放，本项没有验证或更改同步行为。
 
 
 ## 2026-10-03 Issue #71 UX-05 实施检查点

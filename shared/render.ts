@@ -979,7 +979,7 @@ export const renderModal = (): string => {
     dueDate: '',
     hardDeadline: '',
     focusDate: '',
-    duration: 0,
+    duration: 60,
     repeatType: 'none' as const,
     repeatDays: [],
     repeatInterval: 1,
@@ -990,8 +990,8 @@ export const renderModal = (): string => {
   }
   const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
   const completedField = '<div id="taskCompletedField" class="pt-2"><label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="taskCompleted" ' + (task.completed ? 'checked' : '') + ' class="rounded"><span class="text-sm">已完成</span></label></div>'
-  const propertyFields = '<div><label class="block text-sm font-medium mb-1">备注</label><textarea name="description" rows="2" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white resize-none">' + escapeHtml(task.description) + '</textarea></div>' +
-    '<div class="grid grid-cols-2 gap-4"><div><label class="block text-sm font-medium mb-1">优先级</label><select name="priority" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white"><option value="high" ' + (task.priority === 'high' ? 'selected' : '') + '>高</option><option value="medium" ' + (task.priority === 'medium' ? 'selected' : '') + '>中</option><option value="low" ' + (task.priority === 'low' ? 'selected' : '') + '>低</option></select></div><div><label class="block text-sm font-medium mb-1">分类</label><select name="category" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">' + categories.map(c => '<option value="' + c.id + '" ' + (task.category === c.id ? 'selected' : '') + '>' + escapeHtml(c.name) + '</option>').join('') + '</select></div></div>'
+  const descriptionField = '<div><label class="block text-sm font-medium mb-1">备注</label><textarea name="description" rows="2" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white resize-none">' + escapeHtml(task.description) + '</textarea></div>'
+  const priorityCategoryFields = '<div class="grid grid-cols-2 gap-4"><div><label class="block text-sm font-medium mb-1">优先级</label><select name="priority" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white"><option value="high" ' + (task.priority === 'high' ? 'selected' : '') + '>高</option><option value="medium" ' + (task.priority === 'medium' ? 'selected' : '') + '>中</option><option value="low" ' + (task.priority === 'low' ? 'selected' : '') + '>低</option></select></div><div><label class="block text-sm font-medium mb-1">分类</label><select name="category" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">' + categories.map(c => '<option value="' + c.id + '" ' + (task.category === c.id ? 'selected' : '') + '>' + escapeHtml(c.name) + '</option>').join('') + '</select></div></div>'
   const hardDeadlineField = '<div><label class="block text-sm font-medium mb-1">硬截止日期（可选）</label><input type="date" name="hardDeadline" value="' + (task.hardDeadline || '') + '" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white"></div>'
   const durationField = '<div><label class="block text-sm font-medium mb-1">预计时长 (小时)</label><div class="flex items-center gap-2"><button type="button" id="durationDecrease" class="px-3 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">-</button><input type="number" name="duration" id="durationInput" value="' + (task.duration > 0 ? (task.duration / 60).toFixed(1) : '') + '" min="' + (task.duration > 0 ? '0.1' : '0') + '" max="24" step="0.1" placeholder="未估时" class="w-20 text-center px-2 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white"><button type="button" id="durationIncrease" class="px-3 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">+</button></div></div>'
   const repeatFields = '<div><label class="block text-sm font-medium mb-1">重复</label><select name="repeatType" id="repeatType" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white"><option value="none" ' + (task.repeatType === 'none' ? 'selected' : '') + '>不重复</option><option value="daily" ' + (task.repeatType === 'daily' ? 'selected' : '') + '>每天</option><option value="weekly" ' + (task.repeatType === 'weekly' ? 'selected' : '') + '>每周几</option><option value="monthly" ' + (task.repeatType === 'monthly' ? 'selected' : '') + '>每月</option><option value="workdays" ' + (task.repeatType === 'workdays' ? 'selected' : '') + '>工作日</option><option value="custom" ' + (task.repeatType === 'custom' ? 'selected' : '') + '>自定义间隔</option></select></div>' +
@@ -1015,19 +1015,20 @@ export const renderModal = (): string => {
               <label class="block text-sm font-medium mb-1" for="taskTitle">任务名称 *</label>
               <input type="text" id="taskTitle" name="title" value="" required class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
             </div>
-            <div id="normalTaskFields" class="border-t dark:border-gray-700 pt-4">
+            <div id="normalTaskFields" class="border-t dark:border-gray-700 pt-4 space-y-4">
               <label class="block text-sm font-medium mb-1" for="dueDate">计划日期（可选）</label>
               ${renderQuickDates('')}
               <input type="date" id="dueDate" name="dueDate" value="" class="w-full mt-2 px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
+              ${durationField}
+              ${priorityCategoryFields}
             </div>
             <details id="taskMoreOptions" class="border-t dark:border-gray-700 pt-3">
               <summary class="cursor-pointer text-sm font-medium text-gray-600 dark:text-gray-300">更多选项</summary>
               <div class="space-y-4 pt-3">
-                ${propertyFields}
+                ${descriptionField}
                 ${completedField}
                 <div id="normalAdvancedFields" class="space-y-4">
                   ${hardDeadlineField}
-                  ${durationField}
                   ${repeatFields}
                 </div>
               </div>
@@ -1210,7 +1211,7 @@ export const renderSplitChildRow = (
         <span class="split-child-field-label">预计时间</span>
         <div class="split-child-duration-control">
           <button type="button" class="split-duration-decrease px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="减少 0.5 小时">−</button>
-          <input type="number" class="split-child-duration w-14 text-center px-1 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${child && child.duration > 0 ? (child.duration / 60).toFixed(2).replace(/\.?0+$/, '') : ''}" min="0" max="24" step="0.5" placeholder="未估时" aria-label="预计小时">
+          <input type="number" class="split-child-duration w-14 text-center px-1 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700" value="${child ? (child.duration > 0 ? (child.duration / 60).toFixed(2).replace(/\.?0+$/, '') : '') : '1'}" min="0" max="24" step="0.5" placeholder="未估时" aria-label="预计小时">
           <button type="button" class="split-duration-increase px-2 py-2 border dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition text-sm leading-none" aria-label="增加 0.5 小时">+</button>
         </div>
       </div>

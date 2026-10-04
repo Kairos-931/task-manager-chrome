@@ -91,15 +91,15 @@ export const renderAccountMobilePage = (env) => {
       <input id="title" maxlength="500" autocomplete="off" placeholder="输入要添加的任务" required>
       <label for="dueDate">计划日期（可选）</label>
       <input id="dueDate" type="date">
+      <div class="row">
+        <div><label for="priority">优先级</label><select id="priority"><option value="medium">中</option><option value="high">高</option><option value="low">低</option></select></div>
+        <div><label for="category">分类</label><select id="category"></select></div>
+      </div>
+      <label for="duration">预计时长（分钟）</label>
+      <input id="duration" type="number" value="60" min="0" max="1440" step="15" placeholder="未估时" inputmode="numeric">
       <details id="moreOptions">
         <summary>更多选项</summary>
         <div class="advanced-fields">
-          <div class="row">
-            <div><label for="priority">优先级</label><select id="priority"><option value="medium">中</option><option value="high">高</option><option value="low">低</option></select></div>
-            <div><label for="category">分类</label><select id="category"></select></div>
-          </div>
-          <label for="duration">预计时长（分钟）</label>
-          <input id="duration" type="number" min="0" max="1440" step="15" placeholder="未估时" inputmode="numeric">
           <label class="check-row" for="completed"><input id="completed" type="checkbox"><span>添加时标记为已完成</span></label>
           <label for="description">备注</label>
           <textarea id="description" maxlength="5000" placeholder="可选"></textarea>
@@ -262,7 +262,7 @@ export const renderAccountMobilePage = (env) => {
         document.getElementById('description').value = '';
         document.getElementById('priority').value = 'medium';
         document.getElementById('dueDate').value = '';
-        document.getElementById('duration').value = '';
+        document.getElementById('duration').value = '60';
         document.getElementById('completed').checked = false;
         document.getElementById('moreOptions').open = false;
         status.textContent = '';
@@ -645,7 +645,7 @@ export const renderAccountMobilePage = (env) => {
           document.getElementById('description').value = '';
           document.getElementById('priority').value = 'medium';
           document.getElementById('dueDate').value = '';
-          document.getElementById('duration').value = '';
+          document.getElementById('duration').value = '60';
           document.getElementById('completed').checked = false;
           document.getElementById('moreOptions').open = false;
           setSaveStatus(body.alreadyProcessed

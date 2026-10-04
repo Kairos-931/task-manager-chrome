@@ -76,6 +76,7 @@ const makeHarness = ({
     if (!elements.has(id)) {
       const tagName = id === 'category' ? 'select' : 'div'
       elements.set(id, new FakeElement(tagName))
+      if (id === 'duration') elements.get(id).value = '60'
       if (['saveFeedback', 'saveFeedbackRetry', 'saveFeedbackDismiss', 'taskCard', 'signOutBtn', 'restartLoginBtn', 'setupNotice'].includes(id)) {
         elements.get(id).hidden = true
       }
@@ -137,7 +138,18 @@ const makeHarness = ({
   assert.match(html, /id="saveFeedback" role="status" aria-live="polite"/)
   assert.match(html, /计划日期（可选）/)
   assert.match(html, /id="dueDate" type="date">/)
-  assert.match(html, /id="duration" type="number" min="0"[^>]*placeholder="未估时"/)
+  assert.match(html, /id="duration" type="number" value="60" min="0"[^>]*placeholder="未估时"/)
+  const moreOptionsStart = html.indexOf('<details id="moreOptions">')
+  const moreOptionsEnd = html.indexOf('</details>', moreOptionsStart)
+  const coreFieldsMarkup = html.slice(html.indexOf('<section id="taskCard"'), moreOptionsStart)
+  const moreOptionsMarkup = html.slice(moreOptionsStart, moreOptionsEnd)
+  assert.ok(moreOptionsStart > 0 && moreOptionsEnd > moreOptionsStart)
+  for (const field of ['priority', 'category', 'duration']) {
+    assert.ok(coreFieldsMarkup.includes(`id="${field}"`), `${field} should be visible before opening mobile more options`)
+    assert.ok(!moreOptionsMarkup.includes(`id="${field}"`), `${field} should not remain inside mobile more options`)
+  }
+  assert.match(moreOptionsMarkup, /id="completed"/)
+  assert.match(moreOptionsMarkup, /id="description"/)
   assert.doesNotMatch(html, /id="noTimeLimit"/)
   const script = html.match(/<script>\s*([\s\S]*?)\s*<\/script>/)?.[1]
   assert.ok(script, 'the mobile page should render its inline application script')
@@ -176,6 +188,7 @@ const timedOutPage = makeHarness({
 await timedOutPage.ready()
 assert.ok(timedOutPage.localStorage.getItem(SESSION_KEY), 'the previous tab session should migrate to persistent storage')
 assert.equal(uncertainStorage.getItem(SESSION_KEY), null)
+assert.equal(timedOutPage.elements.get('duration').value, '60', 'new mobile tasks default to one hour')
 timedOutPage.elements.get('title').value = 'Timeout-safe task'
 timedOutPage.elements.get('description').value = 'Keep this note after a timeout'
 timedOutPage.elements.get('completed').checked = true
@@ -188,7 +201,7 @@ await Promise.all([firstSaveAttempt, duplicateClickAttempt])
 assert.equal(timedOutPage.requests.length, 1)
 assert.equal(timedOutPage.requests[0].dueDate, '')
 assert.equal(timedOutPage.requests[0].noTimeLimit, true)
-assert.equal(timedOutPage.requests[0].duration, 0)
+assert.equal(timedOutPage.requests[0].duration, 60)
 assert.match(timedOutPage.elements.get('status').textContent, /任务可能已保存/)
 assert.equal(timedOutPage.elements.get('status').classList.contains('uncertain'), true)
 assert.equal(timedOutPage.elements.get('title').value, 'Timeout-safe task')
@@ -218,6 +231,7 @@ assert.equal(reloadPage.requests.length, 1)
 assert.equal(reloadPage.requests[0].clientTaskId, timedOutPage.requests[0].clientTaskId)
 assert.equal(reloadPage.requests[0].title, timedOutPage.requests[0].title)
 assert.equal(reloadPage.requests[0].completed, true)
+assert.equal(reloadPage.requests[0].duration, 60, 'a safe retry keeps the frozen one-hour payload')
 assert.equal(reloadPage.elements.get('status').textContent, '已确认此前已保存到账号，电脑联网后会自动同步。')
 assert.equal(reloadPage.elements.get('title').value, '')
 assert.equal(reloadPage.elements.get('title').disabled, false)
@@ -236,7 +250,13 @@ assert.equal(reloadPage.requests[1].dueDate, '2020-01-01', 'an explicitly chosen
 assert.equal(reloadPage.requests[1].noTimeLimit, false)
 assert.equal(reloadPage.requests[1].duration, 45)
 assert.equal(reloadPage.elements.get('dueDate').value, '')
-assert.equal(reloadPage.elements.get('duration').value, '')
+assert.equal(reloadPage.elements.get('duration').value, '60', 'successful save resets the next form to one hour')
+reloadPage.elements.get('title').value = 'Explicitly unestimated task'
+reloadPage.elements.get('duration').value = ''
+await reloadPage.elements.get('submitBtn').listeners.get('click')()
+assert.equal(reloadPage.requests.length, 3)
+assert.equal(reloadPage.requests[2].duration, 0, 'clearing the duration preserves the unestimated value')
+assert.equal(reloadPage.elements.get('duration').value, '60', 'successful save restores the one-hour default')
 reloadPage.flushFeedbackTimer()
 assert.equal(reloadPage.elements.get('saveFeedback').hidden, true, 'success feedback closes automatically')
 
