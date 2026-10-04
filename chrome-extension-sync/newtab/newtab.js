@@ -25,17 +25,21 @@ var TaskManager = (() => {
   var storage_exports = {};
   __export(storage_exports, {
     STORAGE_KEY: () => STORAGE_KEY,
+    activateGoogleAccount: () => activateGoogleAccount,
     createAutoBackup: () => createAutoBackup,
     defaultCategories: () => defaultCategories,
     deleteBackup: () => deleteBackup,
+    disconnectGoogleAccount: () => disconnectGoogleAccount,
     downloadExportFile: () => downloadExportFile,
     exportData: () => exportData,
     generateId: () => generateId,
     getDefaultData: () => getDefaultData,
+    getGoogleAccount: () => getGoogleAccount,
     getNextLocalSettingsUpdatedAt: () => getNextLocalSettingsUpdatedAt,
     getStorageUsage: () => getStorageUsage,
     getSyncDeviceId: () => getSyncDeviceId,
     getSyncDeviceIdAsync: () => getSyncDeviceIdAsync,
+    identifyGoogleAccount: () => identifyGoogleAccount,
     importDataFromFile: () => importDataFromFile,
     isCloudConfigured: () => isCloudConfigured,
     listBackups: () => listBackups,
@@ -43,12 +47,13 @@ var TaskManager = (() => {
     normalizeStorageData: () => normalizeStorageData,
     restoreBackup: () => restoreBackup,
     saveData: () => saveData,
+    saveLocalData: () => saveLocalData,
     syncFromCloud: () => syncFromCloud,
     syncIncrementally: () => syncIncrementally,
     syncToCloud: () => syncToCloud,
     validateImportData: () => validateImportData
   });
-  var STORAGE_KEY, LOCAL_BACKUP_KEY, generateId, DEFAULT_CATEGORY_DEFINITIONS, LEGACY_STARRED_CATEGORY_ID, defaultCategoryByName, createDefaultCategories, defaultCategories, getDefaultData, loadFromLocal, saveToLocal, dedupeCategories, isValidDateOnly, CLOUD_SYNC_SETTINGS_KEY, getCloudSettings, CLOUD_BASE_AT_KEY, getCloudBaseAt, setCloudBaseAt, syncToCloud, syncFromCloud, normalizeStorageData, INCREMENTAL_CURSOR_KEY, INCREMENTAL_DEVICE_KEY, INCREMENTAL_SHADOW_KEY, INCREMENTAL_CLOCK_KEY, OUTGOING_SYNC_BATCH, lastSyncTimestamp, syncQueue, getNextLocalSettingsUpdatedAt, recordKey, nextSyncTimestamp, cloneStorageData, enqueueSync, getLocalValue, setLocalValues, cachedDeviceId, getSyncDeviceIdAsync, getSyncDeviceId, getSyncShadow, getSettingsPayload, samePayload, buildCurrentRecords, buildLocalChanges, applyRemoteChanges, isVirginDefaultData, syncIncrementallyNow, syncIncrementally, isCloudConfigured, isRecoverableNetworkError, warnForSyncFailure, loadData, fixRecurringTasks, isTaskMatchRepeat, isRecurringSeriesComplete, saveData, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
+  var STORAGE_KEY, LOCAL_BACKUP_KEY, generateId, DEFAULT_CATEGORY_DEFINITIONS, LEGACY_STARRED_CATEGORY_ID, defaultCategoryByName, createDefaultCategories, defaultCategories, getDefaultData, loadFromLocal, saveToLocal, dedupeCategories, isValidDateOnly, CLOUD_SYNC_SETTINGS_KEY, GOOGLE_ACCOUNT_KEY, GOOGLE_ACCOUNT_DATA_PREFIX, TASKMASTER_API_URL, getCloudSettings, CLOUD_BASE_AT_KEY, getCloudBaseAt, setCloudBaseAt, syncToCloud, syncFromCloud, normalizeStorageData, INCREMENTAL_CURSOR_KEY, INCREMENTAL_DEVICE_KEY, INCREMENTAL_SHADOW_KEY, INCREMENTAL_CLOCK_KEY, OUTGOING_SYNC_BATCH, lastSyncTimestamp, syncQueue, getNextLocalSettingsUpdatedAt, recordKey, nextSyncTimestamp, cloneStorageData, enqueueSync, getLocalValue, setLocalValues, getGoogleAccountValue, getGoogleAccount, getGoogleAccessToken, requestGoogleIdentity, removeGoogleAccessToken, flagGoogleAuthorizationExpired, identifyGoogleAccount, googleAccountDataKey, activateGoogleAccount, disconnectGoogleAccount, saveLocalData, cachedDeviceId, getSyncDeviceIdAsync, getSyncDeviceId, getScopedSyncKey, getSyncShadow, getSettingsPayload, samePayload, buildCurrentRecords, buildLocalChanges, applyRemoteChanges, isVirginDefaultData, sameSyncAccount, syncIncrementallyNow, syncIncrementally, isCloudConfigured, isRecoverableNetworkError, warnForSyncFailure, loadData, fixRecurringTasks, isTaskMatchRepeat, isRecurringSeriesComplete, saveData, BACKUP_PREFIX, MAX_BACKUPS, formatDateKey, createAutoBackup, listBackups, restoreBackup, deleteBackup, cleanOldBackups, getStorageUsage, exportData, downloadExportFile, validateImportData, importDataFromFile;
   var init_storage = __esm({
     "shared/storage.ts"() {
       "use strict";
@@ -131,6 +136,9 @@ var TaskManager = (() => {
         return normalized === value;
       };
       CLOUD_SYNC_SETTINGS_KEY = "tm_sync_settings";
+      GOOGLE_ACCOUNT_KEY = "tm_google_account";
+      GOOGLE_ACCOUNT_DATA_PREFIX = "tm_google_account_data_v1_";
+      TASKMASTER_API_URL = "https://taskmaster-api.yx9391.workers.dev";
       getCloudSettings = async () => {
         return new Promise((resolve) => {
           chrome.storage.local.get([CLOUD_SYNC_SETTINGS_KEY], (r) => {
@@ -293,6 +301,113 @@ var TaskManager = (() => {
           });
         });
       };
+      getGoogleAccountValue = async () => {
+        const account = await getLocalValue(GOOGLE_ACCOUNT_KEY, null);
+        if (!account || typeof account.sub !== "string" || !account.sub)
+          return null;
+        return account;
+      };
+      getGoogleAccount = getGoogleAccountValue;
+      getGoogleAccessToken = (interactive) => new Promise((resolve, reject) => {
+        const manifest = chrome.runtime.getManifest();
+        if (!manifest.oauth2?.client_id || manifest.oauth2.client_id.startsWith("YOUR_")) {
+          reject(new Error("Google \u767B\u5F55\u5C1A\u672A\u914D\u7F6E\uFF0C\u8BF7\u7BA1\u7406\u5458\u5148\u8BBE\u7F6E\u6269\u5C55 OAuth \u5BA2\u6237\u7AEF"));
+          return;
+        }
+        const identityApi = chrome.identity;
+        if (!identityApi?.getAuthToken) {
+          reject(new Error("\u6B64\u6269\u5C55\u672A\u914D\u7F6E Google \u767B\u5F55"));
+          return;
+        }
+        identityApi.getAuthToken({ interactive }, (result) => {
+          const token = typeof result === "string" ? result : result && typeof result === "object" && typeof result.token === "string" ? result.token : "";
+          if (chrome.runtime.lastError)
+            reject(new Error(chrome.runtime.lastError.message || "Google \u767B\u5F55\u5931\u8D25"));
+          else if (!token)
+            reject(new Error("Google \u767B\u5F55\u672A\u8FD4\u56DE\u6388\u6743\u51ED\u8BC1"));
+          else
+            resolve(token);
+        });
+      });
+      requestGoogleIdentity = async (interactive) => {
+        const token = await getGoogleAccessToken(interactive);
+        let response;
+        try {
+          response = await fetch(`${TASKMASTER_API_URL}/api/google/identity`, {
+            headers: { Authorization: `Bearer ${token}` },
+            cache: "no-store"
+          });
+        } catch {
+          throw new Error("\u65E0\u6CD5\u8FDE\u63A5 TaskMaster \u540C\u6B65\u670D\u52A1\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC\u540E\u91CD\u8BD5");
+        }
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || typeof result.user?.sub !== "string" || !result.user.sub) {
+          if (response.status === 401) {
+            await removeGoogleAccessToken(token);
+            throw new Error("Google \u6388\u6743\u5DF2\u5931\u6548\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55");
+          }
+          throw new Error(result.error || "Google \u767B\u5F55\u6682\u4E0D\u53EF\u7528\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5");
+        }
+        return {
+          token,
+          user: {
+            sub: result.user.sub,
+            email: typeof result.user.email === "string" ? result.user.email : "",
+            ...typeof result.user.name === "string" ? { name: result.user.name } : {}
+          }
+        };
+      };
+      removeGoogleAccessToken = async (token) => new Promise((resolve) => {
+        const identityApi = chrome.identity;
+        if (!identityApi?.removeCachedAuthToken)
+          return resolve();
+        identityApi.removeCachedAuthToken({ token }, () => resolve());
+      });
+      flagGoogleAuthorizationExpired = async (account, token = "") => {
+        if (token)
+          await removeGoogleAccessToken(token);
+        await setLocalValues({ [GOOGLE_ACCOUNT_KEY]: { ...account, connected: false } });
+        chrome.runtime.sendMessage({ action: "googleAccountAuthExpired" }).catch(() => {
+        });
+      };
+      identifyGoogleAccount = async () => {
+        const { user } = await requestGoogleIdentity(true);
+        return user;
+      };
+      googleAccountDataKey = (sub) => `${GOOGLE_ACCOUNT_DATA_PREFIX}${encodeURIComponent(sub)}`;
+      activateGoogleAccount = (expectedSub) => enqueueSync(async () => {
+        const { user } = await requestGoogleIdentity(false);
+        if (user.sub !== expectedSub)
+          throw new Error("\u5F53\u524D Google \u8D26\u53F7\u4E0E\u521A\u624D\u9009\u62E9\u7684\u8D26\u53F7\u4E0D\u4E00\u81F4\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55");
+        const previous = await getGoogleAccountValue();
+        const localValues = {
+          [GOOGLE_ACCOUNT_KEY]: { ...user, connected: true }
+        };
+        if (previous?.sub && previous.sub !== user.sub) {
+          const previousData = await loadFromLocal();
+          if (previousData) {
+            localValues[googleAccountDataKey(previous.sub)] = normalizeStorageData(previousData);
+          }
+          const targetData = await getLocalValue(googleAccountDataKey(user.sub), null);
+          const nextData = targetData ? normalizeStorageData(targetData) : getDefaultData();
+          localValues[LOCAL_BACKUP_KEY] = JSON.stringify(nextData);
+        } else if (!previous?.sub) {
+        }
+        await setLocalValues(localValues);
+        return localValues[GOOGLE_ACCOUNT_KEY];
+      });
+      disconnectGoogleAccount = () => enqueueSync(async () => {
+        const account = await getGoogleAccountValue();
+        if (account)
+          await setLocalValues({ [GOOGLE_ACCOUNT_KEY]: { ...account, connected: false } });
+        const identityApi = chrome.identity;
+        if (identityApi?.clearAllCachedAuthTokens) {
+          await new Promise((resolve) => identityApi.clearAllCachedAuthTokens?.(() => resolve()));
+        }
+      });
+      saveLocalData = async (data) => {
+        await saveToLocal(normalizeStorageData(data));
+      };
       cachedDeviceId = null;
       getSyncDeviceIdAsync = async () => {
         if (cachedDeviceId)
@@ -308,8 +423,10 @@ var TaskManager = (() => {
         return id;
       };
       getSyncDeviceId = getSyncDeviceIdAsync;
-      getSyncShadow = async () => {
-        const shadow = await getLocalValue(INCREMENTAL_SHADOW_KEY, null);
+      getScopedSyncKey = (key, accountSub) => accountSub ? `${key}_${encodeURIComponent(accountSub)}` : key;
+      getSyncShadow = async (accountSub) => {
+        const key = getScopedSyncKey(INCREMENTAL_SHADOW_KEY, accountSub);
+        const shadow = await getLocalValue(key, null);
         return shadow && shadow.records ? shadow : { records: {} };
       };
       getSettingsPayload = (data) => ({
@@ -425,17 +542,40 @@ var TaskManager = (() => {
         });
         return hasDefaultCategories && !data.defaultCategory && !data.hideCompleted && !data.hideOverdue && !data.showNoTimeLimitOnly && !data.darkMode && !data.weeklyGoalMinutes && !data.weeklyGoalAnchor;
       };
-      syncIncrementallyNow = async (inputData) => {
+      sameSyncAccount = (left, right) => left === null || right === null ? left === right : left.sub === right.sub && left.connected === right.connected;
+      syncIncrementallyNow = async (inputData, requestedAccount) => {
         try {
           const data = normalizeStorageData(inputData);
+          const account = await getGoogleAccountValue();
+          if (!sameSyncAccount(account, requestedAccount)) {
+            return { success: false, error: "Google \u8D26\u53F7\u5DF2\u5207\u6362\uFF0C\u672C\u6B21\u540C\u6B65\u5DF2\u53D6\u6D88\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5" };
+          }
+          if (account && !account.connected)
+            return { success: false, error: "Google \u767B\u5F55\u5DF2\u9000\u51FA" };
           const settings = await getCloudSettings();
-          if (!settings.apiUrl || !settings.apiToken)
+          const accountSub = account?.connected ? account.sub : null;
+          if (!accountSub && (!settings.apiUrl || !settings.apiToken))
             return { success: false, error: "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" };
+          let accessToken = null;
+          if (accountSub) {
+            try {
+              accessToken = await getGoogleAccessToken(false);
+            } catch (error) {
+              if (account)
+                await flagGoogleAuthorizationExpired(account);
+              throw error;
+            }
+          }
+          const syncUrl = accountSub ? `${TASKMASTER_API_URL}/api/account/sync/incremental` : `${settings.apiUrl}/api/sync/incremental`;
+          const authorization = accountSub ? accessToken || "" : settings.apiToken || "";
+          const cursorKey = getScopedSyncKey(INCREMENTAL_CURSOR_KEY, accountSub);
+          const clockKey = getScopedSyncKey(INCREMENTAL_CLOCK_KEY, accountSub);
+          const shadowKey = getScopedSyncKey(INCREMENTAL_SHADOW_KEY, accountSub);
           const [deviceId, shadow, initialCursor, storedClock] = await Promise.all([
             getSyncDeviceId(),
-            getSyncShadow(),
-            getLocalValue(INCREMENTAL_CURSOR_KEY, 0),
-            getLocalValue(INCREMENTAL_CLOCK_KEY, 0)
+            getSyncShadow(accountSub),
+            getLocalValue(cursorKey, 0),
+            getLocalValue(clockKey, 0)
           ]);
           lastSyncTimestamp = Math.max(lastSyncTimestamp, storedClock);
           let cursor = initialCursor;
@@ -447,16 +587,19 @@ var TaskManager = (() => {
           const receivedChanges = [];
           while (pending.length > 0 || hasMore) {
             const outgoing = pending.splice(0, OUTGOING_SYNC_BATCH);
-            const resp = await fetch(`${settings.apiUrl}/api/sync/incremental`, {
+            const resp = await fetch(syncUrl, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                "Authorization": `Bearer ${settings.apiToken}`
+                "Authorization": `Bearer ${authorization}`
               },
               body: JSON.stringify({ deviceId, cursor, changes: outgoing })
             });
             if (!resp.ok) {
               const error = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+              if (accountSub && resp.status === 401 && account) {
+                await flagGoogleAuthorizationExpired(account, accessToken || "");
+              }
               return { success: false, error: error.error || `HTTP ${resp.status}` };
             }
             const result = await resp.json();
@@ -470,15 +613,19 @@ var TaskManager = (() => {
             cursor = Number.isInteger(result.cursor) ? result.cursor : cursor;
             hasMore = result.hasMore === true;
           }
+          const currentAccount = await getGoogleAccountValue();
+          if (!sameSyncAccount(currentAccount, account)) {
+            return { success: false, error: "Google \u8D26\u53F7\u5DF2\u5207\u6362\uFF0C\u672C\u6B21\u540C\u6B65\u5DF2\u53D6\u6D88\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5" };
+          }
           const latestLocal = await loadFromLocal();
           const finalData = latestLocal ? applyRemoteChanges(normalizeStorageData(latestLocal), receivedChanges) : mergedData;
           const finalRecords = buildCurrentRecords(mergedData, { records: {} });
           await Promise.all([
             saveToLocal(finalData),
             setLocalValues({
-              [INCREMENTAL_CURSOR_KEY]: cursor,
-              [INCREMENTAL_SHADOW_KEY]: { records: finalRecords },
-              [INCREMENTAL_CLOCK_KEY]: lastSyncTimestamp
+              [cursorKey]: cursor,
+              [shadowKey]: { records: finalRecords },
+              [clockKey]: lastSyncTimestamp
             })
           ]);
           return { success: true, data: finalData, hasForeignChanges: sawForeignChanges };
@@ -486,8 +633,16 @@ var TaskManager = (() => {
           return { success: false, error: String(e) };
         }
       };
-      syncIncrementally = (data) => enqueueSync(() => syncIncrementallyNow(cloneStorageData(data)));
+      syncIncrementally = (data) => {
+        const snapshot = cloneStorageData(data);
+        return getGoogleAccountValue().then(
+          (requestedAccount) => enqueueSync(() => syncIncrementallyNow(snapshot, requestedAccount))
+        );
+      };
       isCloudConfigured = async () => {
+        const account = await getGoogleAccountValue();
+        if (account)
+          return account.connected;
         const settings = await getCloudSettings();
         return !!(settings.apiUrl && settings.apiToken);
       };
@@ -497,7 +652,7 @@ var TaskManager = (() => {
         return /(?:TypeError:\s*)?Failed to fetch|NetworkError when attempting to fetch resource|Load failed/i.test(error);
       };
       warnForSyncFailure = (error) => {
-        if (!error || error === "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" || isRecoverableNetworkError(error))
+        if (!error || error === "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" || error === "Google \u767B\u5F55\u5DF2\u9000\u51FA" || isRecoverableNetworkError(error))
           return;
         console.warn("[TaskMaster] incremental sync failed:", error);
       };
@@ -611,8 +766,11 @@ var TaskManager = (() => {
         try {
           const data = await loadData();
           const now = Date.now();
-          const key = BACKUP_PREFIX + formatDateKey(now);
-          const payload = JSON.stringify({ timestamp: now, data });
+          const account = await getGoogleAccountValue();
+          const ownerSub = account?.sub || null;
+          const ownerKey = ownerSub ? `account_${encodeURIComponent(ownerSub)}_` : "guest_";
+          const key = BACKUP_PREFIX + ownerKey + formatDateKey(now);
+          const payload = JSON.stringify({ timestamp: now, ownerSub, data });
           await new Promise((resolve, reject) => {
             chrome.storage.local.set({ [key]: payload }, () => {
               if (chrome.runtime.lastError)
@@ -630,6 +788,8 @@ var TaskManager = (() => {
         }
       };
       listBackups = async () => {
+        const account = await getGoogleAccountValue();
+        const ownerSub = account?.sub || null;
         return new Promise((resolve) => {
           chrome.storage.local.get(null, (all) => {
             if (chrome.runtime.lastError) {
@@ -642,6 +802,8 @@ var TaskManager = (() => {
                 continue;
               try {
                 const parsed = typeof all[key] === "string" ? JSON.parse(all[key]) : all[key];
+                if ((parsed.ownerSub || null) !== ownerSub)
+                  continue;
                 const d = parsed.data;
                 const ts = parsed.timestamp || 0;
                 const dd = new Date(ts);
@@ -675,6 +837,10 @@ var TaskManager = (() => {
           if (!result)
             return { success: false, error: "\u5907\u4EFD\u4E0D\u5B58\u5728" };
           const parsed = JSON.parse(result);
+          const account = await getGoogleAccountValue();
+          if ((parsed.ownerSub || null) !== (account?.sub || null)) {
+            return { success: false, error: "\u5907\u4EFD\u5C5E\u4E8E\u5176\u4ED6\u8D26\u53F7\uFF0C\u4E0D\u80FD\u6062\u590D\u5230\u5F53\u524D\u4EFB\u52A1\u7A7A\u95F4" };
+          }
           if (!parsed.data?.tasks)
             return { success: false, error: "\u5907\u4EFD\u6570\u636E\u635F\u574F" };
           await saveData(parsed.data);
@@ -977,6 +1143,7 @@ var TaskManager = (() => {
     getCatName: () => getCatName,
     getDateLabel: () => getDateLabel,
     getFilteredTasks: () => getFilteredTasks,
+    getParentChildDuration: () => getParentChildDuration,
     getParentTaskProgress: () => getParentTaskProgress,
     getPriorityColor: () => getPriorityColor,
     getRemainingTime: () => getRemainingTime,
@@ -1006,7 +1173,7 @@ var TaskManager = (() => {
     updateCategory: () => updateCategory,
     updateTask: () => updateTask
   });
-  var escapeHtml, formatDate, parseDate, formatHours, getDateLabel, getTodayStr, state, getState, setState, setLocalSettings, resetEditingTask, getRemainingTime, isOverdue, getPriorityColor, getCatColor, getCatName, applyStorageData, loadState, persistState, getFilteredTasks, addTask, updateTask, deleteTask, toggleThrottleMap, toggleTask, moveTaskToDate, isValidDateOnly2, getNextUncompletedDate, hasUncompletedRepeatOccurrence, addCategory, updateCategory, toggleTaskOnDate, focusTaskToday, replanTask, moveTaskToPool, splitTask, createParentWithChildren, createParentWithChildrenPersisted, deleteCategory, getWeeklyGoalStats, getStats, getParentTaskProgress;
+  var escapeHtml, formatDate, parseDate, formatHours, getDateLabel, getTodayStr, state, getState, setState, setLocalSettings, resetEditingTask, getRemainingTime, isOverdue, getPriorityColor, getCatColor, getCatName, applyStorageData, loadState, persistState, getFilteredTasks, addTask, updateTask, deleteTask, toggleThrottleMap, toggleTask, moveTaskToDate, isValidDateOnly2, getNextUncompletedDate, hasUncompletedRepeatOccurrence, addCategory, updateCategory, toggleTaskOnDate, focusTaskToday, replanTask, moveTaskToPool, splitTask, createParentWithChildren, createParentWithChildrenPersisted, deleteCategory, getWeeklyGoalStats, getStats, getParentTaskProgress, getParentChildDuration;
   var init_task = __esm({
     "shared/task.ts"() {
       "use strict";
@@ -1123,6 +1290,7 @@ var TaskManager = (() => {
       };
       applyStorageData = (data, _options) => {
         const activeEditingTask = state.editingTask;
+        const activeSplittingTaskId = state.splittingTaskId;
         const catMap = /* @__PURE__ */ new Map();
         const cats = data.categories || defaultCategories;
         for (const c of cats) {
@@ -1142,7 +1310,7 @@ var TaskManager = (() => {
           editingTask: activeEditingTask,
           draggedTaskId: null,
           replanningTaskId: null,
-          splittingTaskId: null
+          splittingTaskId: activeSplittingTaskId
         };
       };
       loadState = async () => {
@@ -1178,7 +1346,7 @@ var TaskManager = (() => {
           }, (result) => {
             if (result.success)
               markCloudSynced();
-            else if (result.error !== "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E")
+            else if (result.error !== "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" && result.error !== "Google \u767B\u5F55\u5DF2\u9000\u51FA")
               markSyncError();
           });
           markSaveComplete();
@@ -1643,6 +1811,10 @@ var TaskManager = (() => {
         return { pending, done, overdueCount, todayTotal: todayTasks.length, todayDone };
       };
       getParentTaskProgress = (task) => getTaskProgress(task, state.tasks);
+      getParentChildDuration = (task) => state.tasks.filter((child) => child.parentId === task.id).reduce((total, child) => {
+        const duration = child.duration;
+        return Number.isFinite(duration) && duration > 0 ? total + duration : total;
+      }, 0);
     }
   });
 
@@ -1666,6 +1838,7 @@ var TaskManager = (() => {
     getState: () => getState,
     getStats: () => getStats,
     getWeeklyGoalStats: () => getWeeklyGoalStats,
+    isInteractiveTaskModalOpen: () => isInteractiveTaskModalOpen,
     isOverdue: () => isOverdue,
     isTaskDueOnDate: () => isTaskDueOnDate,
     loadState: () => loadState,
@@ -1710,6 +1883,7 @@ var TaskManager = (() => {
     return [...dated.filter((date) => date < today), today, ...dated.filter((date) => date > today), ...pool];
   };
   var isAnchorVisible = (rect, viewportHeight) => rect.top >= 0 && rect.bottom <= viewportHeight;
+  var shouldShowBackToTop = (scrollY, scrollHeight, viewportHeight, threshold = 48) => scrollHeight > viewportHeight && scrollY > threshold;
   var getTodayScrollBehavior = (reducedMotion) => reducedMotion ? "auto" : "smooth";
 
   // shared/render.ts
@@ -1736,6 +1910,10 @@ var TaskManager = (() => {
     </span>`
     };
     return icons[status];
+  };
+  var formatParentChildDuration = (minutes) => {
+    const hours = minutes / 60;
+    return `${Number.isInteger(hours) ? hours : hours.toFixed(1)}h`;
   };
   var getPageTasks = (options = {}) => window.location.pathname.includes("popup") ? getFilteredTasks({ ignoreFilters: true }) : getFilteredTasks(options);
   var renderWeeklyGoalCard = () => {
@@ -1953,7 +2131,7 @@ var TaskManager = (() => {
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
         </button>
         ` : ""}
-        <button id="addTaskBtn" class="px-4 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm font-medium">+ \u6DFB\u52A0</button>
+        <button id="addTaskBtn" class="px-4 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">+ \u6DFB\u52A0</button>
         </div>
       </div>
     </header>
@@ -2010,6 +2188,7 @@ var TaskManager = (() => {
     const isPopup = window.location.pathname.includes("popup");
     if (task.isParent && isPopup) {
       const progress = getParentTaskProgress(task);
+      const childDuration = getParentChildDuration(task);
       return `
       <div class="task-row popup-task-row flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${task.completed ? "opacity-60" : ""}" data-task-id="${task.id}">
         <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${task.completed ? "bg-green-500 border-green-500" : "border-gray-300 dark:border-gray-500"} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" title="${task.completed ? "\u6807\u8BB0\u4E3A\u672A\u5B8C\u6210" : "\u6807\u8BB0\u4E3A\u5DF2\u5B8C\u6210\uFF08\u5B50\u4EFB\u52A1\u4E00\u5E76\u5B8C\u6210\uFF09"}">
@@ -2018,7 +2197,7 @@ var TaskManager = (() => {
         <div class="w-1.5 h-8 rounded ${getPriorityColor(task.priority)} flex-shrink-0" aria-hidden="true"></div>
         <div class="task-main flex-1 min-w-0">
           <div class="font-medium truncate ${task.completed ? "line-through text-gray-400" : ""}">${escapeHtml(task.title)}</div>
-          <div class="mt-0.5 text-xs text-gray-400">\u7236\u4EFB\u52A1 \xB7 ${progress.completed}/${progress.total} \u4E2A\u5B50\u4EFB\u52A1\u5B8C\u6210</div>
+          <div class="mt-0.5 text-xs text-gray-400">\u7236\u4EFB\u52A1 \xB7 ${progress.completed}/${progress.total} \u4E2A\u5B50\u4EFB\u52A1\u5B8C\u6210 \xB7 \u5B50\u4EFB\u52A1\u5408\u8BA1 ${formatParentChildDuration(childDuration)}</div>
         </div>
         <details class="task-more-menu flex-shrink-0">
           <summary class="task-more-trigger" title="\u66F4\u591A\u64CD\u4F5C" aria-label="${escapeHtml(task.title)}\u7684\u66F4\u591A\u64CD\u4F5C">
@@ -2035,6 +2214,7 @@ var TaskManager = (() => {
     }
     if (task.isParent) {
       const progress = getParentTaskProgress(task);
+      const childDuration = getParentChildDuration(task);
       const children = getPageTasks().filter((child) => child.parentId === task.id);
       return `
       <div class="p-4 bg-white dark:bg-gray-800${task.completed ? " opacity-60" : ""}" data-task-id="${task.id}">
@@ -2052,7 +2232,7 @@ var TaskManager = (() => {
             </div>
             <div class="flex items-center gap-3 mt-2">
               <div class="h-2 flex-1 max-w-xs rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden"><div class="h-full bg-blue-500 rounded-full" style="width:${progress.percent}%"></div></div>
-              <span class="text-xs font-medium text-gray-500">${progress.completed}/${progress.total} \xB7 ${progress.percent}%</span>
+              <span class="text-xs font-medium text-gray-500">${progress.completed}/${progress.total} \xB7 ${progress.percent}% \xB7 \u5B50\u4EFB\u52A1\u5408\u8BA1 ${formatParentChildDuration(childDuration)}</span>
             </div>
           </div>
           <button class="task-split p-2 hover:bg-violet-50 dark:hover:bg-violet-900/20 rounded transition text-violet-500" data-id="${task.id}" title="\u7EE7\u7EED\u6DFB\u52A0\u5B50\u4EFB\u52A1">
@@ -2252,8 +2432,8 @@ var TaskManager = (() => {
         ${task.description ? `<p class="text-sm text-gray-500 mt-1 truncate dark:text-gray-400">${escapeHtml(task.description)}</p>` : ""}
       </div>
       <div class="task-actions pool-task-actions flex items-center flex-wrap justify-end flex-shrink-0">
-        <button class="pool-focus px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-xs font-medium transition" data-id="${task.id}">\u5B89\u6392\u5230\u4ECA\u5929</button>
-        <button class="overdue-replan px-3 py-1.5 rounded-lg border dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-xs transition" data-id="${task.id}">\u9009\u62E9\u65E5\u671F</button>
+        <button class="pool-focus px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition" data-id="${task.id}">\u5B89\u6392\u5230\u4ECA\u5929</button>
+        <button class="overdue-replan px-3 py-1.5 rounded-lg border dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-xs transition" data-id="${task.id}">\u5B89\u6392\u65F6\u95F4</button>
         <button class="task-split px-3 py-1.5 rounded-lg border dark:border-gray-600 hover:bg-violet-50 dark:hover:bg-violet-900/20 hover:text-violet-600 text-xs transition" data-id="${task.id}">\u62C6\u5206</button>
         <button class="task-edit px-3 py-1.5 rounded-lg border dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-xs transition" data-id="${task.id}">\u7F16\u8F91</button>
         <button class="task-delete px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 text-xs transition" data-id="${task.id}">\u5220\u9664</button>
@@ -2299,7 +2479,7 @@ var TaskManager = (() => {
     const orderedDates = insertTodayDate(dates, today);
     const parentSection = parents.length > 0 ? `
     <div class="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 overflow-hidden mb-4">
-      <div class="px-4 py-2 bg-violet-50 dark:bg-violet-900/20 font-medium text-sm text-violet-700 dark:text-violet-300">\u5927\u4EFB\u52A1\u4E0E\u62C6\u5206\u8FDB\u5EA6</div>
+      <div class="px-4 py-2 bg-violet-50 dark:bg-violet-900/20 font-medium text-sm text-violet-700 dark:text-violet-300">\u53EF\u62C6\u5206\u4EFB\u52A1\u4E0E\u62C6\u5206\u8FDB\u5EA6</div>
       ${parents.map((parent) => renderTaskItem(parent)).join("")}
     </div>
   ` : "";
@@ -2636,7 +2816,7 @@ var TaskManager = (() => {
           </button>
         </div>
         <form id="taskForm" class="p-4 space-y-4">
-          ${!isEditing ? `<div class="task-mode-switch" role="group" aria-label="\u4EFB\u52A1\u7C7B\u578B"><button type="button" class="task-mode-btn active" data-task-mode="normal">\u666E\u901A\u4EFB\u52A1</button><button type="button" class="task-mode-btn" data-task-mode="parent">\u5927\u4EFB\u52A1</button></div>` : ""}
+          ${!isEditing ? `<div class="task-mode-switch" role="group" aria-label="\u4EFB\u52A1\u7C7B\u578B"><button type="button" class="task-mode-btn active" data-task-mode="normal">\u666E\u901A\u4EFB\u52A1</button><button type="button" class="task-mode-btn" data-task-mode="parent">\u53EF\u62C6\u5206\u4EFB\u52A1</button></div>` : ""}
           <div class="flex items-start gap-4">
             <div class="flex-1">
               <label class="block text-sm font-medium mb-1">\u4EFB\u52A1\u540D\u79F0 *</label>
@@ -2740,7 +2920,7 @@ var TaskManager = (() => {
             ${isEditing ? `<button type="button" id="deleteTaskBtn" class="px-4 py-2 border border-red-500 text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition">\u5220\u9664</button>` : ""}
             <div class="flex-1"></div>
             <button type="button" id="cancelBtn" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition">\u53D6\u6D88</button>
-            <button type="submit" id="taskSubmitBtn" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">${isEditing ? "\u4FDD\u5B58" : "\u6DFB\u52A0"}</button>
+            <button type="submit" id="taskSubmitBtn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">${isEditing ? "\u4FDD\u5B58" : "\u6DFB\u52A0"}</button>
           </div>
         </form>
       </div>
@@ -2777,9 +2957,7 @@ var TaskManager = (() => {
   var renderReplanModal = () => {
     const { replanningTaskId, tasks } = getState();
     const task = tasks.find((item) => item.id === replanningTaskId);
-    const today = formatDate(/* @__PURE__ */ new Date());
-    const isPopup = window.location.pathname.includes("popup");
-    if (isPopup) {
+    {
       return `
       <div id="replanModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 ${task ? "" : "hidden"}" tabindex="-1">
         <div class="popup-replan-panel bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[92%] max-w-sm p-4">
@@ -2794,39 +2972,20 @@ var TaskManager = (() => {
               <div class="popup-replan-quick-dates">${renderQuickDates("")}</div>
               <div class="mt-3">
                 <label class="block text-xs text-gray-500 mb-1" for="replanDate">7 \u5929\u4EE5\u5916\u7684\u65E5\u671F</label>
-                <input type="date" id="replanDate" name="replanDate" value="" min="${today}" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700">
+                <input type="date" id="replanDate" name="replanDate" value="" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700">
               </div>
               ${task?.hardDeadline ? `<p class="mt-2 text-xs text-red-500">\u786C\u622A\u6B62\u4ECD\u4E3A ${task.hardDeadline}\uFF0C\u4E0D\u4F1A\u88AB\u4FEE\u6539\u3002</p>` : ""}
               <p id="replanError" class="mt-2 text-xs text-red-500" role="alert" aria-live="polite"></p>
             </div>
             <div class="flex justify-end gap-2">
               <button type="button" id="cancelReplanBtn" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg">\u53D6\u6D88</button>
-              <button type="submit" id="confirmReplanBtn" disabled class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed">\u786E\u8BA4\u5B89\u6392</button>
+              <button type="submit" id="confirmReplanBtn" disabled class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed">\u786E\u8BA4\u5B89\u6392</button>
             </div>
           </form>
         </div>
       </div>
     `;
     }
-    return `
-    <div id="replanModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 ${task ? "" : "hidden"}">
-      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[90%] max-w-md p-5">
-        <h2 class="text-lg font-semibold">\u91CD\u65B0\u5B89\u6392\u8BA1\u5212\u65E5\u671F</h2>
-        <p class="mt-1 text-sm text-gray-500 truncate">${task ? escapeHtml(task.title) : ""}</p>
-        <form id="replanForm" class="mt-5 space-y-4">
-          <div>
-            <label class="block text-sm font-medium mb-1">\u65B0\u7684\u8BA1\u5212\u65E5\u671F</label>
-            <input type="date" name="replanDate" value="${today}" min="${today}" required class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700">
-            ${task?.hardDeadline ? `<p class="mt-1 text-xs text-red-500">\u786C\u622A\u6B62\u4ECD\u4E3A ${task.hardDeadline}\uFF0C\u4E0D\u4F1A\u88AB\u4FEE\u6539\u3002</p>` : ""}
-          </div>
-          <div class="flex justify-end gap-2">
-            <button type="button" id="cancelReplanBtn" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg">\u53D6\u6D88</button>
-            <button type="submit" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg">\u4FDD\u5B58\u6392\u671F</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  `;
   };
   var renderSplitModal = () => {
     const { splittingTaskId, tasks } = getState();
@@ -2853,7 +3012,7 @@ var TaskManager = (() => {
           <p id="splitTaskError" class="hidden text-sm text-red-500"></p>
           <div class="split-task-footer">
             <button type="button" id="cancelSplitTaskBtn" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg">\u53D6\u6D88</button>
-            <button type="submit" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg">\u5B8C\u6210\u62C6\u5206</button>
+            <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">\u5B8C\u6210\u62C6\u5206</button>
           </div>
         </form>
       </div>
@@ -2897,13 +3056,33 @@ var TaskManager = (() => {
           <div class="flex gap-2 mt-4 pt-4 border-t dark:border-gray-700">
             <input type="text" id="newCategoryName" placeholder="\u65B0\u5206\u7C7B\u540D\u79F0" class="flex-1 px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm">
             <input type="color" id="newCategoryColor" value="#3b82f6" class="w-10 h-10 rounded cursor-pointer">
-            <button id="createCategoryBtn" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm">\u6DFB\u52A0</button>
+            <button id="createCategoryBtn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm">\u6DFB\u52A0</button>
           </div>
         </div>
       </div>
     </div>
   `;
   };
+  var renderGoogleAccountPanel = () => `
+  <section class="google-account-panel rounded-xl border border-blue-100 bg-blue-50/60 dark:border-blue-900 dark:bg-blue-950/30" style="margin:0 24px 16px;padding:14px 16px;">
+    <div class="flex items-center justify-between gap-3">
+      <div class="min-w-0">
+        <div class="text-sm font-semibold text-gray-800 dark:text-gray-100">Google \u8D26\u53F7\u540C\u6B65</div>
+        <p class="google-account-status mt-1 text-xs text-gray-500 dark:text-gray-400" aria-live="polite">\u6B63\u5728\u8BFB\u53D6\u8D26\u53F7\u72B6\u6001\u2026</p>
+      </div>
+      <button type="button" class="google-sign-in shrink-0 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700">\u4F7F\u7528 Google \u767B\u5F55</button>
+      <button type="button" class="google-sign-out hidden shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs text-gray-600 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200">\u9000\u51FA\u767B\u5F55</button>
+    </div>
+    <div class="google-account-switch hidden mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+      <p class="google-account-switch-copy text-xs leading-5 text-amber-900 dark:text-amber-100"></p>
+      <div class="mt-2 flex gap-2">
+        <button type="button" class="google-account-switch-confirm rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white">\u5207\u6362\u5E76\u52A0\u8F7D\u6B64\u8D26\u53F7</button>
+        <button type="button" class="google-account-switch-cancel rounded-md bg-white px-3 py-1.5 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-200">\u53D6\u6D88</button>
+      </div>
+    </div>
+    <p class="google-account-feedback mt-2 text-xs" role="status" aria-live="polite"></p>
+  </section>
+`;
   var renderSyncModal = () => {
     const { tasks, categories } = getState();
     return `
@@ -2995,6 +3174,7 @@ var TaskManager = (() => {
           </div>
           <p style="font-size:12px;color:#9ca3af;margin-top:4px;">${tasks.length} \u4E2A\u4EFB\u52A1 \xB7 ${categories.length} \u4E2A\u5206\u7C7B \xB7 \u4E91\u7AEF\u540C\u6B65</p>
         </div>
+        ${renderGoogleAccountPanel()}
         <div id="syncFeedback" style="margin:0 24px 0;padding:8px 12px;border-radius:8px;font-size:12px;display:none;"></div>
         <div style="padding:0 24px 20px;">
           <div class="flex gap-3">
@@ -3052,29 +3232,27 @@ var TaskManager = (() => {
       <div class="fixed inset-0 bg-black/50" id="mobileSyncOverlay"></div>
       <div class="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md mx-8 p-10 max-h-[90%] overflow-y-auto">
         <div class="flex items-center justify-between mb-8">
-          <h3 class="text-xl font-semibold text-gray-900 dark:text-white">\u624B\u673A\u540C\u6B65\u8BBE\u7F6E</h3>
+          <h3 class="text-xl font-semibold text-gray-900 dark:text-white">\u8D26\u53F7\u4E0E\u4E91\u540C\u6B65</h3>
           <button id="mobileSyncClose" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
-        <div class="space-y-6">
-          <div>
-            <label class="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-2.5">API \u5730\u5740</label>
-            <input type="url" id="mobileSyncApiUrl" class="w-full px-4 py-3 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" placeholder="https://your-worker.workers.dev">
+        ${renderGoogleAccountPanel().replace("margin:0 24px 16px;", "margin:0;")}
+        <p class="mt-4 border-t border-gray-200 pt-4 text-xs leading-relaxed text-gray-400 dark:border-gray-700 dark:text-gray-500">\u767B\u5F55\u540E\uFF0C\u624B\u673A\u5FEB\u901F\u6DFB\u52A0\u9875\u548C\u7535\u8111\u7AEF\u4F7F\u7528\u540C\u4E00\u8D26\u53F7\u7A7A\u95F4\u3002\u672A\u767B\u5F55\u65F6\uFF0C\u7535\u8111\u4EFB\u52A1\u4ECD\u4FDD\u5B58\u5728\u672C\u673A\u3002</p>
+        <details class="mt-5 border-t border-gray-200 pt-4 text-xs dark:border-gray-700">
+          <summary class="cursor-pointer text-gray-400 dark:text-gray-500">\u65E7\u7248\u7BA1\u7406\u5458\u8FDE\u63A5\u8BBE\u7F6E</summary>
+          <div class="mt-4">
+            <label class="mb-2 block text-gray-600 dark:text-gray-400" for="mobileSyncApiUrl">API \u5730\u5740</label>
+            <input type="url" id="mobileSyncApiUrl" class="mb-4 w-full rounded-lg border px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white" placeholder="https://your-worker.workers.dev">
+            <label class="mb-2 block text-gray-600 dark:text-gray-400" for="mobileSyncApiToken">API \u5BC6\u94A5</label>
+            <input type="text" id="mobileSyncApiToken" class="mb-3 w-full rounded-lg border px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white" placeholder="\u7C98\u8D34\u7BA1\u7406\u5458 API Token" autocomplete="off">
+            <div class="flex gap-3">
+              <button id="mobileSyncSaveBtn" class="flex-1 rounded-lg bg-gray-100 px-3 py-2 text-gray-700 dark:bg-gray-700 dark:text-gray-200">\u4FDD\u5B58\u65E7\u7248\u8FDE\u63A5</button>
+              <button id="mobileSyncNowBtn" class="flex-1 rounded-lg bg-gray-100 px-3 py-2 text-gray-700 dark:bg-gray-700 dark:text-gray-200">\u7ACB\u5373\u540C\u6B65</button>
+            </div>
+            <div id="mobileSyncStatus" class="mt-2 min-h-5 text-gray-500 dark:text-gray-400"></div>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-2.5">API \u5BC6\u94A5</label>
-            <input type="text" id="mobileSyncApiToken" class="w-full px-4 py-3 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" placeholder="\u7C98\u8D34\u4F60\u7684 API Token" autocomplete="off">
-          </div>
-          <div class="flex gap-4 pt-2">
-            <button id="mobileSyncSaveBtn" class="flex-1 px-4 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm font-medium">\u4FDD\u5B58\u8BBE\u7F6E</button>
-            <button id="mobileSyncNowBtn" class="flex-1 px-4 py-3 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition text-sm font-medium">\u7ACB\u5373\u540C\u6B65</button>
-          </div>
-          <div id="mobileSyncStatus" class="text-xs text-gray-500 dark:text-gray-400 min-h-[1.25rem]"></div>
-          <div class="pt-4 border-t dark:border-gray-700">
-            <p class="text-xs text-gray-400 dark:text-gray-500 leading-relaxed">\u624B\u673A\u8BBF\u95EE\u4F60\u7684 Worker \u5730\u5740\u5373\u53EF\u6DFB\u52A0\u4EFB\u52A1\uFF0C\u4E5F\u53EF\u901A\u8FC7 Telegram Bot \u53D1\u6D88\u606F\u6DFB\u52A0\u3002</p>
-          </div>
-        </div>
+        </details>
       </div>
     </div>
   `;
@@ -4075,7 +4253,7 @@ var TaskManager = (() => {
       ${renderHeader()}
       ${renderFilters()}
       ${renderTaskList()}
-      ${getState().currentView === "list" ? '<button id="jumpToTodayBtn" class="jump-to-today hidden" aria-label="\u5B9A\u4F4D\u5230\u4ECA\u5929" title="\u5B9A\u4F4D\u5230\u4ECA\u5929">\u4ECA</button>' : ""}
+      ${getState().currentView === "list" ? '<div id="listNavigation" class="list-navigation"><button id="backToTopBtn" class="jump-to-top hidden" aria-label="\u56DE\u5230\u9876\u90E8" title="\u56DE\u5230\u9876\u90E8">\u2191</button><button id="jumpToTodayBtn" class="jump-to-today hidden" aria-label="\u5B9A\u4F4D\u5230\u4ECA\u5929" title="\u5B9A\u4F4D\u5230\u4ECA\u5929">\u4ECA</button></div>' : ""}
       ${renderModal()}
       ${renderReplanModal()}
       ${renderSplitModal()}
@@ -4092,6 +4270,19 @@ var TaskManager = (() => {
   init_task();
   init_storage();
   init_sync();
+
+  // shared/replan-policy.js
+  var daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  var isValidLocalDate = (date) => {
+    if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date))
+      return false;
+    const [year, month, day] = date.split("-").map(Number);
+    if (year < 1 || month < 1 || month > 12 || day < 1)
+      return false;
+    const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const maxDay = month === 2 && leapYear ? 29 : daysInMonth[month - 1];
+    return day <= maxDay;
+  };
 
   // shared/quick-dates.ts
   var bindTaskQuickDates = (taskModal) => {
@@ -4165,15 +4356,6 @@ var TaskManager = (() => {
       syncSplitDateRow(row, input.value);
     });
   };
-  var createSubmissionGuard = () => {
-    let submitted = false;
-    return () => {
-      if (submitted)
-        return false;
-      submitted = true;
-      return true;
-    };
-  };
   var createResettableSubmissionGuard = () => {
     let submitting = false;
     return {
@@ -4187,6 +4369,135 @@ var TaskManager = (() => {
         submitting = false;
       }
     };
+  };
+
+  // shared/split-scope.ts
+  var getSplitChildRows = (splitChildren) => {
+    return splitChildren ? [...splitChildren.querySelectorAll(":scope > .split-child-row")] : [];
+  };
+  var collectSplitChildren = (splitChildren) => getSplitChildRows(splitChildren).map((row) => {
+    const durationHours = Number.parseFloat(row.querySelector(".split-child-duration")?.value || "0");
+    return {
+      id: row.dataset.childId,
+      title: (row.querySelector(".split-child-title")?.value || "").trim(),
+      durationHours,
+      duration: Math.round(durationHours * 60),
+      dueDate: row.querySelector(".split-child-date")?.value || ""
+    };
+  });
+
+  // shared/task-form.ts
+  var setSectionDisabled = (section, disabled) => {
+    section?.querySelectorAll("input, textarea, select, button").forEach((control) => {
+      control.disabled = disabled;
+    });
+  };
+  var applyTaskEntryMode = (taskForm, mode) => {
+    const normalFields = taskForm.querySelector("#normalTaskFields");
+    const parentFields = taskForm.querySelector("#parentChildrenFields");
+    const completedField = taskForm.querySelector("#taskCompletedField");
+    setSectionDisabled(normalFields, mode === "parent");
+    setSectionDisabled(parentFields, mode !== "parent");
+    setSectionDisabled(completedField, mode === "parent");
+    normalFields?.classList.toggle("hidden", mode === "parent");
+    parentFields?.classList.toggle("hidden", mode !== "parent");
+    completedField?.classList.toggle("hidden", mode === "parent");
+    taskForm.querySelectorAll("[data-task-mode]").forEach((button) => {
+      button.classList.toggle("active", button.dataset.taskMode === mode);
+    });
+    const submit = taskForm.querySelector("#taskSubmitBtn");
+    if (submit)
+      submit.textContent = mode === "parent" ? "\u521B\u5EFA\u53EF\u62C6\u5206\u4EFB\u52A1" : "\u6DFB\u52A0";
+  };
+
+  // shared/split-interaction.ts
+  var bindSplitTaskTriggers = (container, { onOpen }) => {
+    container.querySelectorAll(".task-split, .overdue-split").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const taskId = button.dataset.id;
+        if (taskId)
+          onOpen(taskId);
+      });
+    });
+  };
+  var reportInvalidChild = (rows, children, onError) => {
+    if (children.length < 2) {
+      onError("\u81F3\u5C11\u4FDD\u7559\u4E24\u4E2A\u5B50\u4EFB\u52A1\u3002");
+      return true;
+    }
+    const invalidChildIndex = children.findIndex(
+      (child) => !child.title || !Number.isFinite(child.durationHours) || child.durationHours < 0.5 || child.durationHours > 24 || Math.abs(child.durationHours * 2 - Math.round(child.durationHours * 2)) > Number.EPSILON
+    );
+    if (invalidChildIndex === -1)
+      return false;
+    const invalidChild = children[invalidChildIndex];
+    const invalidRow = rows[invalidChildIndex];
+    const invalidField = !invalidChild?.title ? invalidRow?.querySelector(".split-child-title") : invalidRow?.querySelector(".split-child-duration");
+    const message = !invalidChild?.title ? `\u8BF7\u586B\u5199\u5B50\u4EFB\u52A1 ${invalidChildIndex + 1} \u7684\u6807\u9898\u3002` : `\u5B50\u4EFB\u52A1 ${invalidChildIndex + 1} \u7684\u9884\u8BA1\u65F6\u95F4\u9700\u4E3A 0.5 \u81F3 24 \u5C0F\u65F6\uFF0C\u5E76\u4EE5 0.5 \u5C0F\u65F6\u9012\u589E\u3002`;
+    onError(message, invalidField);
+    return true;
+  };
+  var bindSplitTaskForm = ({
+    form,
+    children,
+    addButton,
+    getTaskId,
+    createChildRow,
+    splitTask: splitTask2,
+    onError,
+    onSuccess,
+    onRowAdded
+  }) => {
+    const submitGuard = createResettableSubmissionGuard();
+    const resetSubmitState = () => {
+      submitGuard.reset();
+      const submitButton = form?.querySelector('button[type="submit"]');
+      if (submitButton)
+        submitButton.disabled = false;
+    };
+    addButton?.addEventListener("click", () => {
+      if (!children)
+        return;
+      const row = createChildRow(getSplitChildRows(children).length);
+      if (!row)
+        return;
+      children.appendChild(row);
+      onRowAdded?.(row);
+      row.querySelector(".split-child-title")?.focus();
+    });
+    const submitSplitTask = async (event) => {
+      event.preventDefault();
+      const taskId = getTaskId();
+      if (!taskId || !children)
+        return;
+      const rows = getSplitChildRows(children);
+      const splitChildren = collectSplitChildren(children);
+      if (reportInvalidChild(rows, splitChildren, onError))
+        return;
+      if (!submitGuard.trySubmit())
+        return;
+      if (!splitTask2(taskId, splitChildren)) {
+        submitGuard.reset();
+        onError("\u8BE5\u4EFB\u52A1\u5F53\u524D\u65E0\u6CD5\u62C6\u5206\uFF0C\u8BF7\u786E\u8BA4\u5B83\u4E0D\u662F\u5FAA\u73AF\u4EFB\u52A1\u3002");
+        return;
+      }
+      const submitButton = form?.querySelector('button[type="submit"]');
+      if (submitButton)
+        submitButton.disabled = true;
+      const succeeded = await onSuccess(splitChildren);
+      if (succeeded === false) {
+        resetSubmitState();
+        onError("\u62C6\u5206\u4FDD\u5B58\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5");
+      }
+    };
+    form?.addEventListener("submit", (event) => {
+      void submitSplitTask(event).catch((error) => {
+        resetSubmitState();
+        console.error("[TaskMaster] split task submit failed:", error);
+        onError("\u62C6\u5206\u4FDD\u5B58\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5");
+      });
+    });
   };
 
   // shared/events.ts
@@ -4283,6 +4594,133 @@ var TaskManager = (() => {
     renderApp(currentContainer);
     attachEventListeners(currentContainer);
   }
+  var bindGoogleAccountPanels = (container) => {
+    const panels = [...container.querySelectorAll(".google-account-panel")];
+    if (panels.length === 0)
+      return;
+    const refresh = async (panel) => {
+      const { getGoogleAccount: getGoogleAccount2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
+      const account = await getGoogleAccount2();
+      const status = panel.querySelector(".google-account-status");
+      const signIn = panel.querySelector(".google-sign-in");
+      const signOut = panel.querySelector(".google-sign-out");
+      if (account?.connected) {
+        if (status)
+          status.textContent = account.email ? `\u5DF2\u8FDE\u63A5 \xB7 ${account.email}` : "\u5DF2\u8FDE\u63A5 Google \u8D26\u53F7";
+        if (signIn)
+          signIn.hidden = true;
+        if (signOut)
+          signOut.hidden = false;
+      } else if (account?.sub) {
+        if (status)
+          status.textContent = `\u5DF2\u9000\u51FA \xB7 ${account.email || "\u672C\u673A\u4EFB\u52A1\u4ECD\u4FDD\u7559"}`;
+        if (signIn) {
+          signIn.hidden = false;
+          signIn.textContent = "\u91CD\u65B0\u767B\u5F55\u5E76\u540C\u6B65";
+        }
+        if (signOut)
+          signOut.hidden = true;
+      } else {
+        if (status)
+          status.textContent = "\u672A\u767B\u5F55 \xB7 \u4EFB\u52A1\u4ECD\u4FDD\u5B58\u5728\u672C\u673A";
+        if (signIn) {
+          signIn.hidden = false;
+          signIn.textContent = "\u4F7F\u7528 Google \u767B\u5F55";
+        }
+        if (signOut)
+          signOut.hidden = true;
+      }
+    };
+    const setFeedback = (panel, text, isError = false) => {
+      const feedback = panel.querySelector(".google-account-feedback");
+      if (!feedback)
+        return;
+      feedback.textContent = text;
+      feedback.classList.toggle("text-red-600", isError);
+      feedback.classList.toggle("text-green-700", !isError && !!text);
+    };
+    for (const panel of panels) {
+      void refresh(panel);
+      const switchPanel = panel.querySelector(".google-account-switch");
+      const switchCopy = panel.querySelector(".google-account-switch-copy");
+      const signIn = panel.querySelector(".google-sign-in");
+      const switchConfirm = panel.querySelector(".google-account-switch-confirm");
+      const switchCancel = panel.querySelector(".google-account-switch-cancel");
+      let pendingSub = "";
+      const activate = async (sub) => {
+        const { activateGoogleAccount: activateGoogleAccount2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
+        await activateGoogleAccount2(sub);
+        if (switchPanel)
+          switchPanel.classList.add("hidden");
+        await loadState();
+        reRender();
+        syncToast("\u5DF2\u8FDE\u63A5 Google\uFF0C\u6B63\u5728\u540C\u6B65\u6B64\u8D26\u53F7\u7684\u4EFB\u52A1");
+      };
+      if (signIn)
+        signIn.addEventListener("click", async () => {
+          const signInButton = signIn;
+          signInButton.disabled = true;
+          setFeedback(panel, "\u6B63\u5728\u6253\u5F00 Google \u767B\u5F55\u2026");
+          try {
+            const [{ identifyGoogleAccount: identifyGoogleAccount2, getGoogleAccount: getGoogleAccount2 }] = await Promise.all([Promise.resolve().then(() => (init_storage(), storage_exports))]);
+            const [selectedAccount, activeAccount] = await Promise.all([
+              identifyGoogleAccount2(),
+              getGoogleAccount2()
+            ]);
+            if (activeAccount?.sub && activeAccount.sub !== selectedAccount.sub) {
+              pendingSub = selectedAccount.sub;
+              if (switchCopy) {
+                switchCopy.textContent = `\u5F53\u524D\u672C\u673A\u4EFB\u52A1\u5C5E\u4E8E ${activeAccount.email || "\u53E6\u4E00\u4E2A Google \u8D26\u53F7"}\u3002\u5207\u6362\u540E\u4F1A\u4FDD\u7559\u539F\u8D26\u53F7\u7684\u672C\u673A\u526F\u672C\uFF0C\u663E\u793A ${selectedAccount.email || "\u6240\u9009\u8D26\u53F7"} \u81EA\u5DF1\u7684\u6570\u636E\uFF0C\u5E76\u53EA\u4E0E\u8BE5\u8D26\u53F7\u540C\u6B65\u3002`;
+              }
+              switchPanel?.classList.remove("hidden");
+              setFeedback(panel, "\u8BF7\u786E\u8BA4\u5982\u4F55\u5207\u6362\u672C\u673A\u8D26\u53F7\u3002");
+            } else {
+              await activate(selectedAccount.sub);
+            }
+          } catch (error) {
+            setFeedback(panel, error instanceof Error ? error.message : "Google \u767B\u5F55\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5", true);
+          } finally {
+            signInButton.disabled = false;
+          }
+        });
+      if (switchConfirm)
+        switchConfirm.addEventListener("click", async () => {
+          const confirmButton = switchConfirm;
+          if (!pendingSub)
+            return;
+          confirmButton.disabled = true;
+          setFeedback(panel, "\u6B63\u5728\u5207\u6362\u8D26\u53F7\u5E76\u52A0\u8F7D\u672C\u673A\u6570\u636E\u2026");
+          try {
+            await activate(pendingSub);
+            pendingSub = "";
+          } catch (error) {
+            setFeedback(panel, error instanceof Error ? error.message : "\u5207\u6362\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5", true);
+          } finally {
+            confirmButton.disabled = false;
+          }
+        });
+      switchCancel?.addEventListener("click", () => {
+        pendingSub = "";
+        switchPanel?.classList.add("hidden");
+        setFeedback(panel, "\u5DF2\u4FDD\u7559\u5F53\u524D\u8D26\u53F7\u548C\u672C\u673A\u4EFB\u52A1\u3002");
+      });
+      panel.querySelector(".google-sign-out")?.addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+          const { disconnectGoogleAccount: disconnectGoogleAccount2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
+          await disconnectGoogleAccount2();
+          await refresh(panel);
+          setFeedback(panel, "\u5DF2\u9000\u51FA\u3002\u4EFB\u52A1\u4ECD\u4FDD\u5B58\u5728\u672C\u673A\uFF1B\u91CD\u65B0\u767B\u5F55\u540E\u53EF\u7EE7\u7EED\u540C\u6B65\u3002");
+          syncToast("\u5DF2\u9000\u51FA Google \u540C\u6B65");
+        } catch (error) {
+          setFeedback(panel, error instanceof Error ? error.message : "\u9000\u51FA\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5", true);
+        } finally {
+          button.disabled = false;
+        }
+      });
+    }
+  };
   var repeatEndDateErrorFor = (dueDate, repeatEndDate) => {
     if (!repeatEndDate)
       return "\u8BF7\u9009\u62E9\u91CD\u590D\u622A\u6B62\u65E5\u671F";
@@ -4295,25 +4733,38 @@ var TaskManager = (() => {
   var attachEventListeners = (container) => {
     currentContainer = container;
     bindPopupTaskMenus(container);
+    bindGoogleAccountPanels(container);
+    const backToTop = container.querySelector("#backToTopBtn");
     const jumpToToday = container.querySelector("#jumpToTodayBtn");
     const todayAnchor = container.querySelector("#todayAnchor");
     if (listScrollHandler)
       window.removeEventListener("scroll", listScrollHandler);
-    if (jumpToToday && todayAnchor) {
+    if (backToTop || jumpToToday && todayAnchor) {
       const updateJumpVisibility = () => {
-        const rect = todayAnchor.getBoundingClientRect();
-        jumpToToday.classList.toggle("hidden", isAnchorVisible(rect, window.innerHeight));
+        if (backToTop) {
+          backToTop.classList.toggle("hidden", !shouldShowBackToTop(window.scrollY, document.documentElement.scrollHeight, window.innerHeight));
+        }
+        if (jumpToToday && todayAnchor) {
+          const rect = todayAnchor.getBoundingClientRect();
+          jumpToToday.classList.toggle("hidden", isAnchorVisible(rect, window.innerHeight));
+        }
       };
       listScrollHandler = updateJumpVisibility;
       window.addEventListener("scroll", listScrollHandler, { passive: true });
       updateJumpVisibility();
-      jumpToToday.addEventListener("click", () => {
+      backToTop?.addEventListener("click", () => {
         const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-        todayAnchor.scrollIntoView({ behavior: getTodayScrollBehavior(reduced), block: "center" });
-        todayAnchor.classList.add("today-anchor-highlight");
-        setTimeout(() => todayAnchor.classList.remove("today-anchor-highlight"), 1500);
-        jumpToToday.classList.add("hidden");
+        window.scrollTo?.({ top: 0, behavior: getTodayScrollBehavior(reduced) });
+        backToTop.classList.add("hidden");
       });
+      if (jumpToToday && todayAnchor)
+        jumpToToday.addEventListener("click", () => {
+          const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+          todayAnchor.scrollIntoView({ behavior: getTodayScrollBehavior(reduced), block: "center" });
+          todayAnchor.classList.add("today-anchor-highlight");
+          setTimeout(() => todayAnchor.classList.remove("today-anchor-highlight"), 1500);
+          jumpToToday.classList.add("hidden");
+        });
     } else {
       listScrollHandler = null;
     }
@@ -4469,15 +4920,12 @@ var TaskManager = (() => {
     const parentSubmitGuard = createResettableSubmissionGuard();
     const setTaskMode = (mode) => {
       taskMode = mode;
-      container.querySelector("#normalTaskFields")?.classList.toggle("hidden", mode === "parent");
-      container.querySelector("#parentChildrenFields")?.classList.toggle("hidden", mode !== "parent");
-      container.querySelector("#taskCompletedField")?.classList.toggle("hidden", mode === "parent");
-      container.querySelectorAll("[data-task-mode]").forEach((button) => button.classList.toggle("active", button.dataset.taskMode === mode));
-      const submit = container.querySelector("#taskSubmitBtn");
-      if (submit)
-        submit.textContent = mode === "parent" ? "\u521B\u5EFA\u5927\u4EFB\u52A1" : "\u6DFB\u52A0";
+      if (taskForm)
+        applyTaskEntryMode(taskForm, mode);
     };
     container.querySelectorAll("[data-task-mode]").forEach((button) => button.addEventListener("click", () => setTaskMode(button.dataset.taskMode === "parent" ? "parent" : "normal")));
+    if (taskForm && !getState().editingTask)
+      setTaskMode("normal");
     const parentChildren = container.querySelector("#newParentChildren");
     const bindParentChildControls = () => {
       if (!parentChildren)
@@ -4552,7 +5000,7 @@ var TaskManager = (() => {
         }
         resetEditingTask();
         reRender();
-        showToast(container, `\u5DF2\u521B\u5EFA\u5927\u4EFB\u52A1\u548C ${children.length} \u4E2A\u5B50\u4EFB\u52A1`, "success");
+        showToast(container, `\u5DF2\u521B\u5EFA\u53EF\u62C6\u5206\u4EFB\u52A1\u548C ${children.length} \u4E2A\u5B50\u4EFB\u52A1`, "success");
         return;
       }
       if (editingTask?.isParent) {
@@ -4702,24 +5150,11 @@ var TaskManager = (() => {
         reRender();
       });
     });
-    container.querySelectorAll(".overdue-split").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const id = btn.dataset.id;
-        if (!id)
-          return;
+    bindSplitTaskTriggers(container, {
+      onOpen: (id) => {
         setState({ splittingTaskId: id });
         reRender();
-      });
-    });
-    container.querySelectorAll(".task-split").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const id = btn.dataset.id;
-        if (!id)
-          return;
-        setState({ splittingTaskId: id });
-        reRender();
-      });
+      }
     });
     container.querySelectorAll(".overdue-pool").forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -4756,6 +5191,11 @@ var TaskManager = (() => {
       if (replanError)
         replanError.textContent = message;
     };
+    const getReplanDateError = (date) => {
+      if (!isValidLocalDate(date))
+        return "\u8BF7\u9009\u62E9\u4E00\u4E2A\u8BA1\u5212\u65E5\u671F\u3002";
+      return "";
+    };
     const syncReplanQuickDateSelection = (date) => {
       container.querySelectorAll(".popup-replan-quick-dates .quick-date-btn").forEach((button) => {
         const selected = button.dataset.date === date;
@@ -4763,9 +5203,9 @@ var TaskManager = (() => {
         button.setAttribute("aria-pressed", String(selected));
       });
       if (replanConfirmButton)
-        replanConfirmButton.disabled = !date || date < formatDate(/* @__PURE__ */ new Date());
+        replanConfirmButton.disabled = !isValidLocalDate(date);
     };
-    if (popupReplan && replanDateInput) {
+    if (replanDateInput) {
       container.querySelectorAll(".popup-replan-quick-dates .quick-date-btn").forEach((button) => {
         button.addEventListener("click", () => {
           const date = button.dataset.date || "";
@@ -4776,9 +5216,8 @@ var TaskManager = (() => {
       });
       replanDateInput.addEventListener("change", () => {
         const date = replanDateInput.value;
-        const today = formatDate(/* @__PURE__ */ new Date());
         syncReplanQuickDateSelection(date);
-        setReplanError(date && date < today ? "\u4E0D\u80FD\u5B89\u6392\u5230\u8FC7\u53BB\u65E5\u671F\u3002" : "");
+        setReplanError(date ? getReplanDateError(date) : "");
       });
     }
     container.querySelector("#replanForm")?.addEventListener("submit", async (e) => {
@@ -4787,27 +5226,42 @@ var TaskManager = (() => {
       if (!replanningTaskId || replanSubmitting)
         return;
       const date = new FormData(e.target).get("replanDate");
-      if (popupReplan && (!date || date < formatDate(/* @__PURE__ */ new Date()))) {
-        setReplanError(!date ? "\u8BF7\u9009\u62E9\u4E00\u4E2A\u8BA1\u5212\u65E5\u671F\u3002" : "\u4E0D\u80FD\u5B89\u6392\u5230\u8FC7\u53BB\u65E5\u671F\u3002");
+      const dateError = getReplanDateError(date);
+      if (dateError) {
+        setReplanError(dateError);
         return;
       }
+      const taskBefore = getState().tasks.find((task) => task.id === replanningTaskId);
+      if (!taskBefore || taskBefore.isParent)
+        return;
+      const taskSnapshot = { ...taskBefore };
       replanSubmitting = true;
       if (replanConfirmButton)
         replanConfirmButton.disabled = true;
       replanTask(replanningTaskId, date);
+      const saved = await persistState();
+      if (!saved) {
+        setState({
+          tasks: getState().tasks.map((task) => task.id === replanningTaskId ? taskSnapshot : task),
+          replanningTaskId
+        });
+        reRender();
+        showToast(container, "\u672C\u5730\u4FDD\u5B58\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5", "error");
+        return;
+      }
       setState({ replanningTaskId: null });
-      await persistState();
       reRender();
       showToast(container, date === formatDate(/* @__PURE__ */ new Date()) ? "\u5DF2\u91CD\u65B0\u5B89\u6392\u5230\u4ECA\u5929\u5E76\u52A0\u5165\u805A\u7126" : "\u8BA1\u5212\u65E5\u671F\u5DF2\u66F4\u65B0", "success");
     });
-    const splitError = container.querySelector("#splitTaskError");
+    const splitTaskModal = container.querySelector("#splitTaskModal");
+    const splitChildren = splitTaskModal?.querySelector("#splitChildren");
+    const splitError = splitTaskModal?.querySelector("#splitTaskError");
     const closeSplitModal = () => {
       setState({ splittingTaskId: null });
       reRender();
     };
     container.querySelector("#cancelSplitTaskBtn")?.addEventListener("click", closeSplitModal);
     container.querySelector("#closeSplitTaskBtn")?.addEventListener("click", closeSplitModal);
-    const splitTaskModal = container.querySelector("#splitTaskModal");
     splitTaskModal?.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -4824,12 +5278,12 @@ var TaskManager = (() => {
       splitError.classList.remove("hidden");
     };
     const bindSplitRemoveButtons = () => {
-      container.querySelectorAll(".remove-split-child").forEach((btn) => {
+      getSplitChildRows(splitChildren).flatMap((row) => [...row.querySelectorAll(".remove-split-child")]).forEach((btn) => {
         if (btn.dataset.bound === "true")
           return;
         btn.dataset.bound = "true";
         btn.addEventListener("click", () => {
-          const rows = container.querySelectorAll(".split-child-row");
+          const rows = getSplitChildRows(splitChildren);
           if (rows.length <= 2) {
             showSplitError("\u81F3\u5C11\u4FDD\u7559\u4E24\u4E2A\u5B50\u4EFB\u52A1\u3002");
             return;
@@ -4840,6 +5294,17 @@ var TaskManager = (() => {
     };
     bindSplitRemoveButtons();
     let splitTaskSnapshot = null;
+    const splitTaskWithSnapshot = (taskId, children) => {
+      splitTaskSnapshot = getState().tasks.map((task) => ({
+        ...task,
+        repeatDays: [...task.repeatDays || []],
+        completedDates: [...task.completedDates || []]
+      }));
+      const succeeded = splitTask(taskId, children);
+      if (!succeeded)
+        splitTaskSnapshot = null;
+      return succeeded;
+    };
     splitTaskModal?.addEventListener("click", (e) => {
       const target = e.target;
       const isDec = target.classList.contains("split-duration-decrease");
@@ -4855,84 +5320,38 @@ var TaskManager = (() => {
     });
     if (splitTaskModal)
       bindSplitQuickDates(splitTaskModal);
-    container.querySelector("#addSplitChildBtn")?.addEventListener("click", () => {
-      const list = container.querySelector("#splitChildren");
-      if (!list)
-        return;
-      const index = list.querySelectorAll(".split-child-row").length;
-      const wrapper = document.createElement("div");
-      wrapper.innerHTML = renderSplitChildRow(index, void 0, "", { allowUnscheduled: true });
-      const row = wrapper.firstElementChild;
-      if (!row)
-        return;
-      list.appendChild(row);
-      bindSplitRemoveButtons();
-      row.querySelector(".split-child-title")?.focus();
-    });
-    const canSubmitSplit = createSubmissionGuard();
-    container.querySelector("#splitTaskForm")?.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const { splittingTaskId } = getState();
-      if (!splittingTaskId)
-        return;
-      const rows = [...container.querySelectorAll(".split-child-row")];
-      const children = rows.map((row) => {
-        const durationHours = Number.parseFloat(row.querySelector(".split-child-duration").value);
-        return {
-          id: row.dataset.childId,
-          title: row.querySelector(".split-child-title").value.trim(),
-          durationHours,
-          duration: Math.round(durationHours * 60),
-          dueDate: row.querySelector(".split-child-date").value
-        };
-      });
-      const invalidChildIndex = children.findIndex(
-        (child) => !child.title || !Number.isFinite(child.durationHours) || child.durationHours < 0.5 || child.durationHours > 24 || Math.abs(child.durationHours * 2 - Math.round(child.durationHours * 2)) > Number.EPSILON
-      );
-      if (children.length < 2) {
-        showSplitError("\u81F3\u5C11\u4FDD\u7559\u4E24\u4E2A\u5B50\u4EFB\u52A1\u3002");
-        return;
-      }
-      if (invalidChildIndex !== -1) {
-        const invalidChild = children[invalidChildIndex];
-        const invalidRow = rows[invalidChildIndex];
-        const invalidField = !invalidChild?.title ? invalidRow?.querySelector(".split-child-title") : invalidRow?.querySelector(".split-child-duration");
-        const message = !invalidChild?.title ? `\u8BF7\u586B\u5199\u5B50\u4EFB\u52A1 ${invalidChildIndex + 1} \u7684\u6807\u9898\u3002` : `\u5B50\u4EFB\u52A1 ${invalidChildIndex + 1} \u7684\u9884\u8BA1\u65F6\u95F4\u9700\u4E3A 0.5 \u81F3 24 \u5C0F\u65F6\uFF0C\u5E76\u4EE5 0.5 \u5C0F\u65F6\u9012\u589E\u3002`;
+    bindSplitTaskForm({
+      form: container.querySelector("#splitTaskForm"),
+      children: splitChildren,
+      addButton: container.querySelector("#addSplitChildBtn"),
+      getTaskId: () => getState().splittingTaskId,
+      createChildRow: (index) => {
+        const wrapper = document.createElement("div");
+        wrapper.innerHTML = renderSplitChildRow(index, void 0, "", { allowUnscheduled: true });
+        return wrapper.firstElementChild;
+      },
+      splitTask: splitTaskWithSnapshot,
+      onError: (message, field) => {
         showSplitError(message);
-        invalidField?.scrollIntoView({ behavior: "smooth", block: "center" });
-        invalidField?.focus();
-        return;
-      }
-      if (!canSubmitSplit())
-        return;
-      splitTaskSnapshot = getState().tasks.map((task) => ({
-        ...task,
-        repeatDays: [...task.repeatDays || []],
-        completedDates: [...task.completedDates || []]
-      }));
-      if (!splitTask(splittingTaskId, children)) {
+        field?.scrollIntoView({ behavior: "smooth", block: "center" });
+        field?.focus();
+      },
+      onRowAdded: bindSplitRemoveButtons,
+      onSuccess: async (children) => {
+        const saved = await persistState();
+        if (!saved) {
+          if (splitTaskSnapshot)
+            setState({ tasks: splitTaskSnapshot });
+          splitTaskSnapshot = null;
+          return false;
+        }
         splitTaskSnapshot = null;
-        showSplitError("\u8BE5\u4EFB\u52A1\u5F53\u524D\u65E0\u6CD5\u62C6\u5206\uFF0C\u8BF7\u786E\u8BA4\u5B83\u4E0D\u662F\u5FAA\u73AF\u4EFB\u52A1\u3002");
-        return;
+        setState({ splittingTaskId: null });
+        reRender();
+        const waitingCount = children.filter((child) => !child.dueDate).length;
+        showToast(container, `\u5DF2\u62C6\u5206 ${children.length} \u4E2A\u5B50\u4EFB\u52A1\uFF0C\u5176\u4E2D ${waitingCount} \u4E2A\u5F85\u5B89\u6392`, "success");
+        return true;
       }
-      const submitButton = e.target.querySelector('button[type="submit"]');
-      if (submitButton)
-        submitButton.disabled = true;
-      const saved = await persistState();
-      if (!saved) {
-        if (splitTaskSnapshot)
-          setState({ tasks: splitTaskSnapshot });
-        splitTaskSnapshot = null;
-        if (submitButton)
-          submitButton.disabled = false;
-        showSplitError("\u62C6\u5206\u4FDD\u5B58\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5");
-        return;
-      }
-      splitTaskSnapshot = null;
-      setState({ splittingTaskId: null });
-      reRender();
-      const waitingCount = children.filter((child) => !child.dueDate).length;
-      showToast(container, `\u5DF2\u62C6\u5206 ${children.length} \u4E2A\u5B50\u4EFB\u52A1\uFF0C\u5176\u4E2D ${waitingCount} \u4E2A\u5F85\u5B89\u6392`, "success");
     });
     taskForm?.addEventListener("change", () => {
       taskFormDirty = true;
@@ -5569,6 +5988,11 @@ var TaskManager = (() => {
       setTimeout(() => toast.remove(), 300);
     }, 3e3);
   }
+  var isInteractiveTaskModalOpen = (container) => {
+    const taskModal = container.querySelector("#taskModal");
+    const splitTaskModal = container.querySelector("#splitTaskModal");
+    return [taskModal, splitTaskModal].some((modal) => !!modal && !modal.classList.contains("hidden"));
+  };
   function autoInit() {
     const container = document.getElementById("app");
     if (!container) {
@@ -5595,10 +6019,22 @@ var TaskManager = (() => {
         if (indicatorSlot) {
           indicatorSlot.innerHTML = renderSyncIndicator();
         }
-        const taskModal = container.querySelector("#taskModal");
-        const isTaskModalOpen = !!taskModal && !taskModal.classList.contains("hidden");
+        const isTaskModalOpen = isInteractiveTaskModalOpen(container);
         if (shouldRefreshAppForSyncStatus(status, isTaskModalOpen)) {
           reRender2();
+        }
+      });
+      chrome.runtime.onMessage.addListener((message) => {
+        if (message?.action === "googleAccountAuthExpired") {
+          if (!isInteractiveTaskModalOpen(container))
+            reRender2();
+          return;
+        }
+        if (message?.action === "googleAccountSyncUpdated") {
+          void loadState().then(() => {
+            if (!isInteractiveTaskModalOpen(container))
+              reRender2();
+          });
         }
       });
     }).catch((err) => {

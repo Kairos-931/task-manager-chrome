@@ -69,7 +69,18 @@ var Background = (() => {
     }
     return [...map.values()];
   };
+  var isValidDateOnly = (value) => {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value))
+      return false;
+    const date = /* @__PURE__ */ new Date(`${value}T00:00:00`);
+    if (!Number.isFinite(date.getTime()))
+      return false;
+    const normalized = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    return normalized === value;
+  };
   var CLOUD_SYNC_SETTINGS_KEY = "tm_sync_settings";
+  var GOOGLE_ACCOUNT_KEY = "tm_google_account";
+  var TASKMASTER_API_URL = "https://taskmaster-api.yx9391.workers.dev";
   var getCloudSettings = async () => {
     return new Promise((resolve) => {
       chrome.storage.local.get([CLOUD_SYNC_SETTINGS_KEY], (r) => {
@@ -111,6 +122,7 @@ var Background = (() => {
         category: resolveTaskCategory(task.category || ""),
         hardDeadline: typeof task.hardDeadline === "string" && task.hardDeadline ? task.hardDeadline : void 0,
         focusDate: typeof task.focusDate === "string" && task.focusDate ? task.focusDate : void 0,
+        repeatEndDate: isValidDateOnly(task.repeatEndDate) ? task.repeatEndDate : void 0,
         parentId: typeof task.parentId === "string" && task.parentId ? task.parentId : void 0,
         isParent: task.isParent === true || void 0,
         duration: task.isParent === true ? 0 : task.duration,
@@ -153,6 +165,47 @@ var Background = (() => {
       });
     });
   };
+  var getGoogleAccountValue = async () => {
+    const account = await getLocalValue(GOOGLE_ACCOUNT_KEY, null);
+    if (!account || typeof account.sub !== "string" || !account.sub)
+      return null;
+    return account;
+  };
+  var getGoogleAccount = getGoogleAccountValue;
+  var getGoogleAccessToken = (interactive) => new Promise((resolve, reject) => {
+    const manifest = chrome.runtime.getManifest();
+    if (!manifest.oauth2?.client_id || manifest.oauth2.client_id.startsWith("YOUR_")) {
+      reject(new Error("Google \u767B\u5F55\u5C1A\u672A\u914D\u7F6E\uFF0C\u8BF7\u7BA1\u7406\u5458\u5148\u8BBE\u7F6E\u6269\u5C55 OAuth \u5BA2\u6237\u7AEF"));
+      return;
+    }
+    const identityApi = chrome.identity;
+    if (!identityApi?.getAuthToken) {
+      reject(new Error("\u6B64\u6269\u5C55\u672A\u914D\u7F6E Google \u767B\u5F55"));
+      return;
+    }
+    identityApi.getAuthToken({ interactive }, (result) => {
+      const token = typeof result === "string" ? result : result && typeof result === "object" && typeof result.token === "string" ? result.token : "";
+      if (chrome.runtime.lastError)
+        reject(new Error(chrome.runtime.lastError.message || "Google \u767B\u5F55\u5931\u8D25"));
+      else if (!token)
+        reject(new Error("Google \u767B\u5F55\u672A\u8FD4\u56DE\u6388\u6743\u51ED\u8BC1"));
+      else
+        resolve(token);
+    });
+  });
+  var removeGoogleAccessToken = async (token) => new Promise((resolve) => {
+    const identityApi = chrome.identity;
+    if (!identityApi?.removeCachedAuthToken)
+      return resolve();
+    identityApi.removeCachedAuthToken({ token }, () => resolve());
+  });
+  var flagGoogleAuthorizationExpired = async (account, token = "") => {
+    if (token)
+      await removeGoogleAccessToken(token);
+    await setLocalValues({ [GOOGLE_ACCOUNT_KEY]: { ...account, connected: false } });
+    chrome.runtime.sendMessage({ action: "googleAccountAuthExpired" }).catch(() => {
+    });
+  };
   var cachedDeviceId = null;
   var getSyncDeviceIdAsync = async () => {
     if (cachedDeviceId)
@@ -168,8 +221,10 @@ var Background = (() => {
     return id;
   };
   var getSyncDeviceId = getSyncDeviceIdAsync;
-  var getSyncShadow = async () => {
-    const shadow = await getLocalValue(INCREMENTAL_SHADOW_KEY, null);
+  var getScopedSyncKey = (key, accountSub) => accountSub ? `${key}_${encodeURIComponent(accountSub)}` : key;
+  var getSyncShadow = async (accountSub) => {
+    const key = getScopedSyncKey(INCREMENTAL_SHADOW_KEY, accountSub);
+    const shadow = await getLocalValue(key, null);
     return shadow && shadow.records ? shadow : { records: {} };
   };
   var getSettingsPayload = (data) => ({
@@ -285,17 +340,40 @@ var Background = (() => {
     });
     return hasDefaultCategories && !data.defaultCategory && !data.hideCompleted && !data.hideOverdue && !data.showNoTimeLimitOnly && !data.darkMode && !data.weeklyGoalMinutes && !data.weeklyGoalAnchor;
   };
-  var syncIncrementallyNow = async (inputData) => {
+  var sameSyncAccount = (left, right) => left === null || right === null ? left === right : left.sub === right.sub && left.connected === right.connected;
+  var syncIncrementallyNow = async (inputData, requestedAccount) => {
     try {
       const data = normalizeStorageData(inputData);
+      const account = await getGoogleAccountValue();
+      if (!sameSyncAccount(account, requestedAccount)) {
+        return { success: false, error: "Google \u8D26\u53F7\u5DF2\u5207\u6362\uFF0C\u672C\u6B21\u540C\u6B65\u5DF2\u53D6\u6D88\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5" };
+      }
+      if (account && !account.connected)
+        return { success: false, error: "Google \u767B\u5F55\u5DF2\u9000\u51FA" };
       const settings = await getCloudSettings();
-      if (!settings.apiUrl || !settings.apiToken)
+      const accountSub = account?.connected ? account.sub : null;
+      if (!accountSub && (!settings.apiUrl || !settings.apiToken))
         return { success: false, error: "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" };
+      let accessToken = null;
+      if (accountSub) {
+        try {
+          accessToken = await getGoogleAccessToken(false);
+        } catch (error) {
+          if (account)
+            await flagGoogleAuthorizationExpired(account);
+          throw error;
+        }
+      }
+      const syncUrl = accountSub ? `${TASKMASTER_API_URL}/api/account/sync/incremental` : `${settings.apiUrl}/api/sync/incremental`;
+      const authorization = accountSub ? accessToken || "" : settings.apiToken || "";
+      const cursorKey = getScopedSyncKey(INCREMENTAL_CURSOR_KEY, accountSub);
+      const clockKey = getScopedSyncKey(INCREMENTAL_CLOCK_KEY, accountSub);
+      const shadowKey = getScopedSyncKey(INCREMENTAL_SHADOW_KEY, accountSub);
       const [deviceId, shadow, initialCursor, storedClock] = await Promise.all([
         getSyncDeviceId(),
-        getSyncShadow(),
-        getLocalValue(INCREMENTAL_CURSOR_KEY, 0),
-        getLocalValue(INCREMENTAL_CLOCK_KEY, 0)
+        getSyncShadow(accountSub),
+        getLocalValue(cursorKey, 0),
+        getLocalValue(clockKey, 0)
       ]);
       lastSyncTimestamp = Math.max(lastSyncTimestamp, storedClock);
       let cursor = initialCursor;
@@ -307,16 +385,19 @@ var Background = (() => {
       const receivedChanges = [];
       while (pending.length > 0 || hasMore) {
         const outgoing = pending.splice(0, OUTGOING_SYNC_BATCH);
-        const resp = await fetch(`${settings.apiUrl}/api/sync/incremental`, {
+        const resp = await fetch(syncUrl, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${settings.apiToken}`
+            "Authorization": `Bearer ${authorization}`
           },
           body: JSON.stringify({ deviceId, cursor, changes: outgoing })
         });
         if (!resp.ok) {
           const error = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+          if (accountSub && resp.status === 401 && account) {
+            await flagGoogleAuthorizationExpired(account, accessToken || "");
+          }
           return { success: false, error: error.error || `HTTP ${resp.status}` };
         }
         const result = await resp.json();
@@ -330,15 +411,19 @@ var Background = (() => {
         cursor = Number.isInteger(result.cursor) ? result.cursor : cursor;
         hasMore = result.hasMore === true;
       }
+      const currentAccount = await getGoogleAccountValue();
+      if (!sameSyncAccount(currentAccount, account)) {
+        return { success: false, error: "Google \u8D26\u53F7\u5DF2\u5207\u6362\uFF0C\u672C\u6B21\u540C\u6B65\u5DF2\u53D6\u6D88\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5" };
+      }
       const latestLocal = await loadFromLocal();
       const finalData = latestLocal ? applyRemoteChanges(normalizeStorageData(latestLocal), receivedChanges) : mergedData;
       const finalRecords = buildCurrentRecords(mergedData, { records: {} });
       await Promise.all([
         saveToLocal(finalData),
         setLocalValues({
-          [INCREMENTAL_CURSOR_KEY]: cursor,
-          [INCREMENTAL_SHADOW_KEY]: { records: finalRecords },
-          [INCREMENTAL_CLOCK_KEY]: lastSyncTimestamp
+          [cursorKey]: cursor,
+          [shadowKey]: { records: finalRecords },
+          [clockKey]: lastSyncTimestamp
         })
       ]);
       return { success: true, data: finalData, hasForeignChanges: sawForeignChanges };
@@ -346,14 +431,19 @@ var Background = (() => {
       return { success: false, error: String(e) };
     }
   };
-  var syncIncrementally = (data) => enqueueSync(() => syncIncrementallyNow(cloneStorageData(data)));
+  var syncIncrementally = (data) => {
+    const snapshot = cloneStorageData(data);
+    return getGoogleAccountValue().then(
+      (requestedAccount) => enqueueSync(() => syncIncrementallyNow(snapshot, requestedAccount))
+    );
+  };
   var isRecoverableNetworkError = (error) => {
     if (!error)
       return false;
     return /(?:TypeError:\s*)?Failed to fetch|NetworkError when attempting to fetch resource|Load failed/i.test(error);
   };
   var warnForSyncFailure = (error) => {
-    if (!error || error === "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" || isRecoverableNetworkError(error))
+    if (!error || error === "\u672A\u914D\u7F6E\u540C\u6B65\u8BBE\u7F6E" || error === "Google \u767B\u5F55\u5DF2\u9000\u51FA" || isRecoverableNetworkError(error))
       return;
     console.warn("[TaskMaster] incremental sync failed:", error);
   };
@@ -371,9 +461,9 @@ var Background = (() => {
   };
   var fixRecurringTasks = (tasks) => tasks.map((t) => {
     if (t.repeatType && t.repeatType !== "none") {
-      t.completed = false;
       if (!Array.isArray(t.completedDates))
         t.completedDates = [];
+      t.repeatEndDate = isValidDateOnly(t.repeatEndDate) ? t.repeatEndDate : void 0;
       if (t.repeatType === "weekly" && (!Array.isArray(t.repeatDays) || t.repeatDays.length === 0)) {
         if (t.repeatStartDate || t.dueDate) {
           const anchor = new Date(t.repeatStartDate || t.dueDate);
@@ -394,6 +484,7 @@ var Background = (() => {
         }
         t.completedDates = completed;
       }
+      t.completed = Boolean(t.repeatEndDate && isRecurringSeriesComplete(t));
     }
     return t;
   });
@@ -417,6 +508,25 @@ var Background = (() => {
       default:
         return false;
     }
+  };
+  var isRecurringSeriesComplete = (task) => {
+    if (!isValidDateOnly(task.repeatEndDate))
+      return false;
+    const anchorValue = task.repeatStartDate || task.dueDate;
+    if (!isValidDateOnly(anchorValue) || task.repeatEndDate < anchorValue)
+      return false;
+    const completed = new Set(Array.isArray(task.completedDates) ? task.completedDates : []);
+    const cursor = /* @__PURE__ */ new Date(`${anchorValue}T00:00:00`);
+    const end = /* @__PURE__ */ new Date(`${task.repeatEndDate}T00:00:00`);
+    while (cursor <= end) {
+      if (isTaskMatchRepeat(task, cursor)) {
+        const date = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`;
+        if (!completed.has(date))
+          return false;
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return true;
   };
   var saveData = async (data, onRemoteData, onSyncResult) => {
     const localData = normalizeStorageData(data);
@@ -447,8 +557,11 @@ var Background = (() => {
     try {
       const data = await loadData();
       const now = Date.now();
-      const key = BACKUP_PREFIX + formatDateKey(now);
-      const payload = JSON.stringify({ timestamp: now, data });
+      const account = await getGoogleAccountValue();
+      const ownerSub = account?.sub || null;
+      const ownerKey = ownerSub ? `account_${encodeURIComponent(ownerSub)}_` : "guest_";
+      const key = BACKUP_PREFIX + ownerKey + formatDateKey(now);
+      const payload = JSON.stringify({ timestamp: now, ownerSub, data });
       await new Promise((resolve, reject) => {
         chrome.storage.local.set({ [key]: payload }, () => {
           if (chrome.runtime.lastError)
@@ -466,6 +579,8 @@ var Background = (() => {
     }
   };
   var listBackups = async () => {
+    const account = await getGoogleAccountValue();
+    const ownerSub = account?.sub || null;
     return new Promise((resolve) => {
       chrome.storage.local.get(null, (all) => {
         if (chrome.runtime.lastError) {
@@ -478,6 +593,8 @@ var Background = (() => {
             continue;
           try {
             const parsed = typeof all[key] === "string" ? JSON.parse(all[key]) : all[key];
+            if ((parsed.ownerSub || null) !== ownerSub)
+              continue;
             const d = parsed.data;
             const ts = parsed.timestamp || 0;
             const dd = new Date(ts);
@@ -513,8 +630,11 @@ var Background = (() => {
   // shared/background.ts
   var ALARM_NAME = "tm_daily_backup";
   var ALARM_PERIOD_MINUTES = 24 * 60;
+  var ACCOUNT_SYNC_ALARM_NAME = "tm_google_account_sync";
+  var ACCOUNT_SYNC_PERIOD_MINUTES = 2;
   chrome.runtime.onInstalled.addListener(() => {
     chrome.alarms.create(ALARM_NAME, { periodInMinutes: ALARM_PERIOD_MINUTES });
+    chrome.alarms.create(ACCOUNT_SYNC_ALARM_NAME, { periodInMinutes: ACCOUNT_SYNC_PERIOD_MINUTES });
     console.log("[TaskMaster BG] daily backup alarm registered");
     triggerBackup();
   });
@@ -524,10 +644,16 @@ var Background = (() => {
         chrome.alarms.create(ALARM_NAME, { periodInMinutes: ALARM_PERIOD_MINUTES });
       }
     });
+    chrome.alarms.get(ACCOUNT_SYNC_ALARM_NAME, (alarm) => {
+      if (!alarm)
+        chrome.alarms.create(ACCOUNT_SYNC_ALARM_NAME, { periodInMinutes: ACCOUNT_SYNC_PERIOD_MINUTES });
+    });
   });
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === ALARM_NAME) {
       triggerBackup();
+    } else if (alarm.name === ACCOUNT_SYNC_ALARM_NAME) {
+      triggerGoogleAccountSync();
     }
   });
   async function triggerBackup() {
@@ -540,6 +666,21 @@ var Background = (() => {
       }
     } catch (e) {
       console.error("[TaskMaster BG] backup error:", e);
+    }
+  }
+  async function triggerGoogleAccountSync() {
+    try {
+      const account = await getGoogleAccount();
+      if (!account?.connected)
+        return;
+      const data = await loadData();
+      const result = await syncIncrementally(data);
+      if (result.success && result.hasForeignChanges) {
+        chrome.runtime.sendMessage({ action: "googleAccountSyncUpdated" }).catch(() => {
+        });
+      }
+    } catch (error) {
+      console.warn("[TaskMaster BG] account sync deferred:", error instanceof Error ? error.message : "sync failed");
     }
   }
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -561,7 +702,13 @@ var Background = (() => {
       return true;
     }
     if (message.action === "syncRemoteTasks") {
-      handleRemoteSync().then(sendResponse).catch((e) => sendResponse({ error: String(e) }));
+      getGoogleAccount().then((account) => {
+        if (account) {
+          sendResponse({ synced: 0 });
+          return;
+        }
+        handleRemoteSync().then(sendResponse).catch((e) => sendResponse({ error: String(e) }));
+      }).catch((e) => sendResponse({ error: String(e) }));
       return true;
     }
     sendResponse({});

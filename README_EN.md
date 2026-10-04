@@ -13,7 +13,7 @@ A full-featured Chrome browser task management extension with four views, catego
 - **Filtering** — Filter by priority/category, hide completed or overdue tasks
 - **Drag & Drop** — Drag tasks to different dates
 - **Dark Mode** — One-click light/dark theme toggle
-- **Data Sync** — Cross-device sync via chrome.storage.sync, with chrome.storage.local fallback to prevent data loss
+- **Data Sync** — Offline-first cross-device incremental sync via Cloudflare Worker and D1, with local storage as the primary copy
 - **Sync Management Panel** — Manual upload to cloud, download from cloud, export file, import file
 - **Conflict Merge** — Multi-device offline edits auto-merge by timestamp, no data lost
 - **Import & Export** — JSON format backup and restore
@@ -86,33 +86,22 @@ After building, load the `chrome-extension-sync` folder into Chrome.
 
 ## Data Sync
 
-The extension uses `chrome.storage.sync` for cross-device data sync, with `chrome.storage.local` as a local backup:
+The current 3.16.0 release saves tasks locally first and syncs through Cloudflare Worker and D1 when the API URL and token are configured. Task data does not use `chrome.storage.sync`; signing in to Chrome alone does not configure TaskMaster sync.
 
-- **Auto Sync**: Tasks are automatically synced to other devices on the same Chrome account after any change
-- **Local Backup**: Every save writes to both local and sync storage, preventing data loss from uninstalling on other devices
-- **Auto Recovery**: Automatically restores from local backup when sync data is cleared
+**Google account sync is still in development and is not deployed to the production Worker.** Guests will retain full local use, while signed-in users will sync through the TaskMaster Worker with D1 data isolated by Google account. The current release still uses the API URL and token steps below. OAuth clients, D1 migrations, and ownership checks for legacy data remain release prerequisites. See the [current requirement](docs/requirements/REQ-20260930-google-account-sync.md) and [configuration and data-boundary notes](docs/google-account-sync.md).
 
-**Notes**:
-- All users share the same Extension ID (ensured by the `"key"` field in manifest), no manual check needed
-- Requires signing in to the same Chrome account with sync enabled
-- Users in China need a VPN with Google sync domains routed through the proxy (see FAQ below)
-- `chrome.storage.sync` has a total limit of 100KB; task data uses chunked storage to bypass the 8KB per-item limit
-- It's recommended to periodically use the "Export Data" feature to back up important data
+Exporting task data periodically remains a useful independent backup.
 
 ## FAQ
 
-### Cross-device sync not working (console shows "local and sync both empty")
+### Cross-device sync is not working in the current release
 
 **Troubleshooting steps:**
 
-1. **Verify Chrome sync is enabled** — Go to `chrome://settings/syncSetup` and confirm you're signed in to the same Google account with sync turned on
-2. **Check sync engine status** — Open `chrome://sync-internals/` and check the Summary section:
-   - `Server Connection` should show no errors (an `auth error` means sync authentication failed)
-   - `Updates Downloaded` / `Successful Commits` should be greater than 0
-3. **For users in China: ensure VPN covers Google sync domains** — Chrome sync uses `clients4.google.com`, which may not be included in default VPN rules. Solutions:
-   - **Recommended**: Enable Clash TUN mode to route all traffic through the proxy
-   - Or add a rule in Clash Merge config: `DOMAIN-SUFFIX,google.com,your-proxy-group-name`
-4. **Wait after changes** — Sync typically takes 1-3 minutes to propagate after data changes
+1. Check that the API URL and token in TaskMaster's sync settings match the deployed Worker.
+2. Check that the Worker is reachable from this browser and has its D1 binding configured.
+3. A network failure such as `Failed to fetch` means the request did not receive a response; an HTTP 401 indicates an authentication problem.
+4. Confirm the original device reports a successful cloud sync before expecting a second device to pull its tasks.
 
 ## Development
 

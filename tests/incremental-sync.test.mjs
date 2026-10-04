@@ -279,7 +279,7 @@ const storageSource = await readFile(new URL('../shared/storage.ts', import.meta
 const storageJavaScript = ts.transpileModule(storageSource, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }
 }).outputText
-const { getNextLocalSettingsUpdatedAt, normalizeStorageData } = await import(
+const { getNextLocalSettingsUpdatedAt, normalizeStorageData, saveData } = await import(
   `data:text/javascript;base64,${Buffer.from(storageJavaScript).toString('base64')}`
 )
 assert.equal(getNextLocalSettingsUpdatedAt(500, 400), 501, 'local settings version must advance beyond the current version')
@@ -322,5 +322,76 @@ assert.match(eventSource, /#hideCompleted[\s\S]*setLocalSettings\(\{ hideComplet
 assert.match(storageModuleSource, /isRecoverableNetworkError[\s\S]*Failed to fetch/)
 assert.match(storageModuleSource, /warnForSyncFailure[\s\S]*isRecoverableNetworkError\(error\)/)
 assert.doesNotMatch(entrySource, /loadState\(\)\.then\([\s\S]*?await persistState\(\)/)
+
+// 网络不可用只代表云端同步稍后重试，不能升级为扩展未捕获异常；本地保存失败仍必须向调用方暴露。
+const previousChrome = globalThis.chrome
+const previousFetch = globalThis.fetch
+const previousWarn = console.warn
+const localValues = new Map([
+  ['tm_sync_settings', { apiUrl: 'https://sync.taskmaster.test', apiToken: 'test-token' }],
+  ['tm_incremental_sync_device', 'network-test-device']
+])
+let localSetError = null
+let fetchCalls = 0
+const syncWarnings = []
+let unhandledSyncError = null
+const onUnhandledSyncError = reason => { unhandledSyncError = reason }
+globalThis.chrome = {
+  runtime: { lastError: null },
+  storage: {
+    local: {
+      get(keys, callback) {
+        const result = {}
+        for (const key of keys) {
+          if (localValues.has(key)) result[key] = localValues.get(key)
+        }
+        queueMicrotask(() => callback(result))
+      },
+      set(values, callback) {
+        queueMicrotask(() => {
+          if (localSetError) {
+            globalThis.chrome.runtime.lastError = localSetError
+            callback()
+            globalThis.chrome.runtime.lastError = null
+            return
+          }
+          Object.entries(values).forEach(([key, value]) => localValues.set(key, value))
+          callback()
+        })
+      }
+    }
+  }
+}
+globalThis.fetch = async () => {
+  fetchCalls += 1
+  throw new TypeError('Failed to fetch')
+}
+console.warn = (...args) => syncWarnings.push(args.map(String).join(' '))
+process.on('unhandledRejection', onUnhandledSyncError)
+try {
+  const networkTestData = {
+    tasks: [],
+    categories: [],
+    defaultCategory: '',
+    hideCompleted: false,
+    hideOverdue: false,
+    showNoTimeLimitOnly: false,
+    darkMode: false
+  }
+  await saveData(networkTestData)
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(fetchCalls, 1, 'configured cloud sync should attempt the request')
+  assert.equal(syncWarnings.length, 0, 'Failed to fetch must not create a visible extension warning')
+  assert.equal(unhandledSyncError, null, 'network sync rejection must be handled')
+  assert.ok(localValues.has('tm_local_backup'), 'local data must be saved before cloud sync')
+
+  localSetError = new Error('local save failed')
+  await assert.rejects(() => saveData(networkTestData), error => error?.message === 'local save failed', 'local save errors must remain observable')
+} finally {
+  process.off('unhandledRejection', onUnhandledSyncError)
+  console.warn = previousWarn
+  globalThis.fetch = previousFetch
+  globalThis.chrome = previousChrome
+}
 
 console.log('Incremental sync tests passed')

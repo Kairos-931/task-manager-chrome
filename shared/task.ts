@@ -133,6 +133,7 @@ interface ApplyStorageOptions {
 
 const applyStorageData = (data: StorageData, _options?: ApplyStorageOptions): void => {
   const activeEditingTask = state.editingTask
+  const activeSplittingTaskId = state.splittingTaskId
   // Keep the original category id for existing task references while removing
   // duplicate names left by older versions of the sync implementation.
   const catMap = new Map<string, Category>()
@@ -154,7 +155,7 @@ const applyStorageData = (data: StorageData, _options?: ApplyStorageOptions): vo
     editingTask: activeEditingTask,
     draggedTaskId: null,
     replanningTaskId: null,
-    splittingTaskId: null
+    splittingTaskId: activeSplittingTaskId
   }
 }
 
@@ -191,7 +192,7 @@ export const persistState = async (): Promise<boolean> => {
       applyStorageData(remoteData, { ignoreDeviceId: deviceId })
     }, (result) => {
       if (result.success) markCloudSynced()
-      else if (result.error !== '未配置同步设置') markSyncError()
+      else if (result.error !== '未配置同步设置' && result.error !== 'Google 登录已退出') markSyncError()
     })
     markSaveComplete()
     return true
@@ -667,3 +668,11 @@ export const getStats = (ignoreFilters = false) => {
 }
 
 export const getParentTaskProgress = (task: Task) => getTaskProgress(task, state.tasks)
+
+/** 汇总父任务直属子任务的预计时长，仅供展示，不回写父任务 duration。 */
+export const getParentChildDuration = (task: Task): number => state.tasks
+  .filter(child => child.parentId === task.id)
+  .reduce((total, child) => {
+    const duration = child.duration
+    return Number.isFinite(duration) && duration > 0 ? total + duration : total
+  }, 0)

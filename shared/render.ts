@@ -4,7 +4,7 @@ import {
   formatDate, parseDate, formatHours, getDateLabel, getRemainingTime, getWeekDates, isOverdue, isTaskDueOnDate,
   isTaskCompletedOnDate, summarizeTaskDurationsForDates,
   getPriorityColor, getFilteredTasks, getStats, getWeeklyGoalStats,
-  getParentTaskProgress, escapeHtml
+  getParentTaskProgress, getParentChildDuration, escapeHtml
 } from './task'
 import { getSyncStatus } from './sync'
 import type { SyncStatus } from './sync'
@@ -38,6 +38,11 @@ export const renderSyncIndicator = (): string => {
 }
 
 // ==================== 渲染函数 ====================
+const formatParentChildDuration = (minutes: number): string => {
+  const hours = minutes / 60
+  return `${Number.isInteger(hours) ? hours : hours.toFixed(1)}h`
+}
+
 const getPageTasks = (options: { ignoreCompleted?: boolean } = {}): Task[] => (
   window.location.pathname.includes('popup')
     ? getFilteredTasks({ ignoreFilters: true })
@@ -271,7 +276,7 @@ export const renderHeader = (): string => {
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
         </button>
         ` : ''}
-        <button id="addTaskBtn" class="px-4 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm font-medium">+ 添加</button>
+        <button id="addTaskBtn" class="px-4 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">+ 添加</button>
         </div>
       </div>
     </header>
@@ -336,6 +341,7 @@ export const renderTaskItem = (task: Task, options: TaskItemRenderOptions = {}):
 
   if (task.isParent && isPopup) {
     const progress = getParentTaskProgress(task)
+    const childDuration = getParentChildDuration(task)
     return `
       <div class="task-row popup-task-row flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${task.completed ? 'opacity-60' : ''}" data-task-id="${task.id}">
         <button class="task-toggle flex-shrink-0 w-5 h-5 rounded-full border-2 ${task.completed ? 'bg-green-500 border-green-500' : 'border-gray-300 dark:border-gray-500'} flex items-center justify-center hover:border-blue-400 transition" data-task-id="${task.id}" title="${task.completed ? '标记为未完成' : '标记为已完成（子任务一并完成）'}">
@@ -344,7 +350,7 @@ export const renderTaskItem = (task: Task, options: TaskItemRenderOptions = {}):
         <div class="w-1.5 h-8 rounded ${getPriorityColor(task.priority)} flex-shrink-0" aria-hidden="true"></div>
         <div class="task-main flex-1 min-w-0">
           <div class="font-medium truncate ${task.completed ? 'line-through text-gray-400' : ''}">${escapeHtml(task.title)}</div>
-          <div class="mt-0.5 text-xs text-gray-400">父任务 · ${progress.completed}/${progress.total} 个子任务完成</div>
+          <div class="mt-0.5 text-xs text-gray-400">父任务 · ${progress.completed}/${progress.total} 个子任务完成 · 子任务合计 ${formatParentChildDuration(childDuration)}</div>
         </div>
         <details class="task-more-menu flex-shrink-0">
           <summary class="task-more-trigger" title="更多操作" aria-label="${escapeHtml(task.title)}的更多操作">
@@ -362,6 +368,7 @@ export const renderTaskItem = (task: Task, options: TaskItemRenderOptions = {}):
 
   if (task.isParent) {
     const progress = getParentTaskProgress(task)
+    const childDuration = getParentChildDuration(task)
     const children = getPageTasks().filter(child => child.parentId === task.id)
     return `
       <div class="p-4 bg-white dark:bg-gray-800${task.completed ? ' opacity-60' : ''}" data-task-id="${task.id}">
@@ -379,7 +386,7 @@ export const renderTaskItem = (task: Task, options: TaskItemRenderOptions = {}):
             </div>
             <div class="flex items-center gap-3 mt-2">
               <div class="h-2 flex-1 max-w-xs rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden"><div class="h-full bg-blue-500 rounded-full" style="width:${progress.percent}%"></div></div>
-              <span class="text-xs font-medium text-gray-500">${progress.completed}/${progress.total} · ${progress.percent}%</span>
+              <span class="text-xs font-medium text-gray-500">${progress.completed}/${progress.total} · ${progress.percent}% · 子任务合计 ${formatParentChildDuration(childDuration)}</span>
             </div>
           </div>
           <button class="task-split p-2 hover:bg-violet-50 dark:hover:bg-violet-900/20 rounded transition text-violet-500" data-id="${task.id}" title="继续添加子任务">
@@ -586,8 +593,8 @@ const renderPoolTaskItem = (task: Task): string => {
         ${task.description ? `<p class="text-sm text-gray-500 mt-1 truncate dark:text-gray-400">${escapeHtml(task.description)}</p>` : ''}
       </div>
       <div class="task-actions pool-task-actions flex items-center flex-wrap justify-end flex-shrink-0">
-        <button class="pool-focus px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-xs font-medium transition" data-id="${task.id}">安排到今天</button>
-        <button class="overdue-replan px-3 py-1.5 rounded-lg border dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-xs transition" data-id="${task.id}">选择日期</button>
+        <button class="pool-focus px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition" data-id="${task.id}">安排到今天</button>
+        <button class="overdue-replan px-3 py-1.5 rounded-lg border dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-xs transition" data-id="${task.id}">安排时间</button>
         <button class="task-split px-3 py-1.5 rounded-lg border dark:border-gray-600 hover:bg-violet-50 dark:hover:bg-violet-900/20 hover:text-violet-600 text-xs transition" data-id="${task.id}">拆分</button>
         <button class="task-edit px-3 py-1.5 rounded-lg border dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-xs transition" data-id="${task.id}">编辑</button>
         <button class="task-delete px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 text-xs transition" data-id="${task.id}">删除</button>
@@ -634,7 +641,7 @@ export const renderListView = (): string => {
   const orderedDates = insertTodayDate(dates, today)
   const parentSection = parents.length > 0 ? `
     <div class="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 overflow-hidden mb-4">
-      <div class="px-4 py-2 bg-violet-50 dark:bg-violet-900/20 font-medium text-sm text-violet-700 dark:text-violet-300">大任务与拆分进度</div>
+      <div class="px-4 py-2 bg-violet-50 dark:bg-violet-900/20 font-medium text-sm text-violet-700 dark:text-violet-300">可拆分任务与拆分进度</div>
       ${parents.map(parent => renderTaskItem(parent)).join('')}
     </div>
   ` : ''
@@ -989,7 +996,7 @@ export const renderModal = (): string => {
           </button>
         </div>
         <form id="taskForm" class="p-4 space-y-4">
-          ${!isEditing ? `<div class="task-mode-switch" role="group" aria-label="任务类型"><button type="button" class="task-mode-btn active" data-task-mode="normal">普通任务</button><button type="button" class="task-mode-btn" data-task-mode="parent">大任务</button></div>` : ''}
+          ${!isEditing ? `<div class="task-mode-switch" role="group" aria-label="任务类型"><button type="button" class="task-mode-btn active" data-task-mode="normal">普通任务</button><button type="button" class="task-mode-btn" data-task-mode="parent">可拆分任务</button></div>` : ''}
           <div class="flex items-start gap-4">
             <div class="flex-1">
               <label class="block text-sm font-medium mb-1">任务名称 *</label>
@@ -1093,7 +1100,7 @@ export const renderModal = (): string => {
             ${isEditing ? `<button type="button" id="deleteTaskBtn" class="px-4 py-2 border border-red-500 text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition">删除</button>` : ''}
             <div class="flex-1"></div>
             <button type="button" id="cancelBtn" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition">取消</button>
-            <button type="submit" id="taskSubmitBtn" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">${isEditing ? '保存' : '添加'}</button>
+            <button type="submit" id="taskSubmitBtn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">${isEditing ? '保存' : '添加'}</button>
           </div>
         </form>
       </div>
@@ -1143,9 +1150,8 @@ export const renderSplitChildRow = (
 export const renderReplanModal = (): string => {
   const { replanningTaskId, tasks } = getState()
   const task = tasks.find(item => item.id === replanningTaskId)
-  const today = formatDate(new Date())
-  const isPopup = window.location.pathname.includes('popup')
-  if (isPopup) {
+
+  {
     return `
       <div id="replanModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 ${task ? '' : 'hidden'}" tabindex="-1">
         <div class="popup-replan-panel bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[92%] max-w-sm p-4">
@@ -1167,32 +1173,13 @@ export const renderReplanModal = (): string => {
             </div>
             <div class="flex justify-end gap-2">
               <button type="button" id="cancelReplanBtn" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg">取消</button>
-              <button type="submit" id="confirmReplanBtn" disabled class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed">确认安排</button>
+              <button type="submit" id="confirmReplanBtn" disabled class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed">确认安排</button>
             </div>
           </form>
         </div>
       </div>
     `
   }
-  return `
-    <div id="replanModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 ${task ? '' : 'hidden'}">
-      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-[90%] max-w-md p-5">
-        <h2 class="text-lg font-semibold">重新安排计划日期</h2>
-        <p class="mt-1 text-sm text-gray-500 truncate">${task ? escapeHtml(task.title) : ''}</p>
-        <form id="replanForm" class="mt-5 space-y-4">
-          <div>
-            <label class="block text-sm font-medium mb-1">新的计划日期</label>
-            <input type="date" name="replanDate" value="${today}" required class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700">
-            ${task?.hardDeadline ? `<p class="mt-1 text-xs text-red-500">硬截止仍为 ${task.hardDeadline}，不会被修改。</p>` : ''}
-          </div>
-          <div class="flex justify-end gap-2">
-            <button type="button" id="cancelReplanBtn" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg">取消</button>
-            <button type="submit" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg">保存排期</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  `
 }
 
 export const renderSplitModal = (): string => {
@@ -1225,7 +1212,7 @@ export const renderSplitModal = (): string => {
           <p id="splitTaskError" class="hidden text-sm text-red-500"></p>
           <div class="split-task-footer">
             <button type="button" id="cancelSplitTaskBtn" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg">取消</button>
-            <button type="submit" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg">完成拆分</button>
+            <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">完成拆分</button>
           </div>
         </form>
       </div>
@@ -1270,7 +1257,7 @@ export const renderCategoryModal = (): string => {
           <div class="flex gap-2 mt-4 pt-4 border-t dark:border-gray-700">
             <input type="text" id="newCategoryName" placeholder="新分类名称" class="flex-1 px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white text-sm">
             <input type="color" id="newCategoryColor" value="#3b82f6" class="w-10 h-10 rounded cursor-pointer">
-            <button id="createCategoryBtn" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-sm">添加</button>
+            <button id="createCategoryBtn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm">添加</button>
           </div>
         </div>
       </div>
@@ -2473,7 +2460,7 @@ export const renderApp = (container: HTMLElement): void => {
       ${renderHeader()}
       ${renderFilters()}
       ${renderTaskList()}
-      ${getState().currentView === 'list' ? '<button id="jumpToTodayBtn" class="jump-to-today hidden" aria-label="定位到今天" title="定位到今天">今</button>' : ''}
+      ${getState().currentView === 'list' ? '<div id="listNavigation" class="list-navigation"><button id="backToTopBtn" class="jump-to-top hidden" aria-label="回到顶部" title="回到顶部">↑</button><button id="jumpToTodayBtn" class="jump-to-today hidden" aria-label="定位到今天" title="定位到今天">今</button></div>' : ''}
       ${renderModal()}
       ${renderReplanModal()}
       ${renderSplitModal()}

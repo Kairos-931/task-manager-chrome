@@ -12,3 +12,13 @@
 2. **安全的历史清理**：`sync_changes` 和删除墓碑会保留，避免长期离线的设备复活已删除数据。清理前必须增加设备确认记录和不活跃设备保留策略；按时间直接删除历史会有数据复活风险。
 
 跟踪 Issue：[GitHub Issue #16](https://github.com/Kairos-931/task-manager-chrome/issues/16)。本文件保留产品上下文，确保不依赖 GitHub 时也能继续处理。
+
+## 手机添加保存反馈（2026-10-02）
+
+用户确认手机新增可同步到电脑，但缺少清晰保存成功/失败反馈。已记录 docs/requirements/REQ-20261002-mobile-save-feedback.md，暂未进入开发；实施前关联独立Issue。
+
+
+## 移除手机管理员旧版入口（2026-10-02）
+
+用户要求记录移除管理员旧版入口及旧手机连接设置页面，后台旧API/Telegram暂保留。需求：docs/requirements/REQ-20261002-remove-mobile-legacy-entry.md；仅记录，未批准实现。
+

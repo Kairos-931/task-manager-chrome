@@ -976,8 +976,17 @@ const MOBILE_HTML = `<!DOCTYPE html>
   .toast.show { transform: translateX(-50%) translateY(0); }
   .toast.success { background: #dcfce7; color: #166534; }
   .toast.error { background: #fee2e2; color: #991b1b; }
-  .no-date { display: none; }
-  .no-date.active { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .no-date {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc;
+  }
+  .no-date input { width: 16px; height: 16px; margin: 0; }
   .no-date label { margin: 0; font-size: 13px; color: #475569; }
   .date-group { transition: opacity 0.2s; }
   .date-group.hidden { opacity: 0.3; pointer-events: none; }
@@ -1087,7 +1096,7 @@ const MOBILE_HTML = `<!DOCTYPE html>
   </div>
   <div class="no-date" id="noDateWrap">
     <input type="checkbox" id="noDate">
-    <label for="noDate">无期限（进入任务池）</label>
+    <label for="noDate">任务池（无需设置完成时间）</label>
   </div>
   <div class="input-group date-group" id="dateGroup">
     <label>截止日期</label>
@@ -1230,6 +1239,9 @@ const MOBILE_HTML = `<!DOCTYPE html>
         showToast(body.completed ? '已添加为完成任务' : '任务已添加', 'success');
         document.getElementById('title').value = '';
         document.getElementById('description').value = '';
+        document.getElementById('noDate').checked = false;
+        initDate();
+        toggleNoDate();
         document.getElementById('completed').checked = false;
         updateCompletedToggle();
         document.getElementById('title').focus();

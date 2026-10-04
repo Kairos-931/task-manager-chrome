@@ -66,11 +66,13 @@ TaskMaster 是一个 Chrome 扩展任务管理项目，同时包含 Cloudflare W
 - 不通过注释或绕过报错来让代码运行；必须定位根因。
 - 修改完成后按风险运行相关的 test、lint 和 build；无法运行时说明原因与未验证范围。
 - 不自动安装依赖、部署或 `git push`，除非用户明确要求。
+- 每个独立需求或修复在项目规定的测试、检查和构建验证通过后，自动创建本地 Git commit；不需要为 commit 再次向用户确认。提交只包含该需求相关文件，不得混入无关改动。
 - 不修改或删除用户无关的已修改、未跟踪文件。
 
 ## Git 与版本
 
 - Commit message 使用英文 Conventional Commits：`type: concise change intent`。
+- 验证通过后按独立用户目标自动创建本地 commit；一个 commit 对应一个可独立理解和回退的需求或修复。工作区存在其他未提交改动时，必须精确选择相关文件，不得使用覆盖全部改动的宽泛提交。
 - `fix:` 对应 PATCH，`feat:` 对应 MINOR，`feat!:` 或 `BREAKING CHANGE:` 对应 MAJOR；`docs:`、`chore:`、`refactor:` 默认不发版。
 - 发版时同步源码版本字段与 `vX.Y.Z` Git tag；Chrome `manifest.json` 的 `version` 只允许纯数字点分格式。
 - `git push` 仅在用户明确要求时执行；部署使用项目自身命令，不以 push 代替部署。
@@ -93,12 +95,52 @@ TaskMaster 是一个 Chrome 扩展任务管理项目，同时包含 Cloudflare W
 
 - Project: `TaskMaster`
 - Requirements task: owns requirement clarification, prioritization, PRD/specification, user flows, acceptance criteria, and approved demos.
-- Developer task: `codex://threads/01a06a68-53a8-7740-aa49-d6a359cfa147`; owns technical design, production code, tests, versioning, Git, build, and deployment.
+- Developer task: `codex://threads/01a0f6ce-2b91-7343-bb37-1b3f5d3d467a`; owns technical design, production code, tests, versioning, Git, build, and deployment.
 - The requirements task does not edit production code unless the user explicitly asks for that exception.
 - Draft requirements do not enter development. After explicit confirmation, the requirements task saves the specification and sends its path to the developer task.
 - The developer task must not expand confirmed scope. Product-impacting ambiguity returns to the requirements task for a decision.
 
 ## Product workflow files
 
+### 开发状态反馈约定（2026-10-02）
+
+- 总规则：开发只要停止执行，就必须向产品反馈原因，包含正常完成、阶段完成、等待、受阻、暂停、取消和未完成退出。反馈必须说明已做/未做、验证与交付状态、下一步及负责人；正常干完明确写“已完成”，没有后续动作则明确写“无需后续动作”。主动停止前发送；意外中断后在恢复时补报。
+
+- 用户授权开发向产品反馈已交付需求的暂停、受阻、未完成退出、本地完成及等待配置/验收/部署等状态；无需每次重新请求发送权限。产品与开发的当前 ID 以本项目 `docs/PRODUCT_WORKFLOW.md` 为准，先核对映射，不能沿用历史案例中的旧 ID。
+- 开发主动结束上述工作轮次前，先在对应需求记录已做/未做、阻塞原因、下一步及负责人、验证与产物、执行槽是否释放，再向产品发送一次实质状态报告。只有开发聊天里的最终回复，不算已经通知产品。
+- 反馈记录包含事件 ID、收件产品 ID、发送时间及成功凭据；失败或结果未知则明确标记，并在本轮最终回复说明。结果未知先核对收件记录，再至多重试一次，避免重复发送。
+- 产品在下一次状态检查或交付前核对开发最新结束轮次与反馈记录，发现漏报当次读取并补记；不能等待用户再来提醒。意外中断/崩溃只能在恢复后补报或由产品下次检查补查，未配置的后台监控不能被当作已经运行。
+- 产品可在已确认目标、范围、验收和用量内处理可逆细节并记录、汇报；需要改变范围、数据或部署边界时仍请求用户决定。产品仅在有具体决策或后续动作时回复开发，避免纯确认消息循环。
+
 - `docs/PRODUCT_WORKFLOW.md` records the linked requirements/development tasks and shared operating contract.
 - `docs/requirements/` stores requirement handoff documents; `_TEMPLATE.md` is the structure baseline for new requirements.
+
+## 2026-09-30 开发位置与验收约定
+
+- 用户确认唯一开发目录为 C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER，基线 3.16.0；旧 TASK_MASTER 副本不再开发。
+- 产品对话仅维护规格；开发对话按已批准 gpt-6-luna / max 执行。本轮未授权桌面控制，使用确定性验证，真实授权交互与视觉验收明确标记未验证。
+
+
+
+## 2026-10-03 后续开发模型偏好
+
+- 最新用户指令覆盖下方早前偏好：用户要求“继续使用露娜max开发”，并说明已手工切到Luna。当前#70及后续开发使用 `gpt-6-luna` / `max`；交付或同项消息使用对应工具覆盖，不能再按旧Sol/low配置把用户手工设置切回。
+
+- 历史偏好（已被上方最新指令覆盖）：用户曾指定下一次开发使用 `gpt-6-sol` / `low`。保留此条仅为解释历史派发记录，当前不执行此配置。
+- 当前已交付的 UX-01 / Issue #69 保持其批准的 Luna Max 配置，用户说“下次”不表示中途切换。
+- 后续已确认队列统一使用 gpt-6-luna / max；每项仍核对范围、验收和风险，不自行更换配置。Sol / low 仅保留为历史执行记录。
+
+## 2026-10-02 用户授权的常规发布边界
+
+用户明确授权产品侧自行决定已确认需求内的低风险发布，不逐次申请部署批准。产品侧可安排同一项目既定地址、已有工具/账号、可回退且不破坏数据的常规Worker发布，须先完成相关验证、核对干净候选及回滚点，记录发布和结果。
+
+不自动扩大到业务数据删除/归属认领、破坏性迁移、扩展身份或正式地址变更、不可逆外部操作、收费套餐购买、git push或未授权GUI控制。涉及这些边界仍需明确授权。此具体用户授权优先于此前默认每次部署必须单独询问的约定。
+
+## 最新后续开发配置确认（2026-10-03）
+
+用户在产品对话明确要求：后续继续使用luna max来完成开发任务。后续开发统一使用 gpt-6-luna / max，每次派发明确应用该配置；#71已完成的Sol/low属于历史执行，不改写其记录，不视作后续默认值。
+
+
+## 2026-10-03 用户批准4.0产品阶段
+
+用户明确将Google账号同步及架构升级定义为4.0阶段，下一次本地交付版本为4.0.0，取代本轮按feat默认递增3.20.0的规则；这是明确产品阶段命名决定，不宣称有新增破坏性数据变更。版本统一源码字段、manifest及候选记录，保留稳定扩展key/权限/正式URL和已有数据，不通过新扩展ID重装实现升版。Git push仍须明确跨设备代码同步授权；真实业务数据导入不因升版自动执行。

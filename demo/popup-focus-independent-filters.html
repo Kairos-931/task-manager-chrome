@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>TaskMaster Popup 今日聚焦 Demo</title>
+  <link rel="stylesheet" href="popup-focus-independent-filters.css">
+</head>
+<body>
+  <main class="demo-shell">
+    <section class="explain">
+      <p class="eyebrow">交互 Demo · 不连接真实任务</p>
+      <h1>Popup 今日聚焦独立筛选</h1>
+      <p>Popup 不展示也不读取管理标签页筛选。今日任务完整显示；今日之前的任务继续放在原有折叠区，默认收起。</p>
+      <div class="management-card">
+        <strong>Popup 固定规则</strong>
+        <p>今日：已完成与未完成都显示</p>
+        <p>今日之前：保留原有折叠区</p>
+        <p>管理标签页筛选：互不影响</p>
+      </div>
+    </section>
+
+    <section class="popup" aria-label="TaskMaster Popup 示例">
+      <div class="summary">待完成 <b>3.5h</b><span>·</span> 今日 <b>2/5</b><span>·</span> <em>1 项过期</em></div>
+      <header>
+        <div><strong>任务管理</strong><span class="external">↗</span></div>
+        <div class="toolbar"><button title="筛选">▽</button><button title="深色模式">◐</button><button title="同步状态">◉</button><button class="add">＋ 添加</button></div>
+      </header>
+      <nav><button class="active">今日聚焦</button><button>任务池</button><button>全部任务</button></nav>
+      <div class="filter-note"><span>今日聚焦固定规则</span><b>今日内容完整显示</b></div>
+
+      <div class="section-title"><div><strong>今日聚焦</strong><small>只显示计划在今天的任务</small></div><span>3 项</span></div>
+      <article class="task">
+        <button class="complete" aria-label="完成任务"></button><i class="priority high"></i>
+        <div class="task-copy"><strong>完成本周产品复盘</strong><small>今天 · 1.5h</small></div>
+        <div class="actions"><button title="重新排期">▣</button><button title="编辑">✎</button><button class="more" title="更多操作">•••</button></div>
+        <div class="menu" hidden><button>删除任务</button></div>
+      </article>
+      <article class="task completed">
+        <button class="complete checked" aria-label="取消完成">✓</button><i class="priority medium"></i>
+        <div class="task-copy"><strong>回复客户邮件</strong><small>今天 · 0.5h · 已完成</small></div>
+        <div class="actions"><button title="重新排期">▣</button><button title="编辑">✎</button><button class="more" title="更多操作">•••</button></div>
+        <div class="menu" hidden><button>删除任务</button></div>
+      </article>
+      <article class="task">
+        <button class="complete" aria-label="完成任务"></button><i class="priority low"></i>
+        <div class="task-copy"><strong>整理会议记录并同步团队</strong><small>今天 · 1.5h</small></div>
+        <div class="actions"><button title="重新排期">▣</button><button title="编辑">✎</button><button class="more" title="更多操作">•••</button></div>
+        <div class="menu" hidden><button>删除任务</button></div>
+      </article>
+      <button id="overdueFold" class="overdue-fold" aria-expanded="false"><span><b>▸ 今日之前</b><small>1 项过期</small></span><span>展开</span></button>
+      <div id="overdueTasks" hidden>
+        <article class="task overdue-task">
+          <button class="complete" aria-label="完成任务"></button><i class="priority high"></i>
+          <div class="task-copy"><strong>补充上周项目纪要</strong><small>昨天 · 1h</small></div>
+          <div class="actions"><button title="重新排期">▣</button><button title="编辑">✎</button><button class="more" title="更多操作">•••</button></div>
+          <div class="menu" hidden><button>删除任务</button></div>
+        </article>
+      </div>
+      <footer>今日任务不提供“加入今天”和“拆分任务”</footer>
+    </section>
+  </main>
+  <script src="popup-focus-independent-filters.js"></script>
+</body>
+</html>

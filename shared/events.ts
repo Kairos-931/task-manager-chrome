@@ -5,8 +5,11 @@ import { renderApp, renderSplitChildRow } from './render'
 import { downloadExportFile, importDataFromFile } from './storage'
 import { showToast } from './sync'
 import { isValidLocalDate } from './replan-policy.js'
-import { bindTaskQuickDates, bindSplitQuickDates, createSubmissionGuard, createResettableSubmissionGuard } from './quick-dates'
-import { getTodayScrollBehavior, isAnchorVisible } from './list-navigation'
+import { bindTaskQuickDates, bindSplitQuickDates, createResettableSubmissionGuard } from './quick-dates'
+import { getTodayScrollBehavior, isAnchorVisible, shouldShowBackToTop } from './list-navigation'
+import { getSplitChildRows } from './split-scope'
+import { applyTaskEntryMode } from './task-form'
+import { bindSplitTaskForm, bindSplitTaskTriggers } from './split-interaction'
 import type { PendingGoogleAuthorization } from './storage'
 
 let draggedTaskId: string | null = null
@@ -257,23 +260,33 @@ const repeatEndDateErrorFor = (dueDate: string, repeatEndDate: string): string =
   return ''
 }
 
-
 export const attachEventListeners = (container: HTMLElement): void => {
   currentContainer = container
   bindPopupTaskMenus(container)
   bindGoogleAccountPanels(container)
+  const backToTop = container.querySelector<HTMLButtonElement>('#backToTopBtn')
   const jumpToToday = container.querySelector<HTMLButtonElement>('#jumpToTodayBtn')
   const todayAnchor = container.querySelector<HTMLElement>('#todayAnchor')
   if (listScrollHandler) window.removeEventListener('scroll', listScrollHandler)
-  if (jumpToToday && todayAnchor) {
+  if (backToTop || (jumpToToday && todayAnchor)) {
     const updateJumpVisibility = () => {
-      const rect = todayAnchor.getBoundingClientRect()
-      jumpToToday.classList.toggle('hidden', isAnchorVisible(rect, window.innerHeight))
+      if (backToTop) {
+        backToTop.classList.toggle('hidden', !shouldShowBackToTop(window.scrollY, document.documentElement.scrollHeight, window.innerHeight))
+      }
+      if (jumpToToday && todayAnchor) {
+        const rect = todayAnchor.getBoundingClientRect()
+        jumpToToday.classList.toggle('hidden', isAnchorVisible(rect, window.innerHeight))
+      }
     }
     listScrollHandler = updateJumpVisibility
     window.addEventListener('scroll', listScrollHandler, { passive: true })
     updateJumpVisibility()
-    jumpToToday.addEventListener('click', () => {
+    backToTop?.addEventListener('click', () => {
+      const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+      window.scrollTo?.({ top: 0, behavior: getTodayScrollBehavior(reduced) })
+      backToTop.classList.add('hidden')
+    })
+    if (jumpToToday && todayAnchor) jumpToToday.addEventListener('click', () => {
       const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
       todayAnchor.scrollIntoView({ behavior: getTodayScrollBehavior(reduced), block: 'center' })
       todayAnchor.classList.add('today-anchor-highlight')
@@ -466,14 +479,12 @@ export const attachEventListeners = (container: HTMLElement): void => {
   const parentSubmitGuard = createResettableSubmissionGuard()
   const setTaskMode = (mode: 'normal' | 'parent') => {
     taskMode = mode
-    container.querySelector('#normalTaskFields')?.classList.toggle('hidden', mode === 'parent')
-    container.querySelector('#parentChildrenFields')?.classList.toggle('hidden', mode !== 'parent')
-    container.querySelector('#taskCompletedField')?.classList.toggle('hidden', mode === 'parent')
-    container.querySelectorAll<HTMLElement>('[data-task-mode]').forEach(button => button.classList.toggle('active', button.dataset.taskMode === mode))
-    const submit = container.querySelector<HTMLButtonElement>('#taskSubmitBtn')
-    if (submit) submit.textContent = mode === 'parent' ? '创建大任务' : '添加'
+    if (taskForm) applyTaskEntryMode(taskForm, mode)
   }
   container.querySelectorAll<HTMLElement>('[data-task-mode]').forEach(button => button.addEventListener('click', () => setTaskMode(button.dataset.taskMode === 'parent' ? 'parent' : 'normal')))
+  // 编辑弹窗没有任务类型切换，也必须保留渲染时的“保存”文案。
+  // 只有新增任务需要显式初始化普通/父任务区域及其 disabled 状态。
+  if (taskForm && !getState().editingTask) setTaskMode('normal')
   const parentChildren = container.querySelector<HTMLElement>('#newParentChildren')
   const bindParentChildControls = () => {
     if (!parentChildren) return
@@ -539,7 +550,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
       }
       resetEditingTask()
       reRender()
-      showToast(container, `已创建大任务和 ${children.length} 个子任务`, 'success')
+      showToast(container, `已创建可拆分任务和 ${children.length} 个子任务`, 'success')
       return
     }
 
@@ -695,23 +706,11 @@ export const attachEventListeners = (container: HTMLElement): void => {
     })
   })
 
-  container.querySelectorAll('.overdue-split').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const id = (btn as HTMLElement).dataset.id
-      if (!id) return
+  bindSplitTaskTriggers(container, {
+    onOpen: (id) => {
       setState({ splittingTaskId: id })
       reRender()
-    })
-  })
-
-  container.querySelectorAll('.task-split').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation()
-      const id = (btn as HTMLElement).dataset.id
-      if (!id) return
-      setState({ splittingTaskId: id })
-      reRender()
-    })
+    }
   })
 
   container.querySelectorAll('.overdue-pool').forEach(btn => {
@@ -807,14 +806,15 @@ export const attachEventListeners = (container: HTMLElement): void => {
     showToast(container, date === formatDate(new Date()) ? '已重新安排到今天并加入聚焦' : '计划日期已更新', 'success')
   })
 
-  const splitError = container.querySelector('#splitTaskError') as HTMLElement
+  const splitTaskModal = container.querySelector('#splitTaskModal') as HTMLElement
+  const splitChildren = splitTaskModal?.querySelector('#splitChildren') as HTMLElement | null
+  const splitError = splitTaskModal?.querySelector('#splitTaskError') as HTMLElement
   const closeSplitModal = () => {
     setState({ splittingTaskId: null })
     reRender()
   }
   container.querySelector('#cancelSplitTaskBtn')?.addEventListener('click', closeSplitModal)
   container.querySelector('#closeSplitTaskBtn')?.addEventListener('click', closeSplitModal)
-  const splitTaskModal = container.querySelector('#splitTaskModal') as HTMLElement
   splitTaskModal?.addEventListener('keydown', (e) => {
     if ((e as KeyboardEvent).key === 'Escape') {
       e.preventDefault()
@@ -831,11 +831,11 @@ export const attachEventListeners = (container: HTMLElement): void => {
     splitError.classList.remove('hidden')
   }
   const bindSplitRemoveButtons = () => {
-    container.querySelectorAll('.remove-split-child').forEach(btn => {
+    getSplitChildRows(splitChildren).flatMap(row => [...row.querySelectorAll('.remove-split-child')]).forEach(btn => {
       if ((btn as HTMLElement).dataset.bound === 'true') return
       ;(btn as HTMLElement).dataset.bound = 'true'
       btn.addEventListener('click', () => {
-        const rows = container.querySelectorAll('.split-child-row')
+        const rows = getSplitChildRows(splitChildren)
         if (rows.length <= 2) {
           showSplitError('至少保留两个子任务。')
           return
@@ -845,7 +845,18 @@ export const attachEventListeners = (container: HTMLElement): void => {
     })
   }
   bindSplitRemoveButtons()
+
   let splitTaskSnapshot: Task[] | null = null
+  const splitTaskWithSnapshot = (taskId: string, children: Parameters<typeof splitTask>[1]): boolean => {
+    splitTaskSnapshot = getState().tasks.map(task => ({
+      ...task,
+      repeatDays: [...(task.repeatDays || [])],
+      completedDates: [...(task.completedDates || [])]
+    }))
+    const succeeded = splitTask(taskId, children)
+    if (!succeeded) splitTaskSnapshot = null
+    return succeeded
+  }
 
   // 子任务时长步进器（与主任务弹窗一致：每次 ±0.5h，范围 0.5-24）
   splitTaskModal?.addEventListener('click', (e) => {
@@ -863,86 +874,37 @@ export const attachEventListeners = (container: HTMLElement): void => {
   // 子任务快捷日期：严格限定在拆分弹窗及其各自行内
   if (splitTaskModal) bindSplitQuickDates(splitTaskModal)
 
-  container.querySelector('#addSplitChildBtn')?.addEventListener('click', () => {
-    const list = container.querySelector<HTMLElement>('#splitChildren')
-    if (!list) return
-    const index = list.querySelectorAll('.split-child-row').length
-    const wrapper = document.createElement('div')
-    wrapper.innerHTML = renderSplitChildRow(index, undefined, '', { allowUnscheduled: true })
-    const row = wrapper.firstElementChild as HTMLElement | null
-    if (!row) return
-    list.appendChild(row)
-    bindSplitRemoveButtons()
-    row.querySelector<HTMLInputElement>('.split-child-title')?.focus()
-  })
-
-  const canSubmitSplit = createSubmissionGuard()
-  container.querySelector('#splitTaskForm')?.addEventListener('submit', async (e) => {
-    e.preventDefault()
-    const { splittingTaskId } = getState()
-    if (!splittingTaskId) return
-    const rows = [...container.querySelectorAll<HTMLDivElement>('.split-child-row')]
-    const children = rows.map(row => {
-      const durationHours = Number.parseFloat((row.querySelector('.split-child-duration') as HTMLInputElement).value)
-      return {
-        id: row.dataset.childId,
-        title: (row.querySelector('.split-child-title') as HTMLInputElement).value.trim(),
-        durationHours,
-        duration: Math.round(durationHours * 60),
-        dueDate: (row.querySelector('.split-child-date') as HTMLInputElement).value
-      }
-    })
-    const invalidChildIndex = children.findIndex(child =>
-      !child.title ||
-      !Number.isFinite(child.durationHours) ||
-      child.durationHours < 0.5 ||
-      child.durationHours > 24 ||
-      Math.abs(child.durationHours * 2 - Math.round(child.durationHours * 2)) > Number.EPSILON
-    )
-    if (children.length < 2) {
-      showSplitError('至少保留两个子任务。')
-      return
-    }
-    if (invalidChildIndex !== -1) {
-    const invalidChild = children[invalidChildIndex]
-    const invalidRow = rows[invalidChildIndex]
-    const invalidField = !invalidChild?.title
-      ? invalidRow?.querySelector<HTMLInputElement>('.split-child-title')
-      : invalidRow?.querySelector<HTMLInputElement>('.split-child-duration')
-    const message = !invalidChild?.title
-      ? `请填写子任务 ${invalidChildIndex + 1} 的标题。`
-      : `子任务 ${invalidChildIndex + 1} 的预计时间需为 0.5 至 24 小时，并以 0.5 小时递增。`
+  bindSplitTaskForm({
+    form: container.querySelector<HTMLFormElement>('#splitTaskForm'),
+    children: splitChildren,
+    addButton: container.querySelector<HTMLElement>('#addSplitChildBtn'),
+    getTaskId: () => getState().splittingTaskId,
+    createChildRow: (index) => {
+      const wrapper = document.createElement('div')
+      wrapper.innerHTML = renderSplitChildRow(index, undefined, '', { allowUnscheduled: true })
+      return wrapper.firstElementChild as HTMLElement | null
+    },
+    splitTask: splitTaskWithSnapshot,
+    onError: (message, field) => {
       showSplitError(message)
-      invalidField?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      invalidField?.focus()
-      return
-    }
-    if (!canSubmitSplit()) return
-    splitTaskSnapshot = getState().tasks.map(task => ({
-      ...task,
-      repeatDays: [...(task.repeatDays || [])],
-      completedDates: [...(task.completedDates || [])]
-    }))
-    if (!splitTask(splittingTaskId, children)) {
+      field?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      field?.focus()
+    },
+    onRowAdded: bindSplitRemoveButtons,
+    onSuccess: async (children) => {
+      const saved = await persistState()
+      if (!saved) {
+        if (splitTaskSnapshot) setState({ tasks: splitTaskSnapshot })
+        splitTaskSnapshot = null
+        return false
+      }
       splitTaskSnapshot = null
-      showSplitError('该任务当前无法拆分，请确认它不是循环任务。')
-      return
+      setState({ splittingTaskId: null })
+      reRender()
+      const waitingCount = children.filter(child => !child.dueDate).length
+      showToast(container, `已拆分 ${children.length} 个子任务，其中 ${waitingCount} 个待安排`, 'success')
+      return true
     }
-    const submitButton = (e.target as HTMLFormElement).querySelector<HTMLButtonElement>('button[type="submit"]')
-    if (submitButton) submitButton.disabled = true
-    const saved = await persistState()
-    if (!saved) {
-      if (splitTaskSnapshot) setState({ tasks: splitTaskSnapshot })
-      splitTaskSnapshot = null
-      if (submitButton) submitButton.disabled = false
-      showSplitError('拆分保存失败，请重试')
-      return
-    }
-    splitTaskSnapshot = null
-    setState({ splittingTaskId: null })
-    reRender()
-    const waitingCount = children.filter(child => !child.dueDate).length
-    showToast(container, `已拆分 ${children.length} 个子任务，其中 ${waitingCount} 个待安排`, 'success')
   })
   taskForm?.addEventListener('change', () => {
     taskFormDirty = true

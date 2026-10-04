@@ -7,4 +7,6 @@ export const insertTodayDate = (dates: string[], today: string): string[] => {
 
 export const isAnchorVisible = (rect: Pick<DOMRect, 'top' | 'bottom'>, viewportHeight: number): boolean => rect.top >= 0 && rect.bottom <= viewportHeight
 
+export const shouldShowBackToTop = (scrollY: number, scrollHeight: number, viewportHeight: number, threshold = 48): boolean => scrollHeight > viewportHeight && scrollY > threshold
+
 export const getTodayScrollBehavior = (reducedMotion: boolean): ScrollBehavior => reducedMotion ? 'auto' : 'smooth'
