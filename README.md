@@ -2,7 +2,9 @@
 
 # TaskMaster - Chrome 任务管理插件
 
-一款功能完整的 Chrome 浏览器任务管理扩展，支持四种视图、分类管理、深色模式、多设备数据同步。
+TaskMaster 是一款本机优先的 Chrome 任务管理扩展。电脑通过插件弹窗和新标签页管理任务；手机网页仅用于快速添加。不登录也能使用本机任务管理，主动登录 Google 后由 TaskMaster 后端按账号自动同步。
+
+当前已交付并验证新增任务的扩展版本为 **4.0.3**。4.0 代表 Google 账号同步与系统架构升级的产品阶段，延续此前功能和数据。Google 登录及手机新增到电脑已通过真实使用验证；第二台电脑恢复、完整账号隔离及离线删除收敛仍在独立验收中，见 [Issue #62](https://github.com/Kairos-931/task-manager-chrome/issues/62)。
 
 ## 功能特性
 
@@ -13,11 +15,18 @@
 - **筛选过滤** — 按优先级/分类筛选，隐藏已完成或过期任务
 - **拖拽操作** — 任务拖拽到不同日期
 - **深色模式** — 明暗主题一键切换
-- **数据同步** — 通过 Cloudflare Worker 实现离线优先的跨设备增量同步，支持 Telegram Bot 添加任务
+- **可选 Google 登录** — 不登录可本机使用；登录后通过 Cloudflare Worker + D1 按账号自动同步，普通用户无需填写 API 地址或密钥
 - **同步管理面板** — 手动上传到云端、从云端拉取、导出文件、导入文件
-- **冲突合并** — 多设备离线编辑时按任务时间戳自动合并，删除不会被旧设备复活
-- **数据导入导出** — JSON 格式备份与恢复
-- **双模式使用** — 弹窗快速查看 + 全屏管理页面
+- **同步冲突处理** — 当前按记录合并，字段级并发合并与安全历史压缩仍为后续规划；多设备删除收敛仍需验收
+- **数据导入导出** — JSON 备份；导入先预览再按任务 ID 去重合并，保留两边独有任务，同文件重复导入不生成第二份；内容冲突默认保留当前，已知删除任务恢复需明确选择
+- **双模式使用** — 插件弹窗快速查看 + 扩展新标签页完整管理，无需独立完整管理网站
+- **任务池与排期** — 新建不选计划日期进入任务池；允许安排任意合法过去日期
+- **草稿恢复** — 弹窗或新标签页中断后恢复本机未提交表单，草稿不作为任务同步
+- **手机添加** — Google 登录、保存结果提示和有效登录会话恢复；手机不承担管理任务的功能
+
+### 正在开发的调整
+
+[Issue #74](https://github.com/Kairos-931/task-manager-chrome/issues/74)：新增任务的预计时长、优先级、分类直接可见；新建默认 **1 小时**。这是最新确认的目标，尚未交付，当前 4.0.3 不因此自动变更。编辑旧任务和恢复草稿保留原值，历史任务不会批量改为一小时。
 
 ## 安装
 
@@ -26,16 +35,16 @@
 1. 下载或克隆本项目
 2. 打开 Chrome，地址栏输入 `chrome://extensions/`
 3. 打开右上角的 **开发者模式**
-4. 点击 **加载已解压的扩展程序**
+4. 点击 **加载未打包的扩展程序**（部分版本称“加载已解压的扩展程序”）
 5. 选择项目中的 `chrome-extension-sync` 文件夹
-6. 安装完成，点击右上角插件图标即可使用
+6. 安装完成，点击右上角插件图标即可使用。更新同一扩展时保留原加载目录和稳定扩展 ID，点击“重新加载”后重新打开管理标签页；不要卸载或清理存储来更新
 
 ### 方式二：从源码构建
 
-需要 Node.js 18+ 环境。
+需要支持项目 TypeScript 测试运行方式的 Node.js 环境；当前交付在 Node.js 22.16 上验证。
 
 ```bash
-git clone https://github.com/你的用户名/task-manager-chrome.git
+git clone https://github.com/Kairos-931/task-manager-chrome.git
 cd task-manager-chrome
 npm install
 npm run build
@@ -78,7 +87,7 @@ npm run demo
 ├── tailwind.config.js         # Tailwind CSS 配置
 ├── shared/                    # TypeScript 源码
 │   ├── types.ts               # 类型定义
-│   ├── storage.ts             # 存储层（分块 sync + local 备份）
+│   ├── storage.ts             # 本机存储、账号同步、导入合并与备份
 │   ├── task.ts                # 状态管理与业务逻辑
 │   ├── render.ts              # UI 渲染
 │   ├── events.ts              # 事件监听
@@ -96,93 +105,38 @@ npm run demo
 
 ## 数据同步说明
 
-插件通过 **Cloudflare Worker + D1 数据库** 实现跨设备同步，不依赖 chrome.storage.sync。
+### 普通用户
 
-> **Google 登录同步仍在开发，尚未部署到正式 Worker。** 目标是在不登录时保留完整本机使用，并在主动登录 Google 后由 TaskMaster Worker 按账号隔离并自动同步。当前正式版本仍按下方 API 地址与密钥方式使用；OAuth 客户端、D1 迁移和旧数据归属认领仍是上线前条件。范围见[当前需求](docs/requirements/REQ-20260930-google-account-sync.md)，配置与数据边界见[同步配置说明](docs/google-account-sync.md)。
+1. 安装扩展后即可本机使用，不必部署服务器或配置密钥。
+2. 在插件的账号同步入口选择 Google 登录；任务先保存在本机，联网后自动与该账号同步。
+3. 手机打开运营中的添加页 [TaskMaster 手机添加](https://taskmaster-api.yx9391.workers.dev/)，使用同一 Google 账号添加任务。手机不提供完整管理界面。
 
-### 同步架构
+手机在同一浏览器恢复仍有效的七天 TaskMaster 会话；会话过期、主动退出或站点存储被清除后需要重新登录。不同账号的数据隔离；旧扩展和旧全局密钥数据不会因新账号登录而自动认领。
 
-```
-设备 A（Chrome 插件）
-  → 增删改任务 → POST /api/sync/incremental → Cloudflare D1 变更日志
-                                                    ↓
-设备 B（Chrome 插件）
-  ← 游标拉取增量变更 ← POST /api/sync/incremental
-```
+### 导出、导入与旧数据
 
-| 功能 | API | 说明 |
-|------|-----|------|
-| 增量同步 | `POST /api/sync/incremental` | 每次操作自动发送变更并按游标接收远端更新 |
-| 旧版兼容 | `GET/POST /api/fullsync` | 仅供未升级的扩展继续使用 |
-| 创建任务 | `POST /api/tasks` | 手机网页 / Telegram Bot 使用 |
-| Telegram Bot | `POST /api/telegram/webhook` | 通过 Telegram 消息添加任务 |
+在同步管理面板使用“导出文件”和“导入文件”。导入先显示合并预览：同 ID 去重、同 ID 内容冲突明确选择、当前独有数据保留。不同 ID 的同标题任务不直接当成重复；分类与父子关系一并校验。旧备份缺少可靠删除历史时会提示检查待新增任务，不能自动推断它们是否曾被删除。
 
-### 后端部署（Cloudflare Worker）
+导入成功指本地持久化成功；云同步暂时失败会单独反馈，避免反复导入产生误操作。导入、草稿恢复、手机保存反馈及登录保持已于 2026-10-04 获用户验收通过。
 
-后端代码在 `backend/` 目录，部署步骤：
+### 运营及开发者
 
-1. **创建 D1 数据库**
-   ```bash
-   npx wrangler d1 create taskmaster-db
-   ```
+当前 Google 账号同步使用 `POST /api/account/sync/incremental`，账号任务入口使用 `POST /api/account/tasks`，以经后端验证的 TaskMaster 会话鉴权。后端配置和身份边界见 [Google 同步配置说明](docs/google-account-sync.md) 和 [账号同步需求与交付记录](docs/requirements/REQ-20260930-google-account-sync.md)。普通用户无需操作这些设置。配置文档保留上线前历史状态；当前部署和验收进度以本 README 及需求末尾最新交付记录为准。
 
-2. **初始化或迁移数据库表结构**
-   ```bash
-   npx wrangler d1 execute taskmaster-db --remote --file=backend/schema.sql
-   ```
-
-3. **配置 wrangler.toml**
-   - `backend/wrangler.toml` 中填入 D1 database_id
-   - 设置环境变量：`API_TOKEN`（自定义密钥，插件设置中填写同一个值）、`TELEGRAM_BOT_TOKEN`（可选）
-
-4. **部署**
-   ```bash
-   cd backend
-   npx wrangler deploy
-   ```
-
-   部署成功后会得到 Worker URL（如 `https://taskmaster-api.your-name.workers.dev`）。
-
-### 插件端配置
-
-1. 打开 TaskMaster 弹窗 → 点击齿轮进入设置
-2. 在「手机同步设置」中填入：
-   - **API 地址**：你的 Worker URL（如 `https://taskmaster-api.your-name.workers.dev`）
-   - **API 密钥**：你设置的 `API_TOKEN`
-3. 保存后即可使用同步功能
-
-### Telegram Bot（可选）
-
-1. 通过 [@BotFather](https://t.me/BotFather) 创建 Bot，获取 Token
-2. 在 Cloudflare Worker 环境变量中设置 `TELEGRAM_BOT_TOKEN`
-3. 设置 Webhook：`https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://your-worker.workers.dev/api/telegram/webhook?secret=<TOKEN>`
-4. 在 Telegram 中发送 `/token <你的API密钥>` 绑定账号
-5. 之后直接发消息即可添加任务
-
-**注意事项**：
-- 扩展会在联网后自动收敛任务、分类和设置；同一任务并发编辑时采用较新的修改
-- 删除任务会同步为墓碑记录，旧设备恢复联网后不会把它重新创建
-- `workers.dev` 在部分网络环境中可能无法直连；使用 Clash 规则模式时需将 Worker 域名分流到代理
-- 建议定期使用"导出数据"功能备份重要数据
+旧全局 API 与 Telegram 链路保留兼容边界，不等同于 Google 账号同步；不自动把旧全局任务或 Telegram 队列导入新账号。自建 Worker、D1/OAuth 配置属于运营部署，需按现有迁移与发布流程处理，不对已有生产库重新初始化。手机旧管理员设置页已移除，旧页面链接跳转到当前添加页。
 
 ## 常见问题
 
 ### 同步不生效
 
-1. **确认 API 地址和密钥正确** — 打开设置面板检查是否填写
-2. **确认 Worker 已部署** — 直接访问 Worker URL，应返回 `{"error":"Not Found"}`（说明 Worker 在线）
-3. **确认 D1 数据库已绑定** — 检查 wrangler.toml 中的 database_id 是否正确
-4. **区分网络错误和认证错误** — `TypeError: Failed to fetch` 表示请求未收到 HTTP 响应，优先检查网络、TLS 和代理；密钥错误会返回 `401`
-5. **Clash 规则模式覆盖 Worker** — 在当前订阅关联的 Rules 覆写中，将以下规则放在 `GEOIP`、`GEOSITE` 和 `MATCH` 等兜底规则之前，然后重新加载配置：
+- 确认扩展账号已登录、手机使用同一 Google 账号；退出或会话失效时重新登录。
+- 检查同步面板的错误提示。本地保存成功与云端同步成功是两个状态，不要因网络失败清除本地任务。
+- 在同一浏览器打开 [手机添加页](https://taskmaster-api.yx9391.workers.dev/) 检查服务连通性；`Failed to fetch` 应优先检查网络、TLS 和代理，认证失效通常返回 `401`。
+- 某些网络无法直连 `workers.dev`，需要在自己的网络或代理规则中允许该域名；不必把密钥交给他人排查。
 
-   ```yaml
-   prepend:
-     - DOMAIN,taskmaster-api.yx9391.workers.dev,Proxy
-     - DOMAIN-SUFFIX,workers.dev,Proxy
-   ```
+### 更新后仍显示旧行为
 
-   `Proxy` 必须替换为配置中实际存在的代理组名。验证时直接在同一个 Chrome 中访问 Worker URL；能打开 TaskMaster 手机添加页，说明浏览器链路已经恢复。
-
+在 `chrome://extensions/` 确认实际版本，点击“重新加载”并重新打开管理标签页。文件夹名称可能是旧版本标记，不代表其内部程序版本。保留扩展 ID 和原数据，不通过卸载重装解决更新问题。
 ## 开发
 
 ```bash
@@ -190,7 +144,7 @@ npm run demo
 npm install
 
 # 类型检查
-npx tsc
+npm run typecheck
 
 # 构建（TypeScript → CSS → esbuild 打包 → 复制资源）
 npm run build
