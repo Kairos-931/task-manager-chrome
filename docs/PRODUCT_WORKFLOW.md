@@ -188,4 +188,4 @@
 - 修复 4.3.0 列表视图缺失“↑”按钮的回归；Popup 和新标签页共用列表导航绑定，todayAnchor 不存在时仍能回顶。“今”与“↑”各自按位置显隐，其他视图不渲染按钮。
 - 候选 `outputs/TaskMaster-4.3.1-list-back-to-top-53-20261004` 已通过构建、release checker；14 个候选文件与稳定加载目录 `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` 的 SHA-256 一致。稳定目录更新前备份位于 `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-list-back-to-top-53-20261004-4.3.0`，14 个备份文件哈希一致；扩展 key/权限未变。
 - typecheck、lint、导航/渲染定向测试、CSS 重复构建与候选 CSS 发布测试通过。全量 `npm run check` 在历史 `tests/ui-layout.test.mjs` 的拆分子任务 DOM 顺序静态断言失败，未修改无关断言。旧 `chrome-extension-sync/` 是 3.16.0 且含私钥材料；既有脚本拒绝覆盖，本次未改该目录。
-- 用户需 Reload Chrome 扩展，在全部任务长列表滚动后确认“↑”出现、点击回顶并在顶部隐藏。未做 GUI 验收；未触及 Google 同步 #62、任务数据或 Worker。Issue #53 等待用户验收，未打 tag/关闭。
+- 代码提交 `e81dd35`（`fix: restore list back-to-top navigation`）已正常推送到 `origin/codex/list-back-to-top-53`。用户需 Reload Chrome 扩展，在全部任务长列表滚动后确认“↑”出现、点击回顶并在顶部隐藏。未做 GUI 验收；未触及 Google 同步 #62、任务数据或 Worker。Issue #53 等待用户验收，未打 tag/关闭。

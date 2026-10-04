@@ -121,4 +121,4 @@
 - 验证：`npm run typecheck`、`npm run lint`、导航与渲染定向测试、`npm run build`、release checker、重复 CSS 构建及候选 CSS 构建测试通过。`npm run check` 在既有 `tests/ui-layout.test.mjs` 中断言 `events.ts` 包含拆分子任务 DOM 顺序处失败；该测试文件未修改。未做 GUI/视觉检查。
 - Candidate：`outputs/TaskMaster-4.3.1-list-back-to-top-53-20261004`。已在稳定加载目录 `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` 更新至 4.3.1；14 个文件与候选 SHA-256 一致，Chrome key 和权限与 4.3.0 一致。更新前 4.3.0 备份：`C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-list-back-to-top-53-20261004-4.3.0`，14 个文件备份哈希核验通过。用户需 Reload 扩展验收。
 - 仓库默认的 `chrome-extension-sync/` 仍是旧 3.16.0 包，检查发现其中含私钥材料；构建脚本也明确拒绝覆盖已有默认目录。本次没有触碰它，CSS 生成/发布校验针对 4.3.1 候选与实际稳定加载目录。
-- 没有修改任务数据、同步协议、API 或 Worker；没有部署、推送、打 tag 或关闭 #53。#62 保持开放，#76/#75 继续等待用户验收。生命周期事件：`REQ-20260905-list-back-to-top#r2-20261004-delivered-4.3.1`。
+- 代码提交 `e81dd35`（`fix: restore list back-to-top navigation`）已正常推送到 `origin/codex/list-back-to-top-53`；没有打 tag 或关闭 #53，等待用户重载验收。没有修改任务数据、同步协议、API 或 Worker，也没有进行 Worker 部署。#62 保持开放，#76/#75 继续等待用户验收。生命周期事件：`REQ-20260905-list-back-to-top#r2-20261004-delivered-4.3.1`。
