@@ -1,6 +1,7 @@
 export const bindTaskQuickDates = (taskModal: HTMLElement): (() => void) => {
+  const input = taskModal.querySelector<HTMLInputElement>('input[name="dueDate"]')
+  const poolInput = taskModal.querySelector<HTMLInputElement>('#noTimeLimit')
   const refresh = () => {
-    const input = taskModal.querySelector<HTMLInputElement>('input[name="dueDate"]')
     if (!input) return
     taskModal.querySelectorAll<HTMLElement>('.quick-date-btn').forEach(button => {
       const selected = button.dataset.date === input.value
@@ -11,14 +12,23 @@ export const bindTaskQuickDates = (taskModal: HTMLElement): (() => void) => {
   taskModal.querySelectorAll<HTMLElement>('.quick-date-btn').forEach(button => {
     button.addEventListener('click', () => {
       const date = button.dataset.date
-      const input = taskModal.querySelector<HTMLInputElement>('input[name="dueDate"]')
       if (!date || !input) return
       input.value = date
       input.dispatchEvent?.(new Event('change', { bubbles: true }))
       refresh()
     })
   })
-  taskModal.querySelector<HTMLInputElement>('input[name="dueDate"]')?.addEventListener('change', refresh)
+  input?.addEventListener('change', () => {
+    if (poolInput) poolInput.checked = !input.value
+    refresh()
+  })
+  poolInput?.addEventListener('change', () => {
+    if (!input) return
+    if (poolInput.checked) input.value = ''
+    else if (!input.value) input.value = input.dataset.defaultDate || ''
+    input.dispatchEvent?.(new Event('change', { bubbles: true }))
+    refresh()
+  })
   return refresh
 }
 

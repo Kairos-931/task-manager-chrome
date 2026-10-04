@@ -3,6 +3,10 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { build, transform } from 'esbuild'
 
+const localToday = () => {
+  const date = new Date()
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
 const root = new URL('..', import.meta.url)
 const [source, eventsSource] = await Promise.all([
   readFile(new URL('../shared/task-form.ts', import.meta.url), 'utf8'),
@@ -106,7 +110,7 @@ assert.match(eventsSource, /await persistTaskMutation/)
 globalThis.document = { createElement: () => ({ textContent: '', get innerHTML() { return this.textContent } }) }
 const renderBundle = await build({
   stdin: {
-    contents: "export { renderModal, renderSplitChildRow } from './shared/render.ts'; export { setState } from './shared/task.ts';",
+    contents: "export { renderModal, renderSplitChildRow } from './shared/render.ts'; export { setState } from './shared/task.ts'; export { getTaskEntryDefault } from './shared/task-form.ts';",
     resolveDir: fileURLToPath(root),
     sourcefile: 'task-form-regression-entry.ts',
     loader: 'ts'
@@ -116,10 +120,15 @@ const renderBundle = await build({
   platform: 'node',
   write: false
 })
-const { renderModal, renderSplitChildRow, setState } = await import(`data:text/javascript,${encodeURIComponent(renderBundle.outputFiles[0].text)}`)
+const { renderModal, renderSplitChildRow, setState, getTaskEntryDefault } = await import(`data:text/javascript,${encodeURIComponent(renderBundle.outputFiles[0].text)}`)
+const today = localToday()
+assert.deepEqual(getTaskEntryDefault('pool', '2026-10-04', today), { dueDate: '', noTimeLimit: true })
+assert.deepEqual(getTaskEntryDefault('day', '2026-09-21', today), { dueDate: '2026-09-21', noTimeLimit: false })
+assert.deepEqual(getTaskEntryDefault('focus', '2026-09-21', today), { dueDate: today, noTimeLimit: false })
 setState({ editingTask: null })
 const addMarkup = renderModal()
-assert.match(addMarkup, /id="dueDate" name="dueDate" value=""/)
+assert.match(addMarkup, /id="dueDate" name="dueDate" value="\d{4}-\d{2}-\d{2}" data-default-date="\d{4}-\d{2}-\d{2}"/)
+assert.match(addMarkup, /id="noTimeLimit" name="noTimeLimit"/)
 assert.match(addMarkup, /<details id="taskMoreOptions"/)
 assert.match(addMarkup, /id="durationInput" value="1\.0" min="0\.1"/)
 const moreOptionsStart = addMarkup.indexOf('<details id="taskMoreOptions"')
@@ -136,7 +145,13 @@ assert.match(renderSplitChildRow(2, { title: 'Existing child', duration: 90, due
 assert.doesNotMatch(moreOptionsMarkup, /name="duration"|name="priority"|name="category"/)
 assert.match(moreOptionsMarkup, /name="description"/)
 assert.match(addMarkup, /<section id="parentChildrenFields" class="hidden[\s\S]*?class="split-child-title[^>]*required/)
-assert.doesNotMatch(addMarkup, /id="noTimeLimit"/)
+assert.match(addMarkup, /任务池（暂不安排日期）/)
+
+setState({ currentView: 'day', currentDate: '2026-09-21', taskEntryDefault: getTaskEntryDefault('day', '2026-09-21', today) })
+assert.match(renderModal(), /id="dueDate" name="dueDate" value="2026-09-21"/)
+setState({ currentView: 'pool', taskEntryDefault: getTaskEntryDefault('pool', '2026-09-21', today) })
+assert.match(renderModal(), /id="noTimeLimit" name="noTimeLimit" checked/)
+assert.match(renderModal(), new RegExp(`id="dueDate" name="dueDate" value="" data-default-date="${today}"`))
 
 const existingTask = {
   id: 'existing-unestimated-task', title: 'Existing task', description: '', priority: 'medium', category: 'default-life',

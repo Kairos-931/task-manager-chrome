@@ -378,7 +378,7 @@ try {
   assert.doesNotMatch(mobileHtml, /管理员旧版入口|旧版连接页面|href="\/legacy"/)
   assert.match(mobileHtml, /计划日期（可选）/)
   assert.match(mobileHtml, /id="dueDate" type="date">/)
-  assert.doesNotMatch(mobileHtml, /id="noTimeLimit"/)
+  assert.match(mobileHtml, /id="noTimeLimit" type="checkbox"/)
   assert.match(mobileHtml, /id="duration" type="number" value="60" min="0"[^>]*placeholder="未估时"/)
   assert.match(mobileHtml, /id="completed"/)
   const oldLegacyPageUrl = await worker.fetch(new Request(

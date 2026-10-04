@@ -90,6 +90,7 @@ export const renderAccountMobilePage = (env) => {
       <label for="title">任务名称</label>
       <input id="title" maxlength="500" autocomplete="off" placeholder="输入要添加的任务" required>
       <label for="dueDate">计划日期（可选）</label>
+      <label class="check-row" for="noTimeLimit"><input id="noTimeLimit" type="checkbox"><span>放入任务池（暂不安排日期）</span></label>
       <input id="dueDate" type="date">
       <div class="row">
         <div><label for="priority">优先级</label><select id="priority"><option value="medium">中</option><option value="high">高</option><option value="low">低</option></select></div>
@@ -135,7 +136,7 @@ export const renderAccountMobilePage = (env) => {
       const MOBILE_SESSION_KEY = 'tm_google_mobile_session_v1';
       const MOBILE_PENDING_TASK_PREFIX = 'tm_mobile_pending_task_v1:';
       const CLIENT_TASK_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      const TASK_FIELD_IDS = ['title', 'description', 'priority', 'category', 'dueDate', 'duration', 'completed'];
+      const TASK_FIELD_IDS = ['title', 'description', 'priority', 'category', 'dueDate', 'noTimeLimit', 'duration', 'completed'];
       const MOBILE_SAVE_TIMEOUT_MS = 15000;
       let googleCredential = '';
       let accountSub = '';
@@ -162,6 +163,14 @@ export const renderAccountMobilePage = (env) => {
         deviceId = crypto.randomUUID();
         writeStorage(persistentStorage, 'tm_mobile_device_id', deviceId);
       }
+
+      const getLocalDateInputValue = () => {
+        const date = new Date();
+        return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+      };
+      const dueDateInput = document.getElementById('dueDate');
+      const noTimeLimitInput = document.getElementById('noTimeLimit');
+      dueDateInput.value = getLocalDateInputValue();
 
       const showError = (message) => {
         loginHelp.textContent = message;
@@ -261,7 +270,8 @@ export const renderAccountMobilePage = (env) => {
         document.getElementById('title').value = '';
         document.getElementById('description').value = '';
         document.getElementById('priority').value = 'medium';
-        document.getElementById('dueDate').value = '';
+        document.getElementById('dueDate').value = getLocalDateInputValue();
+        document.getElementById('noTimeLimit').checked = false;
         document.getElementById('duration').value = '60';
         document.getElementById('completed').checked = false;
         document.getElementById('moreOptions').open = false;
@@ -295,6 +305,7 @@ export const renderAccountMobilePage = (env) => {
         document.getElementById('priority').value = payload.priority;
         document.getElementById('category').value = payload.category;
         document.getElementById('dueDate').value = payload.noTimeLimit ? '' : payload.dueDate;
+        document.getElementById('noTimeLimit').checked = payload.noTimeLimit;
         document.getElementById('duration').value = payload.duration === 0 ? '' : String(payload.duration);
         document.getElementById('completed').checked = payload.completed;
         document.getElementById('moreOptions').open = true;
@@ -570,8 +581,8 @@ export const renderAccountMobilePage = (env) => {
               description: document.getElementById('description').value.trim(),
               priority: document.getElementById('priority').value,
               category: document.getElementById('category').value,
-              dueDate: document.getElementById('dueDate').value,
-              noTimeLimit: !document.getElementById('dueDate').value,
+              dueDate: noTimeLimitInput.checked ? '' : dueDateInput.value,
+              noTimeLimit: noTimeLimitInput.checked || !dueDateInput.value,
               duration: Number(document.getElementById('duration').value),
               completed: document.getElementById('completed').checked,
               deviceId,
@@ -644,7 +655,8 @@ export const renderAccountMobilePage = (env) => {
           document.getElementById('title').value = '';
           document.getElementById('description').value = '';
           document.getElementById('priority').value = 'medium';
-          document.getElementById('dueDate').value = '';
+          document.getElementById('dueDate').value = getLocalDateInputValue();
+          document.getElementById('noTimeLimit').checked = false;
           document.getElementById('duration').value = '60';
           document.getElementById('completed').checked = false;
           document.getElementById('moreOptions').open = false;
@@ -664,6 +676,13 @@ export const renderAccountMobilePage = (env) => {
       document.getElementById('submitBtn').addEventListener('click', submitTask);
       saveFeedbackRetry.addEventListener('click', async () => { hideSaveFeedback(); await submitTask(); });
       saveFeedbackDismiss.addEventListener('click', hideSaveFeedback);
+      noTimeLimitInput.addEventListener('change', () => {
+        if (noTimeLimitInput.checked) dueDateInput.value = '';
+        else if (!dueDateInput.value) dueDateInput.value = getLocalDateInputValue();
+      });
+      dueDateInput.addEventListener('change', () => {
+        noTimeLimitInput.checked = !dueDateInput.value;
+      });
 
       void startMobilePage();
     })();

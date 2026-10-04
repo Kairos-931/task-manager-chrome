@@ -7,7 +7,7 @@
 - Shared checkout: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER`
 - Initialized: `2026-09-04`
 - Status: active
-- Active developer requirement: none; the developer slot is released after Issue #75 implementation. Issue #75 (`REQ-20261004-task-save-destination.md`) is delivered as 4.2.0 and awaits user acceptance. Issue #74 was delivered as 4.1.0 and also awaits user acceptance. The stable loaded directory remains `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` and now contains 4.2.0; its 4.1.0 backup is recorded with Issue #75. Issue #73 was accepted after the user confirmed an added task appeared.
+- Active developer requirement: Issue #76, add date/task-pool bidirectional switching (`REQ-20261004-task-date-pool-toggle.md`), delivered as 4.3.0 and awaiting user acceptance. Issue #75 remains awaiting user acceptance; Issue #62 remains open. Issue #75 (`REQ-20261004-task-save-destination.md`) is delivered as 4.2.0 and awaits user acceptance. Issue #74 was delivered as 4.1.0 and also awaits user acceptance. The stable loaded directory remains `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` and now contains 4.3.0; its 4.2.0 backup is recorded with Issue #76, and its 4.1.0 backup with Issue #75. Issue #73 was accepted after the user confirmed an added task appeared.
 - Other acceptance work remains separate: #71 Worker release is at the unchanged URL; Google sync Issue #62 remains open for multi-device, deletion, account isolation, and old-data ownership decisions. No sync work is included in #75.
 - UX-05 extension v3.19.0 at `outputs/TaskMaster-3.19.0-ux05-20261003`; public key and permissions match the stable loaded directory `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`. Pre-update backup: `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-ux05-71-20261003`. Worker deployed as Version ID `96d6b39d-a3d5-4972-ab4f-b91d505dee05`; prior rollback point `b327393b-e2f0-4ced-bdda-ec4a3ae30664`. The #62 Google sync candidate was 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`.
 - Verified live acceptance: user manually loaded the candidate and confirmed Google sign-in plus same-account mobile-add → computer display.
@@ -164,3 +164,16 @@
 - 独立提交分支候选为 4.2.0；14 个候选文件已复制到原稳定加载目录 `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`。更新前 4.1.0 完整备份位于 `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-task-save-destination-75-20261004-4.1.0`；候选与稳定目录 14 个文件 SHA-256 一致，扩展公钥/权限未变。用户需 Reload 扩展验收。
 - `npm run typecheck`、`npm run lint`、`npm run build`、release checker、`css-build` 与新增反馈/筛选定位定向测试通过；全量 `npm test` 停在既有 `tests/ui-layout.test.mjs` 拆分字段顺序静态断言，单独 `newtab-favicon.test.mjs` 仍被 Windows CRLF/LF 严格比较阻断。其余本次触达的后续测试单独通过。未修改无关断言。
 - 未做 GUI/真人视觉验收；Google 同步 Issue #62 仍开放，本项没有改动或验证同步协议。等待用户 Reload 后点击一条成功提示的“查看”确认定位。
+
+## 2026-10-04 Issue #76 日期/任务池双向切换开发启动
+
+- 按产品确认从干净提交 `bb3e829`（4.2.0）开始，独立分支 `codex/task-date-pool-toggle-76`。需求覆盖扩展普通新增、上下文入口、草稿/编辑与手机入口；明确不扩展父子排期、重复语义或同步协议。
+- 最新确认 profile 为 gpt-6-luna/max；#75 等用户验收，#62 Google 同步保持开放。本项需在现有 Worker URL 发布手机端更新，部署前核对线上内容与回滚点。
+
+## 2026-10-04 Issue #76 交付与待验收
+
+- 版本 4.3.0：扩展新建默认本地今天；从明确日期视图按所选日默认，从任务池视图按任务池默认。新建与编辑表单在日期区提供直接可见的任务池选择；快捷日期、手动日期与清空日期会同步更新任务池状态。草稿/编辑保留选择，重复任务无首日期继续显示原有纠正反馈。
+- 扩展候选 `outputs/TaskMaster-4.3.0-task-date-pool-toggle-76-20261004` 已构建；稳定加载目录 `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` 现为 4.3.0。更新前 4.2.0 备份：`C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-task-date-pool-toggle-76-20261004-4.2.0`。14 个文件 SHA-256 一致，扩展 key/权限未变；用户需 Reload 扩展。
+- 手机端通过现成 Wrangler 4.146.0 部署到原 URL `https://taskmaster-api.yx9391.workers.dev/`，版本 `7a8f31a1-7111-48b2-b0ac-f0c00886aa16`，100% 流量生效；部署前回退点 `0e29621a-1665-48f3-a50d-8b451b9f20e0`。dry-run 通过。首页只读 GET 为 200/no-store，含任务池控件和本地今天初始化/成功重置；未认证账号分类 API 返回 401。用户需刷新手机页。
+- 验证：typecheck、lint、构建/release 检查及日期切换、任务草稿、父子日期、重复截止日期、手机保存安全重试、Google 账号隔离等定向回归通过。全量 `npm run check` 在既有 `tests/ui-layout.test.mjs` 静态断言处失败：该断言把拆分子任务日期顺序正则用于 `events.ts`。没有为本需求改动该无关断言。
+- 未进行 GUI/真人视觉验收；未写生产任务、未迁移 D1、未改 Google 同步协议。Issue #76 等待用户 Reload 扩展并刷新手机页后验收；#62 Google 同步仍保持开放。

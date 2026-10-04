@@ -54,6 +54,7 @@ interface RemoteApplyOptions {
 
 interface AppState extends StorageData {
   editingTask: Task | null
+  taskEntryDefault?: { dueDate: string; noTimeLimit: boolean }
   currentView: ViewMode
   currentDate: string
   taskLocatorId?: string

@@ -1,4 +1,11 @@
+import type { ViewMode } from './types'
+
 export type TaskEntryMode = 'normal' | 'parent'
+
+export const getTaskEntryDefault = (currentView: ViewMode, currentDate: string, today: string): { dueDate: string; noTimeLimit: boolean } => {
+  if (currentView === 'pool') return { dueDate: '', noTimeLimit: true }
+  return { dueDate: currentView === 'day' ? currentDate : today, noTimeLimit: false }
+}
 
 const setSectionDisabled = (section: HTMLElement | null, disabled: boolean): void => {
   section?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>('input, textarea, select, button').forEach(control => {

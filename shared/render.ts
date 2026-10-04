@@ -10,6 +10,7 @@ import { getSyncStatus } from './sync'
 import type { SyncStatus } from './sync'
 import { getHistoricalOverdueTasks, getTaskPoolTasks } from './planning'
 import { insertTodayDate } from './list-navigation'
+import { getTaskEntryDefault } from './task-form'
 
 // ==================== 同步状态指示器 ====================
 export const renderSyncIndicator = (): string => {
@@ -983,15 +984,30 @@ export const renderQuickDates = (selectedDate: string, excludeTaskId?: string): 
   return html
 }
 
+const renderTaskDateControls = (dueDate: string, noTimeLimit: boolean, defaultDate: string, excludeTaskId?: string): string => {
+  const selectedDate = noTimeLimit ? '' : dueDate
+  return `
+  <div class="task-date-controls">
+    <label class="task-pool-choice">
+      <input type="checkbox" id="noTimeLimit" name="noTimeLimit" ${noTimeLimit ? 'checked' : ''} class="rounded">
+      <span>任务池（暂不安排日期）</span>
+    </label>
+    ${renderQuickDates(selectedDate, excludeTaskId)}
+    <input type="date" id="dueDate" name="dueDate" value="${selectedDate}" data-default-date="${defaultDate}" class="w-full mt-2 px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
+  </div>`
+}
+
 export const renderModal = (): string => {
-  const { editingTask, categories = [], defaultCategory } = getState()
+  const { editingTask, categories = [], defaultCategory, currentView, currentDate, taskEntryDefault } = getState()
   const isEditing = editingTask !== null
+  const today = formatDate(new Date())
+  const entryDefault = taskEntryDefault || getTaskEntryDefault(currentView, currentDate, today)
   const task = editingTask || {
     title: '',
     description: '',
     priority: 'medium' as Priority,
     category: defaultCategory || categories[0]?.id || '',
-    dueDate: '',
+    dueDate: entryDefault.dueDate,
     hardDeadline: '',
     focusDate: '',
     duration: 60,
@@ -999,7 +1015,7 @@ export const renderModal = (): string => {
     repeatDays: [],
     repeatInterval: 1,
     repeatEndDate: '',
-    noTimeLimit: false,
+    noTimeLimit: entryDefault.noTimeLimit,
     completed: false,
     isParent: false
   }
@@ -1031,9 +1047,8 @@ export const renderModal = (): string => {
               <input type="text" id="taskTitle" name="title" value="" required class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
             </div>
             <div id="normalTaskFields" class="border-t dark:border-gray-700 pt-4 space-y-4">
-              <label class="block text-sm font-medium mb-1" for="dueDate">计划日期（可选）</label>
-              ${renderQuickDates('')}
-              <input type="date" id="dueDate" name="dueDate" value="" class="w-full mt-2 px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
+              <label class="block text-sm font-medium mb-1" for="dueDate">计划日期</label>
+              ${renderTaskDateControls(task.dueDate, task.noTimeLimit, task.dueDate || today)}
               ${durationField}
               ${priorityCategoryFields}
             </div>
@@ -1128,17 +1143,8 @@ export const renderModal = (): string => {
           </div>
           ` : `
           <div id="normalTaskFields" class="border-t dark:border-gray-700 pt-4">
-            <label class="flex items-center gap-2 cursor-pointer mb-3">
-              <input type="checkbox" id="noTimeLimit" name="noTimeLimit" ${task.noTimeLimit ? 'checked' : ''} class="rounded"> 
-              <span class="text-sm font-medium">无计划日期（任务池）</span>
-            </label>
-            <div id="dueDateField" style="${task.noTimeLimit ? 'opacity:0.5;pointer-events:none' : ''}">
-              <div>
-                <label class="block text-sm font-medium mb-1">计划日期</label>
-                ${renderQuickDates(task.dueDate, isEditing ? (task as Task).id : undefined)}
-                <input type="date" name="dueDate" value="${task.dueDate}" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
-              </div>
-            </div>
+            <label class="block text-sm font-medium mb-1" for="dueDate">计划日期</label>
+            ${renderTaskDateControls(task.dueDate, task.noTimeLimit, task.dueDate || today, isEditing ? (task as Task).id : undefined)}
             <div class="mt-4">
               <label class="block text-sm font-medium mb-1">硬截止日期（可选）</label>
               <input type="date" name="hardDeadline" value="${task.hardDeadline || ''}" class="w-full px-3 py-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white">
@@ -2385,6 +2391,22 @@ export const renderApp = (container: HTMLElement): void => {
       }
 
       /* 快捷日期选择 */
+      .task-pool-choice {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 8px;
+        padding: 6px 10px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        color: #4b5563;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .dark .task-pool-choice { border-color: #4b5563; color: #d1d5db; }
+      .task-pool-choice input { accent-color: #6366f1; }
+      .task-pool-choice:has(input:checked) { border-color: #6366f1; background: #eef2ff; color: #4338ca; }
+      .dark .task-pool-choice:has(input:checked) { border-color: #818cf8; background: rgba(99,102,241,0.16); color: #c7d2fe; }
       .quick-dates-row {
         display: flex;
         gap: 4px;

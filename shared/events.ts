@@ -14,7 +14,7 @@ import type { ImportChoices, ImportPlan } from './import-merge'
 import { showToast } from './sync'
 import { isValidLocalDate } from './replan-policy.js'
 import { bindTaskQuickDates, bindSplitQuickDates, createSubmissionGuard, createResettableSubmissionGuard } from './quick-dates'
-import { applyTaskEntryMode } from './task-form'
+import { applyTaskEntryMode, getTaskEntryDefault } from './task-form'
 import { draftContext, draftSessionId, readLatestTaskDraft, TaskDraftStore } from './task-draft'
 import type { TaskDraft } from './task-draft'
 import { getTodayScrollBehavior, isAnchorVisible } from './list-navigation'
@@ -589,6 +589,8 @@ export const attachEventListeners = (container: HTMLElement): void => {
   
   // 添加任务按钮
   container.querySelector('#addTaskBtn')?.addEventListener('click', () => {
+    const { currentView, currentDate } = getState()
+    setState({ taskEntryDefault: getTaskEntryDefault(currentView, currentDate, formatDate(new Date())) })
     resetEditingTask()
     reRender()
     const modal = container.querySelector('#taskModal') as HTMLElement
@@ -823,6 +825,10 @@ export const attachEventListeners = (container: HTMLElement): void => {
       if (typeof value === 'boolean' && control.type === 'checkbox') (control as HTMLInputElement).checked = value
       else if (typeof value === 'string') control.value = value
     })
+    const noTimeLimitInput = taskForm.querySelector<HTMLInputElement>('#noTimeLimit')
+    if (noTimeLimitInput && typeof draft.fields.noTimeLimit !== 'boolean' && typeof draft.fields.dueDate === 'string') {
+      noTimeLimitInput.checked = draft.fields.dueDate === ''
+    }
     const rows = taskForm.querySelector<HTMLElement>('#newParentChildren')
     if (rows && draft.mode === 'parent') {
       rows.replaceChildren()
@@ -1094,7 +1100,7 @@ export const attachEventListeners = (container: HTMLElement): void => {
 
     const noTimeLimitInput = form.querySelector<HTMLInputElement>('#noTimeLimit')
     const selectedDueDate = (formData.get('dueDate') as string) || ''
-    const noTimeLimit = noTimeLimitInput ? noTimeLimitInput.checked : !selectedDueDate
+    const noTimeLimit = noTimeLimitInput ? noTimeLimitInput.checked || !selectedDueDate : !selectedDueDate
     const repeatDays: number[] = []
     form.querySelectorAll('[name="repeatDays"]:checked').forEach(cb => {
       repeatDays.push(parseInt((cb as HTMLInputElement).value))
@@ -1593,15 +1599,6 @@ export const attachEventListeners = (container: HTMLElement): void => {
     if (input) {
       const val = (parseFloat(input.value) || 0) + 0.5
       input.value = Math.min(24, val).toFixed(1)
-    }
-  })
-
-  // 无时间限制切换（只影响截止日期，不影响预计时长）
-  container.querySelector('#noTimeLimit')?.addEventListener('change', (e) => {
-    const dueDateField = container.querySelector('#dueDateField') as HTMLElement
-    if (dueDateField) {
-      dueDateField.style.opacity = (e.target as HTMLInputElement).checked ? '0.5' : '1'
-      dueDateField.style.pointerEvents = (e.target as HTMLInputElement).checked ? 'none' : 'auto'
     }
   })
 

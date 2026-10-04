@@ -5,6 +5,10 @@ import { renderAccountMobilePage } from '../backend/account-mobile.js'
 const ACCOUNT_SUB = 'mobile-save-feedback-test-user'
 const SESSION_KEY = 'tm_google_mobile_session_v1'
 const PENDING_KEY = `tm_mobile_pending_task_v1:${ACCOUNT_SUB}`
+const localToday = () => {
+  const date = new Date()
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
 let uuid = 0
 const mobileSession = (sub = ACCOUNT_SUB, expiresAt = Date.now() + 60_000, token = 'mobile-session-token') => JSON.stringify({
   user: { sub, email: `${sub}@example.test`, name: 'Mobile' },
@@ -33,6 +37,7 @@ class FakeElement {
     this.classList = new FakeClassList()
   }
   addEventListener(name, callback) { this.listeners.set(name, callback) }
+  dispatchEvent(event) { this.listeners.get(event.type)?.({ type: event.type, target: this }); return true }
   replaceChildren(...children) {
     this.children = children
     if (this.tagName === 'select' && children.length && !children.some(child => child.value === this.value)) {
@@ -150,7 +155,8 @@ const makeHarness = ({
   }
   assert.match(moreOptionsMarkup, /id="completed"/)
   assert.match(moreOptionsMarkup, /id="description"/)
-  assert.doesNotMatch(html, /id="noTimeLimit"/)
+  assert.match(html, /id="noTimeLimit" type="checkbox"/)
+  assert.match(html, /放入任务池（暂不安排日期）/)
   const script = html.match(/<script>\s*([\s\S]*?)\s*<\/script>/)?.[1]
   assert.ok(script, 'the mobile page should render its inline application script')
   runInNewContext(script, {
@@ -189,9 +195,14 @@ await timedOutPage.ready()
 assert.ok(timedOutPage.localStorage.getItem(SESSION_KEY), 'the previous tab session should migrate to persistent storage')
 assert.equal(uncertainStorage.getItem(SESSION_KEY), null)
 assert.equal(timedOutPage.elements.get('duration').value, '60', 'new mobile tasks default to one hour')
+assert.equal(timedOutPage.elements.get('dueDate').value, localToday(), 'new mobile tasks default to local today')
+assert.equal(timedOutPage.elements.get('noTimeLimit').checked, false)
 timedOutPage.elements.get('title').value = 'Timeout-safe task'
 timedOutPage.elements.get('description').value = 'Keep this note after a timeout'
 timedOutPage.elements.get('completed').checked = true
+timedOutPage.elements.get('noTimeLimit').checked = true
+timedOutPage.elements.get('noTimeLimit').dispatchEvent({ type: 'change' })
+assert.equal(timedOutPage.elements.get('dueDate').value, '', 'selecting the pool clears the mobile date')
 const firstSaveAttempt = timedOutPage.elements.get('submitBtn').listeners.get('click')()
 const duplicateClickAttempt = timedOutPage.elements.get('submitBtn').listeners.get('click')()
 assert.equal(timedOutPage.elements.get('saveFeedback').hidden, false)
@@ -224,24 +235,33 @@ await reloadPage.ready()
 assert.equal(reloadPage.elements.get('title').value, 'Timeout-safe task')
 assert.equal(reloadPage.elements.get('description').value, 'Keep this note after a timeout')
 assert.equal(reloadPage.elements.get('completed').checked, true)
+assert.equal(reloadPage.elements.get('noTimeLimit').checked, true, 'an uncertain pool selection is restored')
 assert.equal(reloadPage.elements.get('title').disabled, true)
 assert.equal(reloadPage.elements.get('submitBtn').textContent, '安全重试保存')
+reloadPage.elements.get('noTimeLimit').checked = false
+reloadPage.elements.get('dueDate').value = '2020-01-01'
+reloadPage.elements.get('dueDate').dispatchEvent({ type: 'change' })
 await reloadPage.elements.get('saveFeedbackRetry').listeners.get('click')()
 assert.equal(reloadPage.requests.length, 1)
 assert.equal(reloadPage.requests[0].clientTaskId, timedOutPage.requests[0].clientTaskId)
 assert.equal(reloadPage.requests[0].title, timedOutPage.requests[0].title)
 assert.equal(reloadPage.requests[0].completed, true)
 assert.equal(reloadPage.requests[0].duration, 60, 'a safe retry keeps the frozen one-hour payload')
+assert.equal(reloadPage.requests[0].dueDate, '', 'a safe retry keeps the originally frozen pool date')
+assert.equal(reloadPage.requests[0].noTimeLimit, true, 'a safe retry keeps the originally frozen pool flag')
 assert.equal(reloadPage.elements.get('status').textContent, '已确认此前已保存到账号，电脑联网后会自动同步。')
 assert.equal(reloadPage.elements.get('title').value, '')
 assert.equal(reloadPage.elements.get('title').disabled, false)
 assert.equal(reloadPage.elements.get('completed').checked, false)
+assert.equal(reloadPage.elements.get('dueDate').value, localToday(), 'confirmed success resets to local today')
+assert.equal(reloadPage.elements.get('noTimeLimit').checked, false)
 assert.equal(uncertainStorage.getItem(PENDING_KEY), null)
 assert.equal(reloadPage.elements.get('saveFeedback').hidden, false)
 assert.equal(reloadPage.elements.get('saveFeedback').classList.contains('success'), true)
 assert.equal(reloadPage.elements.get('saveFeedbackDismiss').textContent, '继续添加')
 reloadPage.elements.get('title').value = 'Next task without waiting for the popup'
 reloadPage.elements.get('dueDate').value = '2020-01-01'
+reloadPage.elements.get('dueDate').dispatchEvent({ type: 'change' })
 reloadPage.elements.get('duration').value = '45'
 await reloadPage.elements.get('submitBtn').listeners.get('click')()
 assert.equal(reloadPage.requests.length, 2, 'a visible success popup must not block the next task')
@@ -249,13 +269,19 @@ assert.notEqual(reloadPage.requests[1].clientTaskId, reloadPage.requests[0].clie
 assert.equal(reloadPage.requests[1].dueDate, '2020-01-01', 'an explicitly chosen past date must be preserved')
 assert.equal(reloadPage.requests[1].noTimeLimit, false)
 assert.equal(reloadPage.requests[1].duration, 45)
-assert.equal(reloadPage.elements.get('dueDate').value, '')
+assert.equal(reloadPage.elements.get('dueDate').value, localToday())
+assert.equal(reloadPage.elements.get('noTimeLimit').checked, false)
 assert.equal(reloadPage.elements.get('duration').value, '60', 'successful save resets the next form to one hour')
 reloadPage.elements.get('title').value = 'Explicitly unestimated task'
 reloadPage.elements.get('duration').value = ''
+reloadPage.elements.get('noTimeLimit').checked = true
+reloadPage.elements.get('noTimeLimit').dispatchEvent({ type: 'change' })
 await reloadPage.elements.get('submitBtn').listeners.get('click')()
 assert.equal(reloadPage.requests.length, 3)
 assert.equal(reloadPage.requests[2].duration, 0, 'clearing the duration preserves the unestimated value')
+assert.equal(reloadPage.requests[2].dueDate, '')
+assert.equal(reloadPage.requests[2].noTimeLimit, true)
+assert.equal(reloadPage.elements.get('dueDate').value, localToday())
 assert.equal(reloadPage.elements.get('duration').value, '60', 'successful save restores the one-hour default')
 reloadPage.flushFeedbackTimer()
 assert.equal(reloadPage.elements.get('saveFeedback').hidden, true, 'success feedback closes automatically')
