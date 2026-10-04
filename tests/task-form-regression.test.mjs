@@ -110,7 +110,7 @@ assert.match(eventsSource, /await persistTaskMutation/)
 globalThis.document = { createElement: () => ({ textContent: '', get innerHTML() { return this.textContent } }) }
 const renderBundle = await build({
   stdin: {
-    contents: "export { renderModal, renderSplitChildRow } from './shared/render.ts'; export { setState } from './shared/task.ts'; export { getTaskEntryDefault } from './shared/task-form.ts';",
+    contents: "export { renderModal, renderSplitChildRow, renderListNavigation } from './shared/render.ts'; export { setState } from './shared/task.ts'; export { getTaskEntryDefault } from './shared/task-form.ts';",
     resolveDir: fileURLToPath(root),
     sourcefile: 'task-form-regression-entry.ts',
     loader: 'ts'
@@ -120,7 +120,11 @@ const renderBundle = await build({
   platform: 'node',
   write: false
 })
-const { renderModal, renderSplitChildRow, setState, getTaskEntryDefault } = await import(`data:text/javascript,${encodeURIComponent(renderBundle.outputFiles[0].text)}`)
+const { renderModal, renderSplitChildRow, renderListNavigation, setState, getTaskEntryDefault } = await import(`data:text/javascript,${encodeURIComponent(renderBundle.outputFiles[0].text)}`)
+const listNavigationMarkup = renderListNavigation('list')
+assert.match(listNavigationMarkup, /id="backToTopBtn"[^>]*aria-label="回到顶部"/)
+assert.ok(listNavigationMarkup.indexOf('id="backToTopBtn"') < listNavigationMarkup.indexOf('id="jumpToTodayBtn"'), 'back-to-top appears above today')
+for (const view of ['focus', 'pool', 'day', 'week', 'month']) assert.equal(renderListNavigation(view), '', `${view} view has no list navigation controls`)
 const today = localToday()
 assert.deepEqual(getTaskEntryDefault('pool', '2026-10-04', today), { dueDate: '', noTimeLimit: true })
 assert.deepEqual(getTaskEntryDefault('day', '2026-09-21', today), { dueDate: '2026-09-21', noTimeLimit: false })

@@ -17,13 +17,13 @@ import { bindTaskQuickDates, bindSplitQuickDates, createSubmissionGuard, createR
 import { applyTaskEntryMode, getTaskEntryDefault } from './task-form'
 import { draftContext, draftSessionId, readLatestTaskDraft, TaskDraftStore } from './task-draft'
 import type { TaskDraft } from './task-draft'
-import { getTodayScrollBehavior, isAnchorVisible } from './list-navigation'
+import { bindListNavigation } from './list-navigation'
 import type { PendingGoogleAuthorization } from './storage'
 
 let draggedTaskId: string | null = null
 let currentContainer: HTMLElement | null = null
 let taskMenuDismissHandler: ((event: PointerEvent) => void) | null = null
-let listScrollHandler: (() => void) | null = null
+let listNavigationCleanup: (() => void) | null = null
 let activeDraftStore: TaskDraftStore | null = null
 let recoveredDraft: TaskDraft | undefined
 let activeImportPreview: ImportPreview | null = null
@@ -565,26 +565,21 @@ export const attachEventListeners = (container: HTMLElement): void => {
   currentContainer = container
   bindPopupTaskMenus(container)
   bindGoogleAccountPanels(container)
+  const backToTopButton = container.querySelector<HTMLButtonElement>('#backToTopBtn')
   const jumpToToday = container.querySelector<HTMLButtonElement>('#jumpToTodayBtn')
   const todayAnchor = container.querySelector<HTMLElement>('#todayAnchor')
-  if (listScrollHandler) window.removeEventListener('scroll', listScrollHandler)
-  if (jumpToToday && todayAnchor) {
-    const updateJumpVisibility = () => {
-      const rect = todayAnchor.getBoundingClientRect()
-      jumpToToday.classList.toggle('hidden', isAnchorVisible(rect, window.innerHeight))
-    }
-    listScrollHandler = updateJumpVisibility
-    window.addEventListener('scroll', listScrollHandler, { passive: true })
-    updateJumpVisibility()
-    jumpToToday.addEventListener('click', () => {
-      const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-      todayAnchor.scrollIntoView({ behavior: getTodayScrollBehavior(reduced), block: 'center' })
-      todayAnchor.classList.add('today-anchor-highlight')
-      setTimeout(() => todayAnchor.classList.remove('today-anchor-highlight'), 1500)
-      jumpToToday.classList.add('hidden')
+  listNavigationCleanup?.()
+  listNavigationCleanup = null
+  if (backToTopButton || (jumpToToday && todayAnchor)) {
+    const scrollElement = document.scrollingElement || document.documentElement
+    listNavigationCleanup = bindListNavigation({
+      backToTopButton,
+      jumpToTodayButton: jumpToToday,
+      todayAnchor,
+      scrollWindow: window,
+      getScrollTop: () => scrollElement.scrollTop,
+      getScrollHeight: () => scrollElement.scrollHeight,
     })
-  } else {
-    listScrollHandler = null
   }
   
   // 添加任务按钮

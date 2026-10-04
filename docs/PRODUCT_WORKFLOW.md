@@ -7,7 +7,7 @@
 - Shared checkout: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER`
 - Initialized: `2026-09-04`
 - Status: active
-- Active developer requirement: Issue #76, add date/task-pool bidirectional switching (`REQ-20261004-task-date-pool-toggle.md`), delivered as 4.3.0 and awaiting user acceptance. Issue #75 remains awaiting user acceptance; Issue #62 remains open. Issue #75 (`REQ-20261004-task-save-destination.md`) is delivered as 4.2.0 and awaits user acceptance. Issue #74 was delivered as 4.1.0 and also awaits user acceptance. The stable loaded directory remains `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` and now contains 4.3.0; its 4.2.0 backup is recorded with Issue #76, and its 4.1.0 backup with Issue #75. Issue #73 was accepted after the user confirmed an added task appeared.
+- Active developer requirement: Issue #53, restore back-to-top navigation (`REQ-20260905-list-back-to-top.md`), delivered as 4.3.1 from `388d82c` on `codex/list-back-to-top-53` and awaiting user acceptance. Issue #76 (`REQ-20261004-task-date-pool-toggle.md`) is delivered as 4.3.0 and awaits user acceptance; Issue #75 remains awaiting user acceptance; Issue #62 remains open. The stable loaded directory remains `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` and now contains 4.3.1. Its 4.3.0 backup is `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-list-back-to-top-53-20261004-4.3.0`; prior backups remain recorded with #76 and #75. Issue #73 was accepted after the user confirmed an added task appeared.
 - Other acceptance work remains separate: #71 Worker release is at the unchanged URL; Google sync Issue #62 remains open for multi-device, deletion, account isolation, and old-data ownership decisions. No sync work is included in #75.
 - UX-05 extension v3.19.0 at `outputs/TaskMaster-3.19.0-ux05-20261003`; public key and permissions match the stable loaded directory `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`. Pre-update backup: `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-ux05-71-20261003`. Worker deployed as Version ID `96d6b39d-a3d5-4972-ab4f-b91d505dee05`; prior rollback point `b327393b-e2f0-4ced-bdda-ec4a3ae30664`. The #62 Google sync candidate was 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`.
 - Verified live acceptance: user manually loaded the candidate and confirmed Google sign-in plus same-account mobile-add → computer display.
@@ -177,3 +177,15 @@
 - 手机端通过现成 Wrangler 4.146.0 部署到原 URL `https://taskmaster-api.yx9391.workers.dev/`，版本 `7a8f31a1-7111-48b2-b0ac-f0c00886aa16`，100% 流量生效；部署前回退点 `0e29621a-1665-48f3-a50d-8b451b9f20e0`。dry-run 通过。首页只读 GET 为 200/no-store，含任务池控件和本地今天初始化/成功重置；未认证账号分类 API 返回 401。用户需刷新手机页。
 - 验证：typecheck、lint、构建/release 检查及日期切换、任务草稿、父子日期、重复截止日期、手机保存安全重试、Google 账号隔离等定向回归通过。全量 `npm run check` 在既有 `tests/ui-layout.test.mjs` 静态断言处失败：该断言把拆分子任务日期顺序正则用于 `events.ts`。没有为本需求改动该无关断言。
 - 未进行 GUI/真人视觉验收；未写生产任务、未迁移 D1、未改 Google 同步协议。Issue #76 等待用户 Reload 扩展并刷新手机页后验收；#62 Google 同步仍保持开放。
+
+## 2026-10-04 Issue #53 回归恢复开发启动
+
+- 按产品回归决议重新激活开放 Issue #53；4.3.0/`388d82c` 是唯一基线，分支 `codex/list-back-to-top-53`。历史需求快照已复制到本开发工作区，当前执行范围仅恢复全部任务列表的回顶部导航，不整合 canonical 工作区的其他未提交内容。
+- #76/#75 继续等待用户验收，#62 Google 同步保持开放。本项按用户最新要求使用 gpt-6-sol/light（low）；无 GUI 授权，不改数据/API/Worker。
+
+## 2026-10-04 Issue #53 4.3.1 候选交付与稳定目录更新
+
+- 修复 4.3.0 列表视图缺失“↑”按钮的回归；Popup 和新标签页共用列表导航绑定，todayAnchor 不存在时仍能回顶。“今”与“↑”各自按位置显隐，其他视图不渲染按钮。
+- 候选 `outputs/TaskMaster-4.3.1-list-back-to-top-53-20261004` 已通过构建、release checker；14 个候选文件与稳定加载目录 `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` 的 SHA-256 一致。稳定目录更新前备份位于 `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-list-back-to-top-53-20261004-4.3.0`，14 个备份文件哈希一致；扩展 key/权限未变。
+- typecheck、lint、导航/渲染定向测试、CSS 重复构建与候选 CSS 发布测试通过。全量 `npm run check` 在历史 `tests/ui-layout.test.mjs` 的拆分子任务 DOM 顺序静态断言失败，未修改无关断言。旧 `chrome-extension-sync/` 是 3.16.0 且含私钥材料；既有脚本拒绝覆盖，本次未改该目录。
+- 用户需 Reload Chrome 扩展，在全部任务长列表滚动后确认“↑”出现、点击回顶并在顶部隐藏。未做 GUI 验收；未触及 Google 同步 #62、任务数据或 Worker。Issue #53 等待用户验收，未打 tag/关闭。

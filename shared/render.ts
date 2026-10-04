@@ -1,4 +1,4 @@
-import type { Task, Priority } from './types'
+import type { Task, Priority, ViewMode } from './types'
 import {
   getState,
   formatDate, parseDate, formatHours, getDateLabel, getRemainingTime, getWeekDates, isOverdue, isTaskDueOnDate,
@@ -1638,6 +1638,10 @@ export const renderMobileSyncPanel = (): string => {
   `
 }
 
+export const renderListNavigation = (currentView: ViewMode): string => currentView === 'list'
+  ? '<div id="listNavigation" class="list-navigation"><button type="button" id="backToTopBtn" class="jump-to-top hidden" aria-label="回到顶部" title="回到顶部">↑</button><button type="button" id="jumpToTodayBtn" class="jump-to-today hidden" aria-label="定位到今天" title="定位到今天">今</button></div>'
+  : ''
+
 export const renderApp = (container: HTMLElement): void => {
   const { darkMode, currentView } = getState()
   if (darkMode) {
@@ -2652,7 +2656,7 @@ export const renderApp = (container: HTMLElement): void => {
       ${renderHeader()}
       ${renderFilters()}
       ${renderTaskList()}
-      ${getState().currentView === 'list' ? '<button id="jumpToTodayBtn" class="jump-to-today hidden" aria-label="定位到今天" title="定位到今天">今</button>' : ''}
+      ${renderListNavigation(getState().currentView)}
       ${renderModal()}
       ${renderReplanModal()}
       ${renderSplitModal()}
