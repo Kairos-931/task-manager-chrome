@@ -4,7 +4,7 @@ import { build } from 'esbuild'
 
 const bundle = await build({
   stdin: {
-    contents: "export { setState, getState } from './shared/task.ts'; export { renderHeader, renderFilters, renderFocusView, renderPoolView, renderTaskItem, renderStats } from './shared/render.ts';",
+    contents: "export { setState, getState } from './shared/task.ts'; export { renderHeader, renderFilters, renderFocusView, renderPoolView, renderTaskItem, renderStats, renderListView } from './shared/render.ts';",
     resolveDir: fileURLToPath(new URL('..', import.meta.url)),
     sourcefile: 'popup-focus-independent-filters-entry.ts'
   },
@@ -25,7 +25,7 @@ globalThis.document = {
 }
 globalThis.window = { location: { pathname: '/popup/popup.html' } }
 
-const { setState, getState, renderHeader, renderFilters, renderFocusView, renderPoolView, renderTaskItem, renderStats } = await import(`data:text/javascript,${encodeURIComponent(bundle.outputFiles[0].text)}`)
+const { setState, getState, renderHeader, renderFilters, renderFocusView, renderPoolView, renderTaskItem, renderStats, renderListView } = await import(`data:text/javascript,${encodeURIComponent(bundle.outputFiles[0].text)}`)
 
 const localDate = (offset = 0) => {
   const date = new Date()
@@ -49,6 +49,7 @@ const todayDone = task({ id: 'today-done', title: '今日已完成任务', prior
 const todayHigh = task({ id: 'today-high', title: '今日高优先级任务', priority: 'high', category: 'work' })
 const overdue = task({ id: 'overdue', title: '昨天未完成任务', dueDate: localDate(-1), priority: 'low', category: 'personal' })
 const pool = task({ id: 'pool', title: '任务池任务', dueDate: '', noTimeLimit: true, priority: 'low', category: 'personal' })
+const filteredTarget = task({ id: 'filtered-target', title: '筛选暂时隐藏的目标任务', dueDate: localDate(-2), priority: 'low', category: 'personal' })
 
 setState({
   tasks: [todayPending, todayDone, todayHigh, overdue, pool],
@@ -113,5 +114,14 @@ assert.match(newtabFocus, /今日高优先级任务/)
 assert.doesNotMatch(newtabFocus, /今日未完成低优先级任务|今日已完成任务|任务池任务/)
 assert.match(newtabFocus, /task-split/, '新标签页今日任务仍保留原有拆分入口')
 assert.match(renderFilters(), /filterPriority[\s\S]*filterCategory[\s\S]*hideCompleted[\s\S]*hideOverdue/)
+
+setState({ tasks: [...getState().tasks, filteredTarget], currentView: 'list', taskLocatorId: filteredTarget.id })
+const locatedList = renderListView()
+assert.match(locatedList, /data-task-id="filtered-target"/, 'the list transiently shows the target even when filters hide it')
+assert.doesNotMatch(locatedList, /data-task-id="today-pending"/, 'only the located task is added outside the active filters')
+assert.equal(getState().filterPriority, 'high')
+assert.equal(getState().filterCategory, 'work')
+assert.equal(getState().hideCompleted, true)
+assert.equal(getState().hideOverdue, true)
 
 console.log('Popup focus independent filter/action tests passed')

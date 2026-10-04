@@ -7,8 +7,8 @@
 - Shared checkout: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER`
 - Initialized: `2026-09-04`
 - Status: active
-- Active developer requirement: Issue #74, keep duration, priority, and category visible in the add-task form (`REQ-20261004-task-capture-visible-fields.md`), implementation delivered as 4.1.0 and awaiting user acceptance. Issue #73 was accepted by the user after confirming an added task appeared; #74 keeps the stable loaded directory `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`.
-- Other acceptance work remains separate: #71 Worker release is at the unchanged URL; Google sync Issue #62 remains open for multi-device, deletion, account isolation, and old-data ownership decisions. No sync work is included in #74.
+- Active developer requirement: none; the developer slot is released after Issue #75 implementation. Issue #75 (`REQ-20261004-task-save-destination.md`) is delivered as 4.2.0 and awaits user acceptance. Issue #74 was delivered as 4.1.0 and also awaits user acceptance. The stable loaded directory remains `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` and now contains 4.2.0; its 4.1.0 backup is recorded with Issue #75. Issue #73 was accepted after the user confirmed an added task appeared.
+- Other acceptance work remains separate: #71 Worker release is at the unchanged URL; Google sync Issue #62 remains open for multi-device, deletion, account isolation, and old-data ownership decisions. No sync work is included in #75.
 - UX-05 extension v3.19.0 at `outputs/TaskMaster-3.19.0-ux05-20261003`; public key and permissions match the stable loaded directory `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`. Pre-update backup: `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-ux05-71-20261003`. Worker deployed as Version ID `96d6b39d-a3d5-4972-ab4f-b91d505dee05`; prior rollback point `b327393b-e2f0-4ced-bdda-ec4a3ae30664`. The #62 Google sync candidate was 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`.
 - Verified live acceptance: user manually loaded the candidate and confirmed Google sign-in plus same-account mobile-add → computer display.
 - Remaining #62 acceptance and old-data ownership confirmation are pending; two-computer, deletion, and full isolation acceptance are not inferred.
@@ -156,3 +156,11 @@
 - 手机端代码已部署：产品提供已存在的 Wrangler 4.146.0 路径，未安装依赖。dry-run 通过，Worker 版本 `96d6b39d-a3d5-4972-ab4f-b91d505dee05` 已部署且 100% 流量生效；回退点 `b327393b-e2f0-4ced-bdda-ec4a3ae30664`。同 URL 只读检查：首页 200/no-store、日期 optional、未估时空值、“更多选项”存在；Google 客户端配置与会话恢复代码保留；未认证账号分类及旧任务/分类 API 401。没有生产任务写入、迁移或 GUI。
 - typecheck、lint、build、CSS build 与其余 27 个独立测试通过。全量历史阻断：`ui-layout.test.mjs` 的旧断言检查错误文件；`newtab-favicon.test.mjs` 的严格换行符比较在 Windows 失败。未改动无关断言。未进行 GUI、生产任务写入、push 或 tag。
 - Google 同步 Issue #62 与 #71 分开维护；本次没有修改 #62 同步协议或账号数据行为，也不据此宣告 #62 完成。
+
+## 2026-10-04 Issue #75 UX-03 开发启动
+
+- 按已确认需求从干净提交 `5a99ca8`（4.1.0）开始，唯一活动项为 Issue #75；新分支 `codex/task-save-destination-75`。实现限定扩展端，不修改 Worker、手机端、API 或同步协议。
+- 目标：新增成功后说明任务池/本地日期去向；点击“查看”才打开管理页并临时定位任务，不改变用户筛选偏好；父任务反馈定位到父任务。
+- 独立提交分支候选为 4.2.0；14 个候选文件已复制到原稳定加载目录 `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`。更新前 4.1.0 完整备份位于 `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-task-save-destination-75-20261004-4.1.0`；候选与稳定目录 14 个文件 SHA-256 一致，扩展公钥/权限未变。用户需 Reload 扩展验收。
+- `npm run typecheck`、`npm run lint`、`npm run build`、release checker、`css-build` 与新增反馈/筛选定位定向测试通过；全量 `npm test` 停在既有 `tests/ui-layout.test.mjs` 拆分字段顺序静态断言，单独 `newtab-favicon.test.mjs` 仍被 Windows CRLF/LF 严格比较阻断。其余本次触达的后续测试单独通过。未修改无关断言。
+- 未做 GUI/真人视觉验收；Google 同步 Issue #62 仍开放，本项没有改动或验证同步协议。等待用户 Reload 后点击一条成功提示的“查看”确认定位。

@@ -38,11 +38,26 @@ export const renderSyncIndicator = (): string => {
 }
 
 // ==================== 渲染函数 ====================
-const getPageTasks = (options: { ignoreCompleted?: boolean } = {}): Task[] => (
-  window.location.pathname.includes('popup')
-    ? getFilteredTasks({ ignoreFilters: true })
-    : getFilteredTasks(options)
-)
+const getPageTasks = (options: { ignoreCompleted?: boolean } = {}): Task[] => {
+  const popup = window.location.pathname.includes('popup')
+  const tasks = popup ? getFilteredTasks({ ignoreFilters: true }) : getFilteredTasks(options)
+  const taskLocatorId = popup ? undefined : getState().taskLocatorId
+  if (!taskLocatorId || tasks.some(task => task.id === taskLocatorId)) return tasks
+  const locatedTask = getState().tasks.find(task => task?.id === taskLocatorId)
+  return locatedTask ? [...tasks, locatedTask] : tasks
+}
+
+export const focusLocatedTask = (container: HTMLElement, taskId: string): boolean => {
+  const row = [...container.querySelectorAll<HTMLElement>('[data-task-id]')]
+    .find(element => element.dataset.taskId === taskId)
+  if (!row) return false
+  row.tabIndex = -1
+  row.style.outline = '3px solid #3b82f6'
+  row.style.outlineOffset = '-2px'
+  row.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+  row.focus({ preventScroll: true })
+  return true
+}
 
 export const renderWeeklyGoalCard = (): string => {
   const stats = getWeeklyGoalStats()

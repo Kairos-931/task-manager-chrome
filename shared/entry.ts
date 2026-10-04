@@ -2,9 +2,10 @@
 // esbuild will bundle these imports into a single IIFE
 
 import { loadState, persistState, getState, setState, resetEditingTask, getFilteredTasks, getStats, getWeeklyGoalStats, addTask, updateTask, deleteTask, toggleTask, moveTaskToDate, addCategory, deleteCategory, formatDate, parseDate, formatHours, getDateLabel, getRemainingTime, isOverdue, isTaskDueOnDate, getPriorityColor, getCatColor, getCatName, escapeHtml } from './task'
-import { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, renderPoolView, renderListView, renderDayView, renderWeekView, renderMonthView, renderTaskList, renderModal, renderCategoryModal, renderGoalSettingsModal, renderSyncModal, renderMobileSyncPanel, renderWeeklyGoalCard, renderSyncIndicator } from './render'
+import { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, renderPoolView, renderListView, renderDayView, renderWeekView, renderMonthView, renderTaskList, renderModal, renderCategoryModal, renderGoalSettingsModal, renderSyncModal, renderMobileSyncPanel, renderWeeklyGoalCard, renderSyncIndicator, focusLocatedTask } from './render'
 import { attachEventListeners, initializeTaskDraft, refreshTaskDraftContext } from './events'
-import { onSyncStatusChange, shouldRefreshAppForSyncStatus } from './sync'
+import { onSyncStatusChange, shouldRefreshAppForSyncStatus, showToast } from './sync'
+import { clearMissingTaskLocation, prepareTaskLocation } from './task-locator'
 
 // 同步操作反馈 toast（独立定义避免循环依赖）
 function syncActionToast(message: string, type: 'success' | 'error' = 'success') {
@@ -43,11 +44,23 @@ function autoInit() {
   }
 
   const reRender = () => {
+    if (clearMissingTaskLocation()) {
+      showToast(container, '当前账号中找不到该任务，可能已删除或已切换账号', 'error')
+    }
     renderApp(container)
     attachEventListeners(container)
   }
 
   loadState().then(async () => {
+    const taskLocationId = window.location.pathname.includes('popup')
+      ? ''
+      : new URLSearchParams(window.location.search).get('focusTaskId') || ''
+    const requestedLocation = taskLocationId ? prepareTaskLocation(taskLocationId) : null
+    if (taskLocationId) {
+      const url = new URL(window.location.href)
+      url.searchParams.delete('focusTaskId')
+      window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+    }
     if (window.location.pathname.includes('popup')) {
       setState({ currentView: 'focus' })
     }
@@ -56,6 +69,22 @@ function autoInit() {
     } catch {
       renderApp(container)
       attachEventListeners(container)
+    }
+
+    if (taskLocationId) {
+      const taskStillExists = getState().tasks.some(task => task?.id === taskLocationId)
+      if (!taskStillExists) {
+        setState({ taskLocatorId: undefined })
+        showToast(container, '当前账号中找不到该任务，可能已删除或已切换账号', 'error')
+      } else {
+        focusLocatedTask(container, taskLocationId)
+        if (requestedLocation?.hiddenByFilters) {
+          showToast(container, '已临时显示目标任务；原筛选保持不变。调整筛选可查看更多任务。', 'info', {
+            label: '调整筛选',
+            onClick: () => container.querySelector<HTMLButtonElement>('#toggleFiltersBtn')?.click()
+          })
+        }
+      }
     }
 
     // Auto-sync mobile tasks with toast feedback

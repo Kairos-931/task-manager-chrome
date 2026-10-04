@@ -1,7 +1,8 @@
 import type { Category, Priority, Task, ViewMode } from './types'
 import { getState, setState, setLocalSettings, resetEditingTask, formatDate, persistState, persistTaskMutation, moveTaskToDate, loadState, shiftMonth } from './task'
 import { toggleTask as toggleTaskAction, toggleTaskOnDate, deleteTask as deleteTaskAction, addTask, updateTask, addCategory, updateCategory, deleteCategory as deleteCategoryAction, focusTaskToday, replanTask, moveTaskToPool, splitTask, createParentWithChildrenPersisted } from './task'
-import { renderApp, renderSplitChildRow } from './render'
+import { focusLocatedTask, renderApp, renderSplitChildRow } from './render'
+import { clearMissingTaskLocation, prepareTaskLocation } from './task-locator'
 import {
   confirmImportMerge,
   downloadExportFile,
@@ -378,8 +379,38 @@ function syncToast(message: string, type: 'success' | 'error' = 'success') {
 // 封装渲染和事件绑定
 function reRender() {
   if (!currentContainer) return
+  if (clearMissingTaskLocation()) {
+    showToast(currentContainer, '当前账号中找不到该任务，可能已删除或已切换账号', 'error')
+  }
   renderApp(currentContainer)
   attachEventListeners(currentContainer)
+}
+
+const locateSavedTask = (container: HTMLElement, taskId: string): void => {
+  if (!getState().tasks.some(task => task?.id === taskId)) {
+    showToast(container, '当前账号中找不到该任务，可能已删除或已切换账号', 'error')
+    return
+  }
+  if (window.location.pathname.includes('popup')) {
+    chrome.runtime.sendMessage({ action: 'openNewTab', taskId }, () => {
+      if (chrome.runtime.lastError) showToast(container, '无法打开任务管理页，请重试', 'error')
+    })
+    return
+  }
+
+  const location = prepareTaskLocation(taskId)
+  if (!location) {
+    showToast(container, '当前账号中找不到该任务，可能已删除或已切换账号', 'error')
+    return
+  }
+  reRender()
+  focusLocatedTask(container, taskId)
+  if (location.hiddenByFilters) {
+    showToast(container, '已临时显示目标任务；原筛选保持不变。调整筛选可查看更多任务。', 'info', {
+      label: '调整筛选',
+      onClick: () => container.querySelector<HTMLButtonElement>('#toggleFiltersBtn')?.click()
+    })
+  }
 }
 
 const bindGoogleAccountPanels = (container: HTMLElement): void => {
@@ -595,32 +626,34 @@ export const attachEventListeners = (container: HTMLElement): void => {
   container.querySelectorAll('[data-view]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const view = (e.currentTarget as HTMLElement).dataset.view as ViewMode
-      setState({ currentView: view, showNoTimeLimitOnly: false })
+      setState({ currentView: view, showNoTimeLimitOnly: false, taskLocatorId: undefined })
       reRender()
     })
   })
 
   // 筛选器
   container.querySelector('#filterPriority')?.addEventListener('change', async (e) => {
-    setState({ filterPriority: (e.target as HTMLSelectElement).value as Priority | 'all' })
+    setState({ filterPriority: (e.target as HTMLSelectElement).value as Priority | 'all', taskLocatorId: undefined })
     await persistState()
     reRender()
   })
 
   container.querySelector('#filterCategory')?.addEventListener('change', async (e) => {
-    setState({ filterCategory: (e.target as HTMLSelectElement).value })
+    setState({ filterCategory: (e.target as HTMLSelectElement).value, taskLocatorId: undefined })
     await persistState()
     reRender()
   })
 
   container.querySelector('#hideCompleted')?.addEventListener('change', async (e) => {
     setLocalSettings({ hideCompleted: (e.target as HTMLInputElement).checked })
+    setState({ taskLocatorId: undefined })
     await persistState()
     reRender()
   })
 
   container.querySelector('#hideOverdue')?.addEventListener('change', async (e) => {
     setLocalSettings({ hideOverdue: (e.target as HTMLInputElement).checked })
+    setState({ taskLocatorId: undefined })
     await persistState()
     reRender()
   })
@@ -994,13 +1027,22 @@ export const attachEventListeners = (container: HTMLElement): void => {
           saveDraft()
           return
         }
+        const savedParentId = pendingTaskId
         pendingTaskId = null
         const draftCleanup = clearDraft()
         resetEditingTask()
         reRender()
-        showToast(container, `已创建大任务和 ${children.length} 个子任务`, 'success')
+        showToast(container, `已创建大任务和 ${children.length} 个子任务`, 'success', savedParentId ? {
+          label: '查看',
+          onClick: () => locateSavedTask(container, savedParentId)
+        } : undefined)
         void draftCleanup.then(draftCleared => {
-          if (!draftCleared) showToast(container, '任务已保存，但草稿清理失败', 'error')
+          if (!draftCleared) {
+            showToast(container, '任务已保存，但草稿清理失败', 'error', savedParentId ? {
+              label: '查看',
+              onClick: () => locateSavedTask(container, savedParentId)
+            } : undefined)
+          }
         })
       } finally {
         endTaskSave()
@@ -1122,13 +1164,28 @@ export const attachEventListeners = (container: HTMLElement): void => {
         setTaskSaveError('本地保存失败，内容已保留，请重试')
         return
       }
+      const savedTaskId = editingTask ? editingTask.id : pendingTaskId
       pendingTaskId = null
       const draftCleanup = clearDraft()
       resetEditingTask()
       reRender()
-      if (!editingTask) showToast(container, noTimeLimit ? '已添加到任务池' : '任务已添加', 'success')
+      if (!editingTask) {
+        showToast(
+          container,
+          noTimeLimit ? '已添加到任务池' : `已添加到 ${dueDate}`,
+          'success',
+          savedTaskId ? { label: '查看', onClick: () => locateSavedTask(container, savedTaskId) } : undefined
+        )
+      }
       void draftCleanup.then(draftCleared => {
-        if (!draftCleared) showToast(container, '任务已保存，但草稿清理失败', 'error')
+        if (!draftCleared) {
+          showToast(
+            container,
+            '任务已保存，但草稿清理失败',
+            'error',
+            !editingTask && savedTaskId ? { label: '查看', onClick: () => locateSavedTask(container, savedTaskId) } : undefined
+          )
+        }
       })
     } finally {
       endTaskSave()

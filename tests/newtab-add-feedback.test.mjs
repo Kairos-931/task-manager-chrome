@@ -34,11 +34,15 @@ const fixtures = {
       globalThis.testRenderCount += 1
       container.renderCount += 1
     }
+    export const focusLocatedTask = (container, taskId) => {
+      globalThis.testFocusedTaskId = taskId
+      return true
+    }
     export const renderSplitChildRow = () => '<div class="split-child-row"></div>'
   `,
   sync: `
-    export const showToast = (container, message, type = 'success') => {
-      globalThis.testToasts.push({ container, message, type, renderCountAtToast: container.renderCount })
+    export const showToast = (container, message, type = 'success', action) => {
+      globalThis.testToasts.push({ container, message, type, action, renderCountAtToast: container.renderCount })
     }
     export const markCloudSynced = () => {}
     export const markLocalSave = () => {}
@@ -207,7 +211,8 @@ class FakeContainer extends FakeElement {
 const originalGlobals = {
   window: globalThis.window,
   document: globalThis.document,
-  FormData: globalThis.FormData
+  FormData: globalThis.FormData,
+  chrome: globalThis.chrome
 }
 
 globalThis.window = {
@@ -232,6 +237,7 @@ globalThis.FormData = class {
 }
 
 const resetScenario = (values = {}, persistMode = 'success') => {
+  globalThis.window.location.pathname = '/newtab/newtab.html'
   globalThis.testFormValues = {
     title: '虚构新增任务',
     description: '',
@@ -262,6 +268,7 @@ const resetScenario = (values = {}, persistMode = 'success') => {
     currentDate: '2026-10-03',
     filterPriority: 'all',
     filterCategory: 'all',
+    taskLocatorId: undefined,
     editingTask: null
   })
   const container = new FakeContainer()
@@ -283,19 +290,29 @@ assert.deepEqual(globalThis.testToasts.map(({ message, type }) => ({ message, ty
 assert.equal(globalThis.testToasts[0].container, scenario.container, 'feedback uses the stable app container after rerender')
 assert.equal(globalThis.testRenderCount, 1, 'success closes and rerenders the form before showing feedback')
 assert.equal(globalThis.testToasts[0].renderCountAtToast, 1, 'feedback appears after the form has rerendered')
+assert.equal(globalThis.testToasts[0].action?.label, '查看', 'pool success feedback offers an accessible task locator')
+globalThis.testToasts[0].action.onClick()
+assert.equal(globalThis.testFocusedTaskId, app.getState().tasks[0].id, 'the view action locates the saved task without creating another')
+assert.equal(app.getState().tasks.length, 1)
 
-scenario = resetScenario({ dueDate: '2026-10-04' })
+scenario = resetScenario({ dueDate: '2026-10-02' })
 await scenario.submit(submitEvent(scenario.form))
-assert.equal(app.getState().tasks[0].dueDate, '2026-10-04')
+assert.equal(app.getState().tasks[0].dueDate, '2026-10-02', 'a past plan date remains unchanged after save')
 assert.equal(app.getState().tasks[0].noTimeLimit, false)
-assert.equal(globalThis.testToasts[0]?.message, '任务已添加')
+assert.equal(globalThis.testToasts[0]?.message, '已添加到 2026-10-02', 'dated success reports the actual local plan date, including the past')
+assert.equal(globalThis.testToasts[0]?.action?.label, '查看')
+const datedTaskId = app.getState().tasks[0].id
+globalThis.testToasts[0].action.onClick()
+globalThis.testToasts[0].action.onClick()
+assert.equal(app.getState().tasks.filter(task => task.id === datedTaskId).length, 1, 'repeating the view action does not duplicate the saved task')
+assert.equal(app.getState().taskLocatorId, datedTaskId)
 
 scenario = resetScenario({ dueDate: '2026-10-04' })
 globalThis.testCloudFailure = true
 await scenario.submit(submitEvent(scenario.form))
 await Promise.resolve()
 assert.equal(app.getState().tasks.length, 1, 'an asynchronous cloud failure does not undo a successful local save')
-assert.equal(globalThis.testToasts[0]?.message, '任务已添加', 'local-save feedback does not claim cloud sync success')
+assert.equal(globalThis.testToasts[0]?.message, '已添加到 2026-10-04', 'local-save feedback names the destination without claiming cloud sync success')
 assert.equal(globalThis.testCloudFailureObserved, true)
 
 scenario = resetScenario({}, 'failure')
@@ -323,6 +340,43 @@ assert.equal(app.getState().tasks.filter(task => task.isParent).length, 1)
 assert.equal(app.getState().tasks.filter(task => task.parentId).length, 2)
 assert.equal(globalThis.testToasts[0]?.message, '已创建大任务和 2 个子任务')
 assert.equal(globalThis.testToasts.some(toast => toast.message === '已添加到任务池'), false, 'parent feedback does not claim all children enter the pool')
+assert.equal(globalThis.testToasts[0]?.action?.label, '查看', 'parent creation can locate its parent group')
+const parentId = app.getState().tasks.find(task => task.isParent)?.id
+globalThis.testToasts[0].action.onClick()
+assert.equal(app.getState().taskLocatorId, parentId, 'parent view action points to the parent, regardless of child dates')
+
+scenario = resetScenario({ dueDate: '2026-10-05' })
+app.setState({ filterPriority: 'high' })
+await scenario.submit(submitEvent(scenario.form))
+const filteredTaskId = app.getState().tasks[0].id
+globalThis.testToasts[0].action.onClick()
+assert.equal(app.getState().taskLocatorId, filteredTaskId, 'a filtered task is temporarily locatable')
+assert.equal(app.getState().filterPriority, 'high', 'locating a task never changes the saved priority filter')
+assert.equal(globalThis.testToasts.at(-1)?.message, '已临时显示目标任务；原筛选保持不变。调整筛选可查看更多任务。')
+assert.equal(globalThis.testToasts.at(-1)?.action?.label, '调整筛选')
+
+scenario = resetScenario({ dueDate: '2026-10-05' })
+await scenario.submit(submitEvent(scenario.form))
+app.setState({ tasks: [] })
+globalThis.testToasts[0].action.onClick()
+assert.equal(globalThis.testToasts.at(-1)?.type, 'error', 'a deleted or account-missing task is reported as unavailable')
+assert.equal(app.getState().taskLocatorId, undefined, 'a missing task is never restored by the locator')
+
+scenario = resetScenario({ dueDate: '2026-10-06' })
+await scenario.submit(submitEvent(scenario.form))
+const popupTaskId = app.getState().tasks[0].id
+globalThis.chrome = {
+  runtime: {
+    lastError: undefined,
+    sendMessage(message, callback) {
+      globalThis.testOpenNewTabMessage = message
+      callback?.()
+    }
+  }
+}
+globalThis.window.location.pathname = '/popup/popup.html'
+globalThis.testToasts[0].action.onClick()
+assert.deepEqual(globalThis.testOpenNewTabMessage, { action: 'openNewTab', taskId: popupTaskId }, 'Popup opens the existing management page with the saved task ID')
 
 const legacyTask = (id, overrides = {}) => ({
   id,

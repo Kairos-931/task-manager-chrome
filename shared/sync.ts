@@ -38,19 +38,65 @@ export const markCloudSynced = () => {
   }, 3000)
 }
 
-export function showToast(container: HTMLElement, message: string, type: 'success' | 'error' | 'info' = 'success') {
-  const existing = container.querySelector('.toast-message')
+export interface ToastAction {
+  label: string
+  onClick: () => void
+}
+
+export function showToast(container: HTMLElement, message: string, type: 'success' | 'error' | 'info' = 'success', action?: ToastAction) {
+  const existing = container.ownerDocument.querySelector('.toast-message')
   existing?.remove()
 
   const toast = document.createElement('div')
   const color = type === 'success' ? 'bg-green-500' : type === 'info' ? 'bg-blue-600' : 'bg-red-500'
-  toast.className = `toast-message fixed bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm z-50 ${color}`
-  toast.textContent = message
+  toast.className = `toast-message fixed bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm z-50 flex items-center gap-4 ${color}`
+  toast.setAttribute('role', type === 'error' ? 'alert' : 'status')
+  toast.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite')
+  toast.setAttribute('aria-atomic', 'true')
+  const text = document.createElement('span')
+  text.textContent = message
+  toast.appendChild(text)
+  if (action) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'font-semibold underline underline-offset-2 whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-white rounded'
+    button.textContent = action.label
+    button.addEventListener('click', () => {
+      dismiss()
+      action.onClick()
+    })
+    toast.appendChild(button)
+  }
   document.body.appendChild(toast)
 
-  setTimeout(() => {
+  let remainingMs = action ? 12000 : 3000
+  let timerStartedAt = Date.now()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let dismissed = false
+  const dismiss = () => {
+    if (dismissed) return
+    dismissed = true
+    if (timer) clearTimeout(timer)
     toast.remove()
-  }, 3000)
+  }
+  const startDismissalTimer = () => {
+    if (dismissed || timer || (document.activeElement && toast.contains(document.activeElement))) return
+    timerStartedAt = Date.now()
+    timer = setTimeout(dismiss, remainingMs)
+  }
+  const pauseDismissalTimer = () => {
+    if (!timer) return
+    clearTimeout(timer)
+    timer = undefined
+    remainingMs = Math.max(0, remainingMs - (Date.now() - timerStartedAt))
+  }
+  toast.addEventListener('pointerenter', pauseDismissalTimer)
+  toast.addEventListener('pointerleave', startDismissalTimer)
+  toast.addEventListener('focusin', pauseDismissalTimer)
+  toast.addEventListener('focusout', event => {
+    if (!toast.contains(event.relatedTarget as Node | null)) startDismissalTimer()
+  })
+  startDismissalTimer()
 }
 
 export const markSyncError = () => {

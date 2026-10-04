@@ -56,6 +56,7 @@ interface AppState extends StorageData {
   editingTask: Task | null
   currentView: ViewMode
   currentDate: string
+  taskLocatorId?: string
   filterPriority: Priority | 'all'
   filterCategory: string | 'all'
   draggedTaskId: string | null

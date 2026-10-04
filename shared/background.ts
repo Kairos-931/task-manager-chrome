@@ -65,7 +65,11 @@ async function triggerGoogleAccountSync(): Promise<void> {
 // Message handlers
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'openNewTab') {
-    chrome.tabs.create({ url: chrome.runtime.getURL('newtab/newtab.html') })
+    const url = new URL(chrome.runtime.getURL('newtab/newtab.html'))
+    if (typeof message.taskId === 'string' && message.taskId) {
+      url.searchParams.set('focusTaskId', message.taskId)
+    }
+    chrome.tabs.create({ url: url.toString() })
     sendResponse({})
     return false
   }
