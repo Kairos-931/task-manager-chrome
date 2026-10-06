@@ -17,7 +17,7 @@
 - Mobile legacy-entry Issue #67 was implemented in `d5e5555` at version 3.17.1; included in the 3.17.2 Worker deployment and production redirect/page checks passed, with product acceptance pending.
 - Mobile session-restore Issue #68 was implemented in `51a0399` at version 3.17.4; deployed and production-read-only checks passed, with real browser reopen acceptance pending.
 - Last completed requirement: Issue #73, 4.0.3 newtab add recovery; user confirmed the new task was added successfully (`2026-10-04`).
-- Queue: empty
+- Queue: Issue #62 — Google sync POST 503 root cause and recovery; separate from #52 and awaiting its own product handoff/start.
 ## Operating contract
 
 1. Product discussion, specifications, acceptance criteria, and demos live in the requirements task.
