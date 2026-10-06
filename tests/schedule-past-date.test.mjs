@@ -29,7 +29,7 @@ assert.ok(replanInputs.length > 0, 'the existing custom date input should remain
 assert.ok(replanInputs.every(input => !/\smin=/.test(input)), 'past dates must not be blocked in any replan modal by an HTML minimum')
 assert.doesNotMatch(modalSource, /自选日期|应该哪天完成/)
 
-const taskDateInput = renderSource.match(/<input type="date" name="dueDate"[^>]*>/)?.[0] || ''
+const taskDateInput = renderSource.match(/<input type="date"[^>]*\bname="dueDate"[^>]*>/)?.[0] || ''
 const splitDateInput = renderSource.match(/<input type="date" class="split-child-date[^>]*>/)?.[0] || ''
 assert.ok(taskDateInput && splitDateInput, 'ordinary-task and split-child scheduling inputs should remain')
 assert.doesNotMatch(taskDateInput, /\smin=/)

@@ -7,7 +7,7 @@
 - Shared checkout: `C:\Users\Kairos\Documents\Codex-Case-Collisions\TASK_MASTER`
 - Initialized: `2026-09-04`
 - Status: active
-- Active developer requirement: Issue #53, restore back-to-top navigation (`REQ-20260905-list-back-to-top.md`), delivered as 4.3.1 from `388d82c` on `codex/list-back-to-top-53` and awaiting user acceptance. Issue #76 (`REQ-20261004-task-date-pool-toggle.md`) is delivered as 4.3.0 and awaits user acceptance; Issue #75 remains awaiting user acceptance; Issue #62 remains open. The stable loaded directory remains `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` and now contains 4.3.1. Its 4.3.0 backup is `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-list-back-to-top-53-20261004-4.3.0`; prior backups remain recorded with #76 and #75. Issue #73 was accepted after the user confirmed an added task appeared.
+- Active developer requirement: none. Issue #52 (`REQ-20260905-split-modal-row-scope.md`) is delivered as 4.3.2 from `077fa71` on `codex/split-modal-row-scope-52` using gpt-6.1-sol/low and awaits user Reload acceptance. Issue #62 sync 503 is next in the queue and remains a separate incident. Issue #53 is delivered as 4.3.1 and awaits user acceptance; Issue #76 (`REQ-20261004-task-date-pool-toggle.md`) is delivered as 4.3.0 and awaits user acceptance; Issue #75 remains awaiting user acceptance. The stable loaded directory remains `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` and now contains 4.3.2; its 4.3.1 backup is `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-split-modal-row-scope-52-20261006-4.3.1`.
 - Other acceptance work remains separate: #71 Worker release is at the unchanged URL; Google sync Issue #62 remains open for multi-device, deletion, account isolation, and old-data ownership decisions. No sync work is included in #75.
 - UX-05 extension v3.19.0 at `outputs/TaskMaster-3.19.0-ux05-20261003`; public key and permissions match the stable loaded directory `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2`. Pre-update backup: `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-ux05-71-20261003`. Worker deployed as Version ID `96d6b39d-a3d5-4972-ab4f-b91d505dee05`; prior rollback point `b327393b-e2f0-4ced-bdda-ec4a3ae30664`. The #62 Google sync candidate was 3.16.2 at `outputs/google-account-sync-candidate-v3.16.2-20261002`.
 - Verified live acceptance: user manually loaded the candidate and confirmed Google sign-in plus same-account mobile-add → computer display.
@@ -189,3 +189,16 @@
 - 候选 `outputs/TaskMaster-4.3.1-list-back-to-top-53-20261004` 已通过构建、release checker；14 个候选文件与稳定加载目录 `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` 的 SHA-256 一致。稳定目录更新前备份位于 `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-list-back-to-top-53-20261004-4.3.0`，14 个备份文件哈希一致；扩展 key/权限未变。
 - typecheck、lint、导航/渲染定向测试、CSS 重复构建与候选 CSS 发布测试通过。全量 `npm run check` 在历史 `tests/ui-layout.test.mjs` 的拆分子任务 DOM 顺序静态断言失败，未修改无关断言。旧 `chrome-extension-sync/` 是 3.16.0 且含私钥材料；既有脚本拒绝覆盖，本次未改该目录。
 - 代码提交 `e81dd35`（`fix: restore list back-to-top navigation`）已正常推送到 `origin/codex/list-back-to-top-53`。用户需 Reload Chrome 扩展，在全部任务长列表滚动后确认“↑”出现、点击回顶并在顶部隐藏。未做 GUI 验收；未触及 Google 同步 #62、任务数据或 Worker。Issue #53 等待用户验收，未打 tag/关闭。
+
+## 2026-10-06 Issue #52 开发启动
+
+- 按产品确认从干净提交 `077fa71`（4.3.1）开始，独立分支 `codex/split-modal-row-scope-52`。仅修复拆分弹窗对隐藏新增大任务子行的误选；Issue #62 的 POST 503 事故排队为后续独立任务，不在本项排查/修改。
+- 最新执行配置为 gpt-6.1-sol/low，覆盖历史 Luna/max。无 GUI、Worker、生产数据、依赖安装或用户 199 条任务操作；本项生成 4.3.2 PATCH 候选并备份/哈希核验既有稳定目录。验收后正常推送分支授权有效，不强推/打 tag/关闭 issue。
+- 需求事件：`REQ-20260905-split-modal-row-scope#r2-20261006-start-077fa71`；实现后记录双弹窗选择器、失败重试和同步刷新期间输入/拆分目标保留的确定性回归结果。
+
+## 2026-10-06 Issue #52 4.3.2 交付
+
+- `shared/split-modal.ts` 将所有拆分弹窗交互限定在真实 `#splitTaskModal > #splitTaskForm > #splitChildren`；`applyStorageData` 保留活动拆分目标，打开编辑器时远端刷新不会替换输入。失败保存按受影响任务记录回滚，允许在保留表单输入时重试。
+- 双弹窗选择器、标题校验与聚焦、延迟期间防重、失败重试、无日期任务池、同步刷新状态回归通过；`npm run check`（CSS 对照指向本候选）、`npm run build` 和 release checker 通过。
+- 候选 `outputs/TaskMaster-4.3.2-split-modal-row-scope-52-20261006` 的 14 个文件与稳定加载目录 `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` 更新后 SHA-256 一致。原 4.3.1 稳定目录 14 个文件备份至 `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-split-modal-row-scope-52-20261006-4.3.1` 并核验一致；扩展 key/权限不变。
+- 等待用户 Reload 原扩展并验收；无 GUI、任务数据、Google 同步协议、Worker/API 改动。Google 同步 #62 继续排队单独处理。生命周期事件：`REQ-20260905-split-modal-row-scope#r2-20261006-delivered-4.3.2`。

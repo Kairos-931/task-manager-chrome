@@ -233,7 +233,8 @@ assert.match(taskSource, /noTimeLimit: !child\.dueDate/)
 assert.match(renderSource, /allowUnscheduled/)
 assert.match(renderSource, /renderSplitChildRow\(index, child, child\?\.dueDate \|\| ''/)
 assert.match(eventsSource, /waitingCount = children\.filter\(child => !child\.dueDate\)\.length/)
-assert.match(eventsSource, /splitTaskSnapshot/)
+assert.match(eventsSource, /persistTaskMutation\(\(\) => \{/)
+assert.match(eventsSource, /applied = splitTask\(taskId, children\)/)
 const parentValidation = eventsSource.match(/const invalidIndex = children\.findIndex\(child => ([^\n]+)\)/)?.[1] || ''
 assert.doesNotMatch(parentValidation, /dueDate/)
 

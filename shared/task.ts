@@ -133,6 +133,7 @@ interface ApplyStorageOptions {
 
 const applyStorageData = (data: StorageData, _options?: ApplyStorageOptions): void => {
   const activeEditingTask = state.editingTask
+  const activeSplittingTaskId = state.splittingTaskId
   // Categories are records keyed by stable ID; equal names can represent
   // separate user-created categories and must remain distinct.
   const catMap = new Map<string, Category>()
@@ -152,7 +153,7 @@ const applyStorageData = (data: StorageData, _options?: ApplyStorageOptions): vo
     editingTask: activeEditingTask,
     draggedTaskId: null,
     replanningTaskId: null,
-    splittingTaskId: null
+    splittingTaskId: activeSplittingTaskId
   }
 }
 

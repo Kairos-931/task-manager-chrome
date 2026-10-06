@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
-const [popupSource, renderSource, eventSource, entrySource, prdSource] = await Promise.all([
+const [popupSource, renderSource, eventSource, splitModalSource, entrySource, prdSource] = await Promise.all([
   readFile(new URL('../popup/popup.html', import.meta.url), 'utf8'),
   readFile(new URL('../shared/render.ts', import.meta.url), 'utf8'),
   readFile(new URL('../shared/events.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../shared/split-modal.ts', import.meta.url), 'utf8'),
   readFile(new URL('../shared/entry.ts', import.meta.url), 'utf8'),
   readFile(new URL('../docs/PRD.md', import.meta.url), 'utf8'),
 ])
@@ -29,11 +30,12 @@ assert.match(renderSource, /\.split-child-duration-control \.split-child-duratio
 assert.doesNotMatch(renderSource, /split-child-duration-field[\s\S]{0,160}class="flex items-center gap-1"/)
 assert.doesNotMatch(eventSource, /split-child-duration-field[\s\S]{0,160}class="flex items-center gap-1"/)
 assert.match(renderSource, /@media \(max-width: 520px\)[\s\S]*\.split-child-duration-field \{ grid-column: 1; grid-row: 1; \}[\s\S]*\.split-child-date-field \{ grid-column: 2; grid-row: 1; \}[\s\S]*\.split-quick-dates \{ grid-column: 1 \/ -1; grid-row: 2; \}/)
-assert.match(eventSource, /split-child-schedule[\s\S]*split-child-duration-field[\s\S]*split-quick-dates[\s\S]*split-child-date-field/)
+assert.match(splitModalSource, /const childrenList = form\?\.querySelector<HTMLElement>\('#splitChildren'\)/)
+assert.match(splitModalSource, /bindSplitQuickDates\(childrenList\)/)
 assert.match(renderSource, /id="splitTaskModal"[\s\S]*role="dialog"[\s\S]*aria-modal="true"/)
 assert.match(eventSource, /splitTaskModal[\s\S]*addEventListener\('keydown',[\s\S]*key === 'Escape'[\s\S]*closeSplitModal\(\)/)
-assert.match(eventSource, /const invalidChildIndex = children\.findIndex\([\s\S]*Number\.isFinite\(child\.durationHours\)/)
-assert.match(eventSource, /showSplitError\(message\)[\s\S]*invalidField\?\.scrollIntoView[\s\S]*invalidField\?\.focus\(\)/)
+assert.match(splitModalSource, /const invalidIndex = rowValues\.findIndex\([\s\S]*Number\.isFinite\(child\.durationHours\)/)
+assert.match(splitModalSource, /invalidField\?\.scrollIntoView[\s\S]*invalidField\?\.focus\(\)/)
 assert.match(renderSource, /class="app-header-actions ml-auto flex flex-col items-end/)
 assert.match(renderSource, /class="header-utility-actions w-full flex items-center justify-end/)
 assert.match(renderSource, /\.header-utility-actions \{[\s\S]*justify-content: flex-end;/)
@@ -61,7 +63,7 @@ assert.match(renderSource, /task\.noTimeLimit \? '安排时间' : '重新排期'
 assert.match(renderSource, /popup-replan-quick-dates[\s\S]*renderQuickDates\('\'\)/)
 assert.match(renderSource, /id="confirmReplanBtn" disabled[\s\S]*确认安排/)
 assert.match(eventSource, /syncReplanQuickDateSelection[\s\S]*popup-replan-quick-dates[\s\S]*replanDateInput\.addEventListener\('change'/)
-assert.match(eventSource, /replanSubmitting[\s\S]*不能安排到过去日期/)
+assert.match(eventSource, /replanSubmitting[\s\S]*const dateError = getReplanDateError\(date\)[\s\S]*setReplanError\(dateError\)/)
 assert.match(renderSource, /id="closeReplanBtn"[\s\S]*关闭安排时间/)
 assert.match(renderSource, /id="replanModal"[^>]*tabindex="-1"/)
 assert.match(eventSource, /closeReplanBtn[\s\S]*replanModal[\s\S]*key === 'Escape'[\s\S]*closeReplanModal\(\)/)

@@ -6,6 +6,7 @@ import { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, re
 import { attachEventListeners, initializeTaskDraft, refreshTaskDraftContext } from './events'
 import { onSyncStatusChange, shouldRefreshAppForSyncStatus, showToast } from './sync'
 import { clearMissingTaskLocation, prepareTaskLocation } from './task-locator'
+import { isInteractiveTaskModalOpen } from './interactive-modal'
 
 // 同步操作反馈 toast（独立定义避免循环依赖）
 function syncActionToast(message: string, type: 'success' | 'error' = 'success') {
@@ -26,14 +27,7 @@ function syncActionToast(message: string, type: 'success' | 'error' = 'success')
 export { loadState, persistState, getState, setState, resetEditingTask, getFilteredTasks, getStats, getWeeklyGoalStats, addTask, updateTask, deleteTask, toggleTask, moveTaskToDate, addCategory, deleteCategory, formatDate, parseDate, formatHours, getDateLabel, getRemainingTime, isOverdue, isTaskDueOnDate, getPriorityColor, getCatColor, getCatName, escapeHtml }
 export { renderApp, renderStats, renderHeader, renderFilters, renderTaskItem, renderPoolView, renderListView, renderDayView, renderWeekView, renderMonthView, renderTaskList, renderModal, renderCategoryModal, renderGoalSettingsModal, renderSyncModal, renderMobileSyncPanel, renderWeeklyGoalCard }
 export { attachEventListeners }
-
-/** Remote updates must not replace an active task/split editor and discard its form values. */
-export const isInteractiveTaskModalOpen = (container: HTMLElement): boolean => {
-  const taskModal = container.querySelector('#taskModal')
-  const splitTaskModal = container.querySelector('#splitTaskModal')
-  return [taskModal, splitTaskModal]
-    .some(modal => !!modal && !modal.classList.contains('hidden'))
-}
+export { isInteractiveTaskModalOpen }
 
 // Auto-initialize when DOM is ready
 function autoInit() {
