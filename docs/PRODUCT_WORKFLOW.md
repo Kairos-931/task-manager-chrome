@@ -202,3 +202,4 @@
 - 双弹窗选择器、标题校验与聚焦、延迟期间防重、失败重试、无日期任务池、同步刷新状态回归通过；`npm run check`（CSS 对照指向本候选）、`npm run build` 和 release checker 通过。
 - 候选 `outputs/TaskMaster-4.3.2-split-modal-row-scope-52-20261006` 的 14 个文件与稳定加载目录 `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` 更新后 SHA-256 一致。原 4.3.1 稳定目录 14 个文件备份至 `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-split-modal-row-scope-52-20261006-4.3.1` 并核验一致；扩展 key/权限不变。
 - 等待用户 Reload 原扩展并验收；无 GUI、任务数据、Google 同步协议、Worker/API 改动。Google 同步 #62 继续排队单独处理。生命周期事件：`REQ-20260905-split-modal-row-scope#r2-20261006-delivered-4.3.2`。
+- 完成报告已通过 `send_message_to_thread` 发至产品任务 `01a0f1af-be64-7860-8c0d-660fdb71e2c9`；调用成功返回相同目标 threadId。

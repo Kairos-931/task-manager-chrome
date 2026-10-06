@@ -108,5 +108,6 @@ gpt-6.1-sol/low、单开发，小至中工程/低至中用量，fix PATCH。原�
 - `npm run check`、`npm run build`、release checker、双弹窗/状态/快捷日期/可选日期用例全部通过。`npm run check` 使用候选目录作为 CSS 对照，未读写旧 `chrome-extension-sync/`。
 - 候选 `outputs/TaskMaster-4.3.2-split-modal-row-scope-52-20261006` 为 14 个文件；在稳定目录 `C:\Users\Kairos\Documents\TASK_MASTER\outputs\TaskMaster-3.16.2` 更新前，4.3.1 的 14 个文件已备份到 `C:\Users\Kairos\AppData\Local\TaskMaster\backups\extension-before-split-modal-row-scope-52-20261006-4.3.1` 并逐项核对 SHA-256。稳定目录现为 4.3.2，14 个文件与候选哈希一致；扩展 key、权限及 Worker/API 均未变。
 - 未做 GUI 验收（本项未授权桌面控制）。用户需在 Chrome 扩展管理页 Reload 原扩展，后打开 TaskMaster 新标签页复现拆分并确认成功；不需要重新安装，稳定扩展 ID 与任务数据目录未变。
-- Issue #62 的 Google 同步 POST 503 不在本次修复范围；199 条本地任务未读取/清除。#52 等待用户重载验收，不打 tag、不关闭 Issue。产品报告发送后记录确认回执。
+- Issue #62 的 Google 同步 POST 503 不在本次修复范围；199 条本地任务未读取/清除。#52 等待用户重载验收，不打 tag、不关闭 Issue。
+- 产品完成报告已发送至需求任务 `01a0f1af-be64-7860-8c0d-660fdb71e2c9`；`send_message_to_thread` 成功返回目标 threadId，发送回执已记录。
 - 生命周期事件：`REQ-20260905-split-modal-row-scope#r2-20261006-delivered-4.3.2`。
